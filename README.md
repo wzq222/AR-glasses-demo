@@ -1,4 +1,23 @@
-# AR 眼镜控制（CY01 照片同步）
+# 中车眼镜
+
+面向轨道交通现场巡检的 AR 眼镜辅助作业项目。当前代码基线来自
+[`wzq222/AR-glasses-demo`](https://github.com/wzq222/AR-glasses-demo)，现阶段已实现的主体是
+CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片同步；二维码、防松线、
+万用表识别目前只有接口，没有实际算法与作业闭环。
+
+## 项目入口
+
+- [项目状态](PROJECT_STATUS.md)
+- [会议需求基线](docs/requirements/2026-08-24-meeting-requirements.md)
+- [现有 Demo 缺口分析](docs/analysis/2026-08-25-demo-gap-analysis.md)
+- [两周 MVP 设计](docs/superpowers/specs/2026-08-25-crrc-glasses-mvp-design.md)
+- [实施计划](docs/superpowers/plans/2026-08-25-crrc-glasses-mvp.md)
+- [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
+
+> 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、
+> 现场图像和准确率均未在本仓库中提供验证证据。
+
+## 上游 Demo 说明
 
 一款针对 **CY01 智能 AR 眼镜** 的 Android 应用。通过 BLE（低功耗蓝牙）连接眼镜，使用 **WiFi Direct + HTTP** 把眼镜拍摄的照片同步到手机，支持选择性导入、原图库浏览，并预留了图像识别扩展接口。
 
