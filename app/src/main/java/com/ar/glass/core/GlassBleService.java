@@ -1,0 +1,1382 @@
+package com.ar.glass.core;
+
+import android.annotation.SuppressLint;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
+import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.net.wifi.p2p.WifiP2pConfig;
+import android.net.wifi.p2p.WifiP2pDevice;
+import android.net.wifi.p2p.WifiP2pDeviceList;
+import android.net.wifi.p2p.WifiP2pInfo;
+import android.net.wifi.p2p.WifiP2pManager;
+import android.os.Binder;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.Message;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
+import androidx.core.content.ContextCompat;
+
+import com.ar.glass.R;
+import com.ar.glass.ui.MainActivity;
+import com.ar.glass.util.EventMsg;
+
+import org.greenrobot.eventbus.EventBus;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * 眼镜蓝牙服务 - CY01 原生 BLE 版本
+ *
+ * 背景：K900 SDK 的协议(UUID 00004860...)与 CY01 眼镜完全不匹配，导致连接成功但
+ * 永远收不到数据（一直"系统未就绪"）。经协议调试确认 CY01 使用
+ * 两套 BLE 服务：
+ *
+ *   1) NUS 控制通道（Nordic UART Service）
+ *      - 服务:   6e40fff0-b5a3-f393-e0a9-e50e24dcca9e
+ *      - 写特征: 6e400002-b5a3-f393-e0a9-e50e24dcca9e
+ *      - 通知特征: 6e400003-b5a3-f393-e0a9-e50e24dcca9e
+ *
+ *   2) 串口数据/文件通道（自定义）
+ *      - 服务:   de5bf728-d711-4e47-af26-65e3012a5dc7
+ *      - 通知:  de5bf729-d711-4e47-af26-65e3012a5dc7
+ *      - 写:    de5bf72a-d711-4e47-af26-65e3012a5dc7
+ *
+ * 串口大数据帧格式：
+ *   [0xBC][action][len低][len高][CRC16低][CRC16高][payload...]
+ *   空 payload 时长度区为 0x0000、CRC 区为 0xFFFF。
+ *
+ * 本阶段目标：打通数据通道 —— 连接、订阅通知、发送初始化/心跳命令，确认能收到眼镜数据。
+ */
+@SuppressLint("MissingPermission")
+public class GlassBleService extends Service {
+
+    private static final String TAG = "GlassBleService";
+    private static final String CHANNEL_ID = "glass_ble_service";
+    private static final int NOTIFICATION_ID = 1;
+
+    // ========== CY01 真实 BLE UUID ==========
+    private static final UUID UUID_NUS_SERVICE = UUID.fromString("6e40fff0-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID UUID_NUS_NOTIFY = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID UUID_SERIAL_PORT_SERVICE = UUID.fromString("de5bf728-d711-4e47-af26-65e3012a5dc7");
+    private static final UUID UUID_SERIAL_NOTIFY = UUID.fromString("de5bf729-d711-4e47-af26-65e3012a5dc7");
+    private static final UUID UUID_SERIAL_WRITE = UUID.fromString("de5bf72a-d711-4e47-af26-65e3012a5dc7");
+    private static final UUID CLIENT_CHARACTERISTIC_CONFIG = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
+    // ========== 串口帧动作码 ==========
+    private static final int ACTION_SYNC_TIME = 64;
+    private static final int ACTION_GLASSES_CONTROL = 65;
+    private static final int ACTION_GLASSES_BATTERY = 66;
+    private static final int ACTION_DEVICE_INFO = 67;
+    private static final int ACTION_DEVICE_HEART_BEAT = 69;
+    private static final int ACTION_DEVICE_WEAR = 70;
+    private static final int ACTION_DEVICE_WEAR_SUPPORT = 71;
+    private static final int ACTION_DEVICE_DATA_REPORTING = 115;
+    private static final int ACTION_PICTURE_THUMBNAILS = 0xFD;
+
+    /** 串口写队列间隔，避免 GATT 同时只允许一个未完成写操作 */
+    private static final long SERIAL_WRITE_INTERVAL_MS = 120;
+
+    private static final String[] DEVICE_NAME_KEYWORDS = {
+            "CY 01", "CY01", "CY1", "CY-01",
+            "XyBLE", "Xy3BLE", "XySmart",
+            "CY ", "CY-"
+    };
+
+    // 主线程 Handler 消息
+    private static final int MSG_CHECK_HEARTBEAT = 1001;
+    private static final int MSG_SEND_HEARTBEAT = 1006;
+    private static final int MSG_RESTART_SCAN = 1005;
+    private static final int MSG_CONNECT_TIMEOUT = 1007;
+
+    /** 收到数据超时（超过则认为断开） */
+    private static final long HEARTBEAT_TIMEOUT_NORMAL = 30000;
+    /** 自己发送心跳包间隔 */
+    private static final long HEARTBEAT_SEND_INTERVAL = 8000;
+    /** 发起 connectGatt 后多久没收到系统回调则判为超时 */
+    private static final long CONNECT_TIMEOUT_MS = 15000;
+    private static final long INITIAL_RECONNECT_DELAY_MS = 3000;
+    private static final long MAX_RECONNECT_DELAY_MS = 15000;
+
+    private final IBinder mBinder = new LocalBinder();
+
+    public class LocalBinder extends Binder {
+        public GlassBleService getService() {
+            return GlassBleService.this;
+        }
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return mBinder;
+    }
+
+    // ========== 状态 ==========
+    private volatile boolean mConnecting = false;
+    private long mReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+    private long lastHeartbeatTime = 0;
+    private boolean mDataReceivedLogged = false;
+    private boolean mScanFirstDeviceLogged = false;
+    private boolean mInitCommandsSent = false;
+
+    // 发现的眼镜设备（地址 -> 设备信息），用于多设备时手动选择连接
+    private final LinkedHashMap<String, DeviceInfo> mDiscoveredDevices = new LinkedHashMap<>();
+
+    /** 发现的眼镜设备信息 */
+    public static class DeviceInfo {
+        public final String name;
+        public final String address;
+        public int rssi;
+        public DeviceInfo(String name, String address, int rssi) {
+            this.name = name;
+            this.address = address;
+            this.rssi = rssi;
+        }
+    }
+
+    // ========== 原生 BLE ==========
+    private BluetoothGatt mBluetoothGatt;
+    private BluetoothGattCharacteristic mNusNotifyChar;
+    private BluetoothGattCharacteristic mSerialWriteChar;
+    private BluetoothGattCharacteristic mSerialNotifyChar;
+
+    // 串口写队列（BLE GATT 同一时刻只允许一个未完成写操作，需串行发送）
+    private final LinkedList<byte[]> mSerialWriteQueue = new LinkedList<>();
+    private volatile boolean mSerialWriting = false;
+
+    // WiFi Direct (P2P) 连接（CY01 照片同步走 P2P + HTTP，而非普通 WiFi 热点）
+    private WifiP2pManager mWifiP2pManager;
+    private WifiP2pManager.Channel mWifiP2pChannel;
+    private BroadcastReceiver mWifiP2pReceiver;
+    private boolean mWifiP2pReceiverRegistered = false;
+    private volatile boolean mP2pConnecting = false;
+
+    // 眼镜上报的照片列表（用于选择性导入）
+    private final List<String> mPhotoList = new ArrayList<>();
+
+    // 周期重扫 P2P（眼镜可能在首次扫描后才开启 P2P，这里持续扫描直到连上）
+    private final Runnable mRediscoverP2pRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (AppState.getInstance().isSocketConnected) return;
+            if (mWifiP2pManager != null && mWifiP2pChannel != null) {
+                try {
+                    mWifiP2pManager.discoverPeers(mWifiP2pChannel, null);
+                } catch (Exception ignored) {}
+            }
+            mMainHandler.postDelayed(this, 5000);
+        }
+    };
+
+    // 原生 BLE 扫描器（SDK 的 startScan 在华为鸿蒙上失效，改用系统原生扫描）
+    private BluetoothLeScanner mNativeScanner;
+    private ScanCallback mNativeScanCallback;
+    private boolean mNativeScanning = false;
+
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper()) {
+        @Override
+        public void handleMessage(@NonNull Message msg) {
+            switch (msg.what) {
+                case MSG_CHECK_HEARTBEAT:
+                    handleHeartbeatCheck();
+                    mMainHandler.sendEmptyMessageDelayed(MSG_CHECK_HEARTBEAT, 5000);
+                    break;
+                case MSG_SEND_HEARTBEAT:
+                    if (AppState.getInstance().isBleConnected) {
+                        writeSerial(ACTION_DEVICE_HEART_BEAT, new byte[]{4, 1});
+                    }
+                    mMainHandler.sendEmptyMessageDelayed(MSG_SEND_HEARTBEAT, HEARTBEAT_SEND_INTERVAL);
+                    break;
+                case MSG_RESTART_SCAN:
+                    if (!AppState.getInstance().isBleConnected && !mConnecting) {
+                        Log.d(TAG, "Restarting BLE scan...");
+                        startNativeScan();
+                    }
+                    break;
+                case MSG_CONNECT_TIMEOUT:
+                    if (mConnecting && !AppState.getInstance().isBleConnected) {
+                        Log.w(TAG, "connectGatt 超时无回调，主动断开重试");
+                        postLog("⚠️ 连接超时，重新尝试...");
+                        mConnecting = false;
+                        if (mBluetoothGatt != null) {
+                            try { mBluetoothGatt.close(); } catch (Exception ignored) {}
+                            mBluetoothGatt = null;
+                        }
+                        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, 1000);
+                    }
+                    break;
+            }
+        }
+    };
+
+    private final BluetoothGattCallback mGattCallback = new BluetoothGattCallback() {
+        @Override
+        public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                Log.i(TAG, "GATT connected");
+                mConnecting = false;
+                mDataReceivedLogged = false;
+                mInitCommandsSent = false;
+                AppState.getInstance().isBleConnected = true;
+                lastHeartbeatTime = System.currentTimeMillis();
+                mReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+                mMainHandler.removeMessages(MSG_CONNECT_TIMEOUT);
+                mMainHandler.removeMessages(MSG_RESTART_SCAN);
+                stopNativeScan();
+                updateNotification("已连接: " + AppState.getInstance().bleName);
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_CONNECT_STATE, 1));
+                postLog("✅ BLE已连接，稍后开始发现服务...");
+                // 参照官方：连接成功后稍作延迟再发现服务，避免过早操作导致连接不稳
+                mMainHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (mBluetoothGatt != null && AppState.getInstance().isBleConnected) {
+                            if (!mBluetoothGatt.discoverServices()) {
+                                postLog("⚠️ discoverServices 返回 false，重试一次");
+                                mMainHandler.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        if (mBluetoothGatt != null) {
+                                            mBluetoothGatt.discoverServices();
+                                        }
+                                    }
+                                }, 1000);
+                            }
+                        }
+                    }
+                }, 500);
+            } else {
+                if (gatt != mBluetoothGatt) return; // 忽略旧设备的断开回调（切换设备时）
+                Log.w(TAG, "GATT disconnected status=" + status + " newState=" + newState);
+                onGattDisconnected();
+            }
+        }
+
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                postLog("⚠️ 服务发现失败 status=" + status);
+                return;
+            }
+
+            BluetoothGattService serialService = gatt.getService(UUID_SERIAL_PORT_SERVICE);
+            BluetoothGattService nusService = gatt.getService(UUID_NUS_SERVICE);
+
+            if (serialService != null) {
+                mSerialWriteChar = serialService.getCharacteristic(UUID_SERIAL_WRITE);
+                mSerialNotifyChar = serialService.getCharacteristic(UUID_SERIAL_NOTIFY);
+                postLog("✅ 找到串口数据服务 de5bf728");
+            } else {
+                postLog("⚠️ 未找到串口数据服务 de5bf728");
+            }
+            if (nusService != null) {
+                mNusNotifyChar = nusService.getCharacteristic(UUID_NUS_NOTIFY);
+                postLog("✅ 找到NUS控制服务 6e40fff0");
+            } else {
+                postLog("⚠️ 未找到NUS控制服务 6e40fff0");
+            }
+
+            // 订阅通知（官方在服务发现后订阅，不主动请求 MTU，避免个别固件因 MTU 请求断开）
+            enableNotification(mSerialNotifyChar);
+            enableNotification(mNusNotifyChar);
+        }
+
+        @Override
+        public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+            Log.i(TAG, "MTU changed: " + mtu + " status=" + status);
+            postLog("📶 BLE MTU=" + mtu);
+        }
+
+        @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            BluetoothGattCharacteristic ch = descriptor.getCharacteristic();
+            if (ch == null) return;
+            UUID uuid = ch.getUuid();
+            if (UUID_SERIAL_NOTIFY.equals(uuid)) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    postLog("✅ 串口数据通道通知已开启");
+                    if (!mInitCommandsSent) {
+                        mInitCommandsSent = true;
+                        mMainHandler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                sendInitCommands();
+                            }
+                        }, 300);
+                    }
+                } else {
+                    postLog("⚠️ 串口通知订阅失败 status=" + status);
+                }
+            } else if (UUID_NUS_NOTIFY.equals(uuid)) {
+                postLog(status == BluetoothGatt.GATT_SUCCESS
+                        ? "✅ NUS控制通道通知已开启" : "⚠️ NUS通知订阅失败");
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            onBleDataReceived(characteristic.getUuid(), characteristic.getValue());
+        }
+
+        @Override
+        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            // 串口写为无响应模式，这里不处理
+        }
+    };
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "GlassBleService onCreate");
+
+        createNotificationChannel();
+        startForeground(NOTIFICATION_ID, buildNotification("正在搜索AR眼镜..."));
+
+        AppState.getInstance().isBleConnected = false;
+        AppState.getInstance().isSystemReady = false;
+
+        collectBondedDevices();
+        logScanDiagnostics();
+        boolean scanOk = startNativeScan();
+        postLog(scanOk ? "🔍 开始扫描BLE设备..." : "⚠️ 扫描启动失败！");
+        postLog("💡 发现眼镜后，请点击「选择眼镜」进行连接");
+
+        mMainHandler.sendEmptyMessageDelayed(MSG_CHECK_HEARTBEAT, 10000);
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        mMainHandler.removeCallbacksAndMessages(null);
+        stopNativeScan();
+        cleanupWifiP2p();
+        if (mBluetoothGatt != null) {
+            try { mBluetoothGatt.disconnect(); } catch (Exception ignored) {}
+            try { mBluetoothGatt.close(); } catch (Exception ignored) {}
+            mBluetoothGatt = null;
+        }
+        mConnecting = false;
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+    }
+
+    // ========== 通知栏 ==========
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, "AR眼镜BLE服务", NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("保持与AR眼镜的BLE连接");
+            channel.setShowBadge(false);
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.createNotificationChannel(channel);
+        }
+    }
+
+    private Notification buildNotification(String text) {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent pi = PendingIntent.getActivity(this, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("AR眼镜连接")
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .build();
+    }
+
+    private void updateNotification(String text) {
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification(text));
+    }
+
+    // ========== 扫描 ==========
+
+    private void logScanDiagnostics() {
+        try {
+            BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+            boolean btOn = adapter != null && adapter.isEnabled();
+            postLog("📱 手机蓝牙: " + (btOn ? "已开启" : "未开启"));
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                boolean scanPerm = ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
+                boolean connectPerm = ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+                postLog("🔑 蓝牙扫描权限(BLUETOOTH_SCAN): " + (scanPerm ? "已授予" : "未授予"));
+                postLog("🔑 蓝牙连接权限(BLUETOOTH_CONNECT): " + (connectPerm ? "已授予" : "未授予"));
+            } else {
+                boolean locPerm = ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                postLog("🔑 定位权限(ACCESS_FINE_LOCATION): " + (locPerm ? "已授予" : "未授予"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "logScanDiagnostics error", e);
+        }
+    }
+
+    private void stopNativeScan() {
+        try {
+            if (mNativeScanner != null && mNativeScanCallback != null && mNativeScanning) {
+                mNativeScanner.stopScan(mNativeScanCallback);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "stopNativeScan error", e);
+        }
+        mNativeScanning = false;
+    }
+
+    private boolean startNativeScan() {
+        try {
+            BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+            if (adapter == null || !adapter.isEnabled()) {
+                postLog("⚠️ 原生扫描失败：蓝牙未开启");
+                return false;
+            }
+            mNativeScanner = adapter.getBluetoothLeScanner();
+            if (mNativeScanner == null) {
+                postLog("⚠️ 原生扫描失败：BluetoothLeScanner不可用");
+                return false;
+            }
+
+            if (mNativeScanCallback == null) {
+                mNativeScanCallback = new ScanCallback() {
+                    @Override
+                    public void onScanResult(int callbackType, ScanResult result) {
+                        handleNativeScanResult(result);
+                    }
+
+                    @Override
+                    public void onBatchScanResults(List<ScanResult> results) {
+                        for (ScanResult r : results) {
+                            handleNativeScanResult(r);
+                        }
+                    }
+
+                    @Override
+                    public void onScanFailed(int errorCode) {
+                        Log.e(TAG, "Native scan failed: " + errorCode);
+                        postLog("⚠️ 原生扫描失败: errorCode=" + errorCode);
+                        mNativeScanning = false;
+                    }
+                };
+            }
+
+            stopNativeScan();
+            ScanSettings settings = new ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .build();
+            mNativeScanner.startScan(null, settings, mNativeScanCallback);
+            mNativeScanning = true;
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "startNativeScan error", e);
+            postLog("⚠️ 原生扫描启动失败: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void handleNativeScanResult(ScanResult result) {
+        if (result == null) return;
+        BluetoothDevice device = result.getDevice();
+        if (device == null) return;
+        String deviceName = device.getName();
+        short rssi = (short) result.getRssi();
+
+        if (!mScanFirstDeviceLogged) {
+            mScanFirstDeviceLogged = true;
+            postLog("🔍 扫描已工作，附近有BLE设备: " +
+                    (deviceName != null ? deviceName : "(无名设备)") + " rssi=" + rssi);
+        }
+
+        if (deviceName != null && !deviceName.isEmpty() && isTargetDevice(deviceName)) {
+            addDiscoveredDevice(deviceName, device.getAddress(), rssi);
+        }
+    }
+
+    /** 记录（去重）发现的眼镜设备，并通知 UI 刷新列表 */
+    private void addDiscoveredDevice(String deviceName, String address, int rssi) {
+        if (address == null || address.isEmpty()) return;
+        boolean isNew = false;
+        synchronized (mDiscoveredDevices) {
+            DeviceInfo existing = mDiscoveredDevices.get(address);
+            if (existing == null) {
+                mDiscoveredDevices.put(address, new DeviceInfo(deviceName, address, rssi));
+                isNew = true;
+            } else {
+                existing.rssi = rssi;
+            }
+        }
+        if (isNew) {
+            Log.i(TAG, "Found TARGET BLE (native): " + deviceName + " rssi=" + rssi);
+            postLog("🎯 发现眼镜: " + deviceName + " (" + address + ")");
+        }
+    }
+
+    /** 获取当前已发现的眼镜设备列表（快照） */
+    public List<DeviceInfo> getDiscoveredDevices() {
+        synchronized (mDiscoveredDevices) {
+            return new ArrayList<>(mDiscoveredDevices.values());
+        }
+    }
+
+    private void collectBondedDevices() {
+        try {
+            BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+            if (adapter == null || !adapter.isEnabled()) {
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TOAST, "请先打开手机蓝牙"));
+                return;
+            }
+            for (BluetoothDevice device : adapter.getBondedDevices()) {
+                String name = device.getName();
+                String addr = device.getAddress();
+                Log.i(TAG, "Bonded device: " + name + " (" + addr + ")");
+                if (isTargetDevice(name)) {
+                    Log.i(TAG, ">>> Found bonded target: " + name);
+                    addDiscoveredDevice(name, addr, -127);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking bonded devices", e);
+        }
+    }
+
+    private boolean isTargetDevice(String deviceName) {
+        if (deviceName == null) return false;
+        String upperName = deviceName.toUpperCase();
+        for (String keyword : DEVICE_NAME_KEYWORDS) {
+            if (upperName.contains(keyword.toUpperCase())) return true;
+        }
+        return false;
+    }
+
+    // ========== 连接 ==========
+
+    /** 连接指定眼镜（多设备时由用户手动选择后调用） */
+    public void connectToDevice(String bleAddress, String deviceName) {
+        if (bleAddress == null || bleAddress.isEmpty()) return;
+        if (mConnecting) return; // 正在连接中
+        // 已连接其它设备时，先断开旧连接再连新设备
+        if (mBluetoothGatt != null) {
+            postLog("ℹ️ 切换设备，断开当前连接");
+            try { mBluetoothGatt.disconnect(); } catch (Exception ignored) {}
+            try { mBluetoothGatt.close(); } catch (Exception ignored) {}
+            mBluetoothGatt = null;
+        }
+        AppState.getInstance().isBleConnected = false;
+        mConnecting = true;
+        AppState.getInstance().bleName = deviceName;
+        AppState.getInstance().bleAddress = bleAddress;
+        Log.i(TAG, ">>> Connecting: " + deviceName + " (" + bleAddress + ")");
+        updateNotification("正在连接: " + deviceName);
+        stopNativeScan();
+        try {
+            BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+            if (adapter == null) {
+                mConnecting = false;
+                return;
+            }
+            BluetoothDevice device = adapter.getRemoteDevice(bleAddress);
+            // 官方用 transport=TRANSPORT_LE 明确走 BLE，避免双模设备 TRANSPORT_AUTO 导致连接不稳
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                mBluetoothGatt = device.connectGatt(this, false, mGattCallback, BluetoothDevice.TRANSPORT_LE);
+            } else {
+                mBluetoothGatt = device.connectGatt(this, false, mGattCallback);
+            }
+            if (mBluetoothGatt == null) {
+                postLog("⚠️ connectGatt 返回 null");
+                mConnecting = false;
+                mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, 3000);
+                return;
+            }
+            postLog("🔗 发起BLE连接...");
+            mMainHandler.removeMessages(MSG_CONNECT_TIMEOUT);
+            mMainHandler.sendEmptyMessageDelayed(MSG_CONNECT_TIMEOUT, CONNECT_TIMEOUT_MS);
+        } catch (Exception e) {
+            Log.e(TAG, "connectGatt error", e);
+            postLog("⚠️ 连接失败: " + e.getMessage());
+            mConnecting = false;
+            mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, 3000);
+        }
+    }
+
+    private void onGattDisconnected() {
+        if (!AppState.getInstance().isBleConnected && mBluetoothGatt == null) {
+            return; // 已处理过
+        }
+        AppState.getInstance().isBleConnected = false;
+        AppState.getInstance().isSystemReady = false;
+        mConnecting = false;
+        mInitCommandsSent = false;
+        mDataReceivedLogged = false;
+        mNusNotifyChar = null;
+        mSerialWriteChar = null;
+        mSerialNotifyChar = null;
+
+        if (mBluetoothGatt != null) {
+            try { mBluetoothGatt.close(); } catch (Exception ignored) {}
+            mBluetoothGatt = null;
+        }
+
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_CONNECT_STATE, 0));
+        updateNotification("正在搜索AR眼镜...");
+
+        mMainHandler.removeMessages(MSG_SEND_HEARTBEAT);
+        mMainHandler.removeMessages(MSG_RESTART_SCAN);
+        mMainHandler.removeMessages(MSG_CONNECT_TIMEOUT);
+        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, mReconnectDelay);
+        mReconnectDelay = Math.min(mReconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+    }
+
+    private void handleHeartbeatCheck() {
+        if (AppState.getInstance().isBleConnected) {
+            long timeSince = System.currentTimeMillis() - lastHeartbeatTime;
+            if (timeSince > HEARTBEAT_TIMEOUT_NORMAL) {
+                Log.w(TAG, "Heartbeat timeout (" + timeSince + "ms), reconnecting...");
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TOAST,
+                        "蓝牙连接超时，正在重连..."));
+                if (mBluetoothGatt != null) {
+                    try { mBluetoothGatt.disconnect(); } catch (Exception ignored) {}
+                }
+            }
+        }
+    }
+
+    // ========== 协议 ==========
+
+    private boolean enableNotification(BluetoothGattCharacteristic ch) {
+        if (ch == null || mBluetoothGatt == null) return false;
+        try {
+            BluetoothGattDescriptor desc = ch.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG);
+            if (desc == null) {
+                postLog("⚠️ 特征无CCCD: " + ch.getUuid());
+                return false;
+            }
+            if (!mBluetoothGatt.setCharacteristicNotification(ch, true)) {
+                postLog("⚠️ setCharacteristicNotification失败: " + ch.getUuid());
+                return false;
+            }
+            desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            return mBluetoothGatt.writeDescriptor(desc);
+        } catch (Exception e) {
+            Log.e(TAG, "enableNotification error", e);
+            return false;
+        }
+    }
+
+    private void sendInitCommands() {
+        writeSerial(ACTION_GLASSES_BATTERY, new byte[]{0, 0});       // 66 电量
+        writeSerial(ACTION_DEVICE_INFO, new byte[]{0, 0});           // 67 设备信息
+        writeSerial(ACTION_DEVICE_WEAR_SUPPORT, new byte[]{1, 0});   // 71 穿戴支持
+        writeSerial(ACTION_DEVICE_HEART_BEAT, new byte[]{4, 1});     // 69 心跳
+        postLog("📤 已发送初始化命令（电量/设备信息/穿戴支持/心跳）");
+
+        // 启动周期心跳
+        mMainHandler.removeMessages(MSG_SEND_HEARTBEAT);
+        mMainHandler.sendEmptyMessageDelayed(MSG_SEND_HEARTBEAT, HEARTBEAT_SEND_INTERVAL);
+    }
+
+    /** 眼镜控制命令（action=65），官方用于开关照片同步 / 重置 P2P 等 */
+    private void glassesControl(byte[] payload) {
+        writeSerial(ACTION_GLASSES_CONTROL, payload);
+    }
+
+    /** 将帧加入串口写队列并触发发送 */
+    private void writeSerial(int action, byte[] payload) {
+        if (mSerialWriteChar == null || mBluetoothGatt == null) {
+            postLog("⚠️ 串口写特征未就绪");
+            return;
+        }
+        byte[] frame = buildSerialPacket(action, payload);
+        synchronized (mSerialWriteQueue) {
+            mSerialWriteQueue.add(frame);
+        }
+        processSerialWriteQueue();
+    }
+
+    /**
+     * 串行发送队列中的帧。BLE GATT 同一时刻只允许一个未完成写操作，
+     * 连续调用 writeCharacteristic 会导致后续返回 false（即“写入串口失败”）。
+     * 这里每次只发一帧，间隔 SERIAL_WRITE_INTERVAL_MS 后再发下一帧。
+     */
+    private void processSerialWriteQueue() {
+        if (mSerialWriting) return;
+        byte[] frame;
+        synchronized (mSerialWriteQueue) {
+            if (mSerialWriteQueue.isEmpty()) return;
+            frame = mSerialWriteQueue.poll();
+        }
+        if (mSerialWriteChar == null || mBluetoothGatt == null) {
+            mSerialWriting = false;
+            return;
+        }
+        mSerialWriting = true;
+        final int action = frame.length > 1 ? (frame[1] & 0xFF) : -1;
+        try {
+            mSerialWriteChar.setValue(frame);
+            mSerialWriteChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+            if (!mBluetoothGatt.writeCharacteristic(mSerialWriteChar)) {
+                postLog("⚠️ 写入串口失败 action=" + action);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "writeSerial error", e);
+        }
+        mMainHandler.postDelayed(() -> {
+            mSerialWriting = false;
+            processSerialWriteQueue();
+        }, SERIAL_WRITE_INTERVAL_MS);
+    }
+
+    /** 构造串口 0xBC 帧：[0xBC][action][len低][len高][CRC16低][CRC16高][payload] */
+    private byte[] buildSerialPacket(int action, byte[] payload) {
+        int len = (payload == null) ? 0 : payload.length;
+        byte[] frame = new byte[len + 6];
+        frame[0] = (byte) 0xBC;
+        frame[1] = (byte) action;
+        if (len > 0) {
+            frame[2] = (byte) (len & 0xFF);
+            frame[3] = (byte) ((len >> 8) & 0xFF);
+            int crc = crc16(payload);
+            frame[4] = (byte) (crc & 0xFF);
+            frame[5] = (byte) ((crc >> 8) & 0xFF);
+            System.arraycopy(payload, 0, frame, 6, len);
+        } else {
+            frame[2] = 0;
+            frame[3] = 0;
+            frame[4] = (byte) 0xFF;
+            frame[5] = (byte) 0xFF;
+        }
+        return frame;
+    }
+
+    /** CRC16/MODBUS，初始值 0xFFFF，反转多项式 0xA001 */
+    private int crc16(byte[] data) {
+        if (data == null || data.length == 0) return 0xFFFF;
+        int crc = 0xFFFF;
+        for (byte b : data) {
+            crc ^= (b & 0xFF);
+            for (int i = 0; i < 8; i++) {
+                if ((crc & 1) != 0) {
+                    crc = (crc >> 1) ^ 0xA001;
+                } else {
+                    crc >>= 1;
+                }
+            }
+        }
+        return crc & 0xFFFF;
+    }
+
+    // ========== 接收 ==========
+
+    private void onBleDataReceived(UUID uuid, byte[] data) {
+        lastHeartbeatTime = System.currentTimeMillis();
+        if (data == null || data.length == 0) return;
+
+        if (!mDataReceivedLogged) {
+            mDataReceivedLogged = true;
+            postLog("📡 收到眼镜BLE数据（" + data.length + "字节），通道正常");
+            if (!AppState.getInstance().isSystemReady) {
+                AppState.getInstance().isSystemReady = true;
+                postLog("✅ 数据通道已打通，系统就绪");
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_SYSTEM_READY));
+            }
+        }
+
+        if (UUID_SERIAL_NOTIFY.equals(uuid)) {
+            logSerialFrame(data);
+        } else if (UUID_NUS_NOTIFY.equals(uuid)) {
+            postLog("📩 NUS数据: " + toHex(data, 16));
+        }
+    }
+
+    private void logSerialFrame(byte[] data) {
+        if (data.length >= 2 && (data[0] & 0xFF) == 0xBC) {
+            int action = data[1] & 0xFF;
+            int len = 0;
+            if (data.length >= 4) {
+                len = (data[2] & 0xFF) | ((data[3] & 0xFF) << 8);
+            }
+            postLog("📩 串口帧 action=" + action + " (" + describeAction(action)
+                    + ") 长度=" + len + " 数据=" + toHex(data, 32));
+            // 解析眼镜通过 BLE 上报的 IP（数据上报 action=115，首字节 0x08 表示 IP）
+            parseDataReporting(action, data);
+        } else {
+            postLog("📩 串口原始数据: " + toHex(data, 32));
+        }
+    }
+
+    /** 解析 action=115（数据上报）帧：type=0x08 时携带眼镜 IP（4 字节，如 192.168.49.115） */
+    private void parseDataReporting(int action, byte[] data) {
+        if (action != ACTION_DEVICE_DATA_REPORTING) return;
+        if (data.length >= 11 && (data[6] & 0xFF) == 0x08) {
+            int a = data[7] & 0xFF;
+            int b = data[8] & 0xFF;
+            int c = data[9] & 0xFF;
+            int d = data[10] & 0xFF;
+            String ip = a + "." + b + "." + c + "." + d;
+            postLog("🎯 眼镜上报IP: " + ip);
+            onGlassesIpObtained(ip);
+        }
+    }
+
+    private void onGlassesIpObtained(String ip) {
+        if (ip == null || ip.isEmpty()) return;
+        AppState.getInstance().serverIp = ip;
+        AppState.getInstance().isSocketConnected = true;
+        postLog("✅ 眼镜IP已获取: " + ip);
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_WIFI_CONNECT_RESULT, 1));
+        fetchPhotoList();
+    }
+
+    private String describeAction(int action) {
+        switch (action) {
+            case ACTION_SYNC_TIME: return "同步时间";
+            case ACTION_GLASSES_CONTROL: return "眼镜控制";
+            case ACTION_GLASSES_BATTERY: return "电量";
+            case ACTION_DEVICE_INFO: return "设备信息";
+            case ACTION_DEVICE_HEART_BEAT: return "心跳";
+            case ACTION_DEVICE_WEAR: return "佩戴状态";
+            case ACTION_DEVICE_WEAR_SUPPORT: return "穿戴支持";
+            case ACTION_DEVICE_DATA_REPORTING: return "数据上报";
+            case ACTION_PICTURE_THUMBNAILS: return "照片缩略图";
+            default: return "未知";
+        }
+    }
+
+    private String toHex(byte[] data, int maxBytes) {
+        if (data == null) return "";
+        StringBuilder sb = new StringBuilder();
+        int n = Math.min(data.length, maxBytes);
+        for (int i = 0; i < n; i++) {
+            sb.append(String.format("%02X ", data[i] & 0xFF));
+        }
+        return sb.toString().trim();
+    }
+
+    // ========== 日志 ==========
+
+    private void postLog(String text) {
+        mMainHandler.post(() -> EventBus.getDefault().post(new EventMsg(EventMsg.MSG_LOG, text)));
+    }
+
+    private void toast(String text) {
+        mMainHandler.post(() -> EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TOAST, text)));
+    }
+
+    // ========== 外部 API（供 MainActivity 调用） ==========
+
+    /**
+     * 一键同步照片：BLE 通知眼镜开启照片同步（进入照片导入模式）→ 手机通过 WiFi Direct
+     * 连接眼镜 → 通过 HTTP 拉取照片列表 → 用户勾选后选择性下载。
+     */
+    public void syncPhotos() {
+        if (!AppState.getInstance().isBleConnected) {
+            toast("请先等待蓝牙连接眼镜");
+            return;
+        }
+        startPhotoSync();
+    }
+
+    /**
+     * 核心流程（CY01 照片同步走 WiFi Direct + HTTP，而非普通 WiFi 热点）：
+     * 1. BLE 发送 glassesControl({2,1,4,1}) 让眼镜进入照片导入模式（开启 P2P 组网）
+     * 2. 启动 WiFi Direct（P2P）扫描，发现并连接眼镜
+     * 3. 连接成功后从 WifiP2pInfo.groupOwnerAddress 获取眼镜 IP
+     * 4. 拉取照片列表，交由用户选择后下载
+     */
+    private void startPhotoSync() {
+        if (AppState.getInstance().serverIp != null
+                && !AppState.getInstance().serverIp.isEmpty()
+                && AppState.getInstance().isSocketConnected) {
+            fetchPhotoList();
+            return;
+        }
+
+        mP2pConnecting = false;
+        postLog("🔄 正在开启眼镜照片同步（WiFi Direct）...");
+        // 官方导入照片命令：glassesControl(new byte[]{2, 1, 4, 1})
+        glassesControl(new byte[]{2, 1, 4, 1});
+
+        // 等眼镜开启 P2P 后再扫描
+        mMainHandler.postDelayed(this::startWifiP2p, 2000);
+    }
+
+    /** 计算眼镜 WiFi/P2P 名称（设备名_MAC），用于 P2P 设备匹配 */
+    private String computeGlassesWifiSsid() {
+        AppState st = AppState.getInstance();
+        String name = st.bleName != null ? st.bleName : "";
+        String mac = st.bleAddress != null ? st.bleAddress.replace(":", "") : "";
+        String ssid;
+        if (name.contains("_")) {
+            String[] parts = name.split("_");
+            String str = parts.length > 2 ? parts[parts.length - 1] : parts[0];
+            if (str.length() > 20) str = str.substring(0, 20);
+            ssid = str + "_" + mac;
+        } else {
+            ssid = name + "_" + mac;
+        }
+        return ssid;
+    }
+
+    /** 初始化并启动 WiFi Direct 扫描 */
+    private void startWifiP2p() {
+        try {
+            mWifiP2pManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
+            if (mWifiP2pManager == null) {
+                postLog("⚠️ 设备不支持 WiFi Direct");
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_WIFI_CONNECT_RESULT, 0));
+                return;
+            }
+            mWifiP2pChannel = mWifiP2pManager.initialize(this, Looper.getMainLooper(), null);
+            registerWifiP2pReceiver();
+            postLog("🔍 开始扫描眼镜 P2P 设备...");
+            mWifiP2pManager.discoverPeers(mWifiP2pChannel, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    postLog("ℹ️ P2P 扫描已启动");
+                }
+
+                @Override
+                public void onFailure(int reason) {
+                    postLog("⚠️ P2P 扫描失败: " + reason + "（请在系统 WiFi 设置中开启 WiFi Direct）");
+                }
+            });
+            mMainHandler.removeCallbacks(mRediscoverP2pRunnable);
+            mMainHandler.postDelayed(mRediscoverP2pRunnable, 5000);
+        } catch (Exception e) {
+            Log.e(TAG, "startWifiP2p error", e);
+            postLog("⚠️ 启动 P2P 失败: " + e.getMessage());
+            EventBus.getDefault().post(new EventMsg(EventMsg.MSG_WIFI_CONNECT_RESULT, 0));
+        }
+    }
+
+    private void registerWifiP2pReceiver() {
+        if (mWifiP2pReceiverRegistered) return;
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
+        filter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
+        filter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
+        mWifiP2pReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent == null ? null : intent.getAction();
+                if (action == null) return;
+                if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
+                    onWifiP2pPeersChanged();
+                } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
+                    WifiP2pInfo info = intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_INFO);
+                    if (info != null && info.groupFormed) {
+                        onWifiP2pConnected(info);
+                    } else {
+                        mP2pConnecting = false;
+                    }
+                }
+            }
+        };
+        registerReceiver(mWifiP2pReceiver, filter);
+        mWifiP2pReceiverRegistered = true;
+    }
+
+    private void onWifiP2pPeersChanged() {
+        if (mWifiP2pManager == null || mWifiP2pChannel == null || mP2pConnecting) return;
+        mWifiP2pManager.requestPeers(mWifiP2pChannel, new WifiP2pManager.PeerListListener() {
+            @Override
+            public void onPeersAvailable(WifiP2pDeviceList peers) {
+                Collection<WifiP2pDevice> list = peers.getDeviceList();
+                for (WifiP2pDevice device : list) {
+                    if (matchesGlassesP2p(device)) {
+                        postLog("✅ 发现眼镜 P2P 设备: " + device.deviceName);
+                        connectToP2pDevice(device);
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    private boolean matchesGlassesP2p(WifiP2pDevice device) {
+        String name = device == null ? null : device.deviceName;
+        if (name == null) return false;
+        String wifiName = computeGlassesWifiSsid();
+        if (!wifiName.isEmpty() && name.equalsIgnoreCase(wifiName)) return true;
+        String mac = AppState.getInstance().bleAddress != null
+                ? AppState.getInstance().bleAddress.replace(":", "") : "";
+        if (!mac.isEmpty() && name.endsWith(mac)) return true;
+        String bleName = AppState.getInstance().bleName != null
+                ? AppState.getInstance().bleName.replace(" ", "") : "";
+        if (!bleName.isEmpty() && name.replace(" ", "").startsWith(bleName)) return true;
+        return false;
+    }
+
+    private void connectToP2pDevice(WifiP2pDevice device) {
+        if (mP2pConnecting) return;
+        mP2pConnecting = true;
+        try {
+            WifiP2pConfig config = new WifiP2pConfig();
+            config.deviceAddress = device.deviceAddress;
+            config.wps.setup = 0; // PBC，与官方一致
+            mWifiP2pManager.connect(mWifiP2pChannel, config, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    postLog("📶 P2P 连接请求已发送");
+                }
+
+                @Override
+                public void onFailure(int reason) {
+                    mP2pConnecting = false;
+                    postLog("⚠️ P2P 连接失败: " + reason);
+                }
+            });
+        } catch (Exception e) {
+            mP2pConnecting = false;
+            postLog("⚠️ P2P 连接异常: " + e.getMessage());
+        }
+    }
+
+    private void onWifiP2pConnected(WifiP2pInfo info) {
+        mP2pConnecting = false;
+        if (info == null || !info.groupFormed) {
+            postLog("⚠️ P2P 未成功组网");
+            return;
+        }
+        if (info.isGroupOwner) {
+            // 手机成为组长时，眼镜作为客户端加入，其 IP 会通过 BLE action=115(type=8) 上报
+            postLog("ℹ️ 手机成为 P2P 组长，等待眼镜上报 IP...");
+            return;
+        }
+        // 眼镜为组长时，groupOwnerAddress 即眼镜 IP（兜底）
+        if (info.groupOwnerAddress != null) {
+            onGlassesIpObtained(info.groupOwnerAddress.getHostAddress());
+        }
+    }
+
+    private void cleanupWifiP2p() {
+        mMainHandler.removeCallbacks(mRediscoverP2pRunnable);
+        try {
+            if (mWifiP2pReceiverRegistered && mWifiP2pReceiver != null) {
+                unregisterReceiver(mWifiP2pReceiver);
+                mWifiP2pReceiverRegistered = false;
+                mWifiP2pReceiver = null;
+            }
+            if (mWifiP2pManager != null && mWifiP2pChannel != null) {
+                mWifiP2pManager.removeGroup(mWifiP2pChannel, null);
+            }
+            if (mWifiP2pChannel != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    mWifiP2pChannel.close();
+                }
+                mWifiP2pChannel = null;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "cleanupWifiP2p error", e);
+        }
+        mWifiP2pManager = null;
+        mP2pConnecting = false;
+    }
+
+    /** 通过 HTTP 拉取眼镜照片列表（media.config，失败回退 vf_list.txt），并通知 UI 展示勾选 */
+    private void fetchPhotoList() {
+        final String ip = AppState.getInstance().serverIp;
+        if (ip == null || ip.isEmpty()) {
+            postLog("⚠️ 眼镜IP未知，无法获取照片列表");
+            finishSync(0);
+            return;
+        }
+        new Thread(() -> {
+            try {
+                // 参照官方：拿到 IP 后稍作延迟，等眼镜 HTTP 服务就绪
+                Thread.sleep(1500);
+
+                String[] files = null;
+                String fileBaseUrl = "";
+                String config = null;
+
+                for (int attempt = 1; attempt <= 3 && (config == null || config.trim().isEmpty()); attempt++) {
+                    config = httpGet("http://" + ip + "/files/media.config");
+                    if (config == null || config.trim().isEmpty()) {
+                        postLog("⚠️ media.config 未获取到(第" + attempt + "次)");
+                        if (attempt < 3) Thread.sleep(1000);
+                    }
+                }
+
+                if (config != null && !config.trim().isEmpty()) {
+                    files = splitLines(config);
+                    fileBaseUrl = "http://" + ip + "/files/";
+                } else {
+                    postLog("ℹ️ media.config 为空，尝试 vf_list.txt...");
+                    config = httpGet("http://" + ip + ":80/storage/sd0/C/DCIM/1/vf_list.txt");
+                    if (config != null && !config.trim().isEmpty()) {
+                        files = splitLines(config);
+                        fileBaseUrl = "http://" + ip + ":80/storage/sd0/C/DCIM/1/";
+                    }
+                }
+
+                if (files == null || files.length == 0) {
+                    postLog("⚠️ 未获取到照片列表（眼镜里可能没有照片，或文件服务未就绪）");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, new ArrayList<String>()));
+                    finishSync(0);
+                    return;
+                }
+
+                synchronized (mPhotoList) {
+                    mPhotoList.clear();
+                    for (String name : files) {
+                        String t = name.trim();
+                        if (!t.isEmpty()) mPhotoList.add(t);
+                    }
+                }
+                // 先把所有照片下载到临时目录，供勾选弹窗展示缩略图
+                downloadAllToTemp(fileBaseUrl);
+            } catch (Exception e) {
+                Log.e(TAG, "fetchPhotoList error", e);
+                postLog("⚠️ 获取照片列表失败: " + e.getMessage());
+                finishSync(0);
+            }
+        }).start();
+    }
+
+    /** 下载全部照片到临时目录，供勾选弹窗展示缩略图 */
+    private void downloadAllToTemp(String fileBaseUrl) {
+        List<String> names;
+        synchronized (mPhotoList) {
+            names = new ArrayList<>(mPhotoList);
+        }
+        File tmpDir = getTmpDir();
+        clearDir(tmpDir);
+        int total = names.size();
+        int success = 0;
+        for (String name : names) {
+            String n = name.trim();
+            if (n.isEmpty()) continue;
+            File out = new File(tmpDir, n);
+            if (httpDownload(fileBaseUrl + n, out, n)) {
+                success++;
+                postLog("📥 下载缩略图 " + success + "/" + total + ": " + n);
+            }
+        }
+        postLog("📥 缩略图下载完成 " + success + "/" + total + "，请选择要导入的照片");
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, names));
+    }
+
+    /** 清空目录内容 */
+    private void clearDir(File dir) {
+        if (dir == null || !dir.exists()) return;
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) clearDir(f);
+            else f.delete();
+        }
+    }
+
+    private File getTmpDir() {
+        File dir = new File(getExternalFilesDir(null), "glass_media/tmp");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    /** 保留用户勾选的照片（移动到正式目录），删除未勾选的临时文件 */
+    public void finalizeImport(List<String> selected) {
+        final List<String> sel = (selected == null) ? new ArrayList<>() : selected;
+        postLog("📥 保留 " + sel.size() + " 张照片...");
+        new Thread(() -> {
+            try {
+                Set<String> keep = new HashSet<>(sel);
+                File tmpDir = getTmpDir();
+                File photoDir = getPhotoDir();
+                int kept = 0;
+                List<String> names;
+                synchronized (mPhotoList) {
+                    names = new ArrayList<>(mPhotoList);
+                }
+                for (String name : names) {
+                    String n = name.trim();
+                    if (n.isEmpty()) continue;
+                    File src = new File(tmpDir, n);
+                    if (!src.exists()) continue;
+                    if (keep.contains(n)) {
+                        File dst = new File(photoDir, n);
+                        if (moveFile(src, dst)) {
+                            kept++;
+                            EventBus.getDefault().post(new EventMsg(EventMsg.MSG_FILE_RECV_FINISH, dst.getAbsolutePath()));
+                        }
+                    } else {
+                        src.delete();
+                    }
+                }
+                postLog("📥 照片导入完成: 保留 " + kept + " 张");
+                finishSync(kept);
+            } catch (Exception e) {
+                Log.e(TAG, "finalizeImport error", e);
+                postLog("⚠️ 导入失败: " + e.getMessage());
+                finishSync(0);
+            }
+        }).start();
+    }
+
+    /** 移动文件（跨目录），renameTo 失败时降级为复制 */
+    private boolean moveFile(File src, File dst) {
+        try {
+            if (dst.exists()) dst.delete();
+            if (src.renameTo(dst)) return true;
+            InputStream in = new java.io.FileInputStream(src);
+            FileOutputStream out = new FileOutputStream(dst);
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+            out.flush();
+            out.close();
+            in.close();
+            src.delete();
+            return dst.exists();
+        } catch (Exception e) {
+            Log.e(TAG, "moveFile error", e);
+            return false;
+        }
+    }
+
+    /** 用户在勾选弹窗中取消：清理临时文件并断开连接 */
+    public void cancelSync() {
+        postLog("ℹ️ 已取消本次导入");
+        new Thread(() -> {
+            clearDir(getTmpDir());
+            finishSync(0);
+        }).start();
+    }
+
+    /** 同步结束（成功或失败）：复位连接状态并清理 P2P，避免 UI 卡在“传输中” */
+    private void finishSync(int count) {
+        AppState.getInstance().isSocketConnected = false;
+        mMainHandler.post(this::cleanupWifiP2p);
+        // 通知眼镜退出照片导入模式，恢复正常拍照操作（官方 fileDownloadComplete 使用的命令）
+        mMainHandler.post(() -> {
+            glassesControl(new byte[]{2, 1, 9});
+            postLog("ℹ️ 已通知眼镜退出照片导入模式");
+        });
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_SYNC_COMPLETE, count));
+    }
+
+    private String[] splitLines(String s) {
+        List<String> list = new LinkedList<>();
+        for (String line : s.split("\\r?\\n")) {
+            String t = line.trim();
+            if (!t.isEmpty()) list.add(t);
+        }
+        return list.toArray(new String[0]);
+    }
+
+    private File getPhotoDir() {
+        File dir = new File(getExternalFilesDir(null), "glass_media/photos");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    private String httpGet(String urlStr) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setRequestMethod("GET");
+            int code = conn.getResponseCode();
+            if (code != 200) {
+                postLog("⚠️ HTTP " + code + ": " + urlStr);
+                return null;
+            }
+            InputStream is = conn.getInputStream();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append('\n');
+            }
+            reader.close();
+            return sb.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "httpGet error " + urlStr, e);
+            postLog("⚠️ HTTP请求失败: " + urlStr + " (" + e.getClass().getSimpleName() + ": " + e.getMessage() + ")");
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private boolean httpDownload(String urlStr, File outFile, String name) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(30000);
+            conn.setRequestMethod("GET");
+            int code = conn.getResponseCode();
+            if (code != 200) {
+                postLog("⚠️ 下载失败(" + code + "): " + name);
+                return false;
+            }
+            InputStream is = conn.getInputStream();
+            FileOutputStream fos = new FileOutputStream(outFile);
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = is.read(buf)) > 0) {
+                fos.write(buf, 0, len);
+            }
+            fos.flush();
+            fos.close();
+            is.close();
+            postLog("✅ 已保存: " + name);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "httpDownload error " + urlStr, e);
+            postLog("⚠️ 下载失败: " + name + " (" + e.getMessage() + ")");
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+}
