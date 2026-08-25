@@ -13,22 +13,34 @@
 - `GlassBleService` 实现眼镜发现/连接、进入照片导入模式、WiFi Direct 组网、HTTP 下载和退出导入模式。
 - `ImageAnalyzer` 定义二维码、防松线、万用表三个接口，但 `DefaultImageAnalyzer` 均为占位实现；
   当前 UI 没有调用 `Vision`。
+- 2026-08-25：482张现场全图已在Git外完成SHA-256/尺寸/清晰度清单，按时间与pHash划为177个场景组；
+  训练424张、内部验证58张，场景泄漏0。
+- `ml/` 已实现可复现的清单、分组、HSV色标候选、COCO输出、分层复核包和训练质量门。
+- HSV候选v2生成1,993个候选；AI逐候选复核60张/257个候选，接受151、拒绝97、需人工9，精确率
+  60.89%，低于80%训练门；D-FINE-N训练未启动。
+- Android已加入全图多目标结构和防松线几何公式；关键点低置信度或现场阈值未标定时强制返回
+  `UNCERTAIN`。这部分是模型无关核心，尚未接入真实检测推理。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
   `D9B54B8C9A2402FA3FFC83C32229397A08112610EAE4C28D522D122851263E20`。
-- 2026-08-25：`.\gradlew.bat testDebugUnitTest` 成功，但结果为 `NO-SOURCE`，证明当前仓库没有单元测试，
-  不能视为功能测试通过。
+- 2026-08-25：已加入Python数据工具测试和Android几何JUnit测试；本机测试与APK构建证据见
+  `docs/validation/2026-08-25-full-image-phase1.md`。
+- Phase 1 debug APK为28,325,108 bytes，SHA-256
+  `F795FA260905DAF85B387EF3EE1A106C4EAB7B2593A6CFA9410EB23CB46431F6`。
 - 尚未完成真实手机/眼镜验证。
 
 ## Active Work
 
-已完成项目初始化、会议原始材料归档、需求提取、代码缺口分析和两周 MVP 设计。尚未开始功能实现。
+全图防松线Phase 1代码底座已实现；标注质量门正确拒绝训练。当前工作重心从“继续调HSV”转为建立
+80—120个场景组的人工确认紧固件框与色标端点真值。
 
 ## Run
 
 ```powershell
 .\gradlew.bat assembleDebug
+$env:CRRC_VISION_DATA_ROOT='E:\Work\京新数智\识动hicool\中车眼镜数据资产'
+.\.venv\Scripts\python.exe -m pytest ml/tests -v
 ```
 
 APK 预期输出：`app/build/outputs/apk/debug/app-debug.apk`。
@@ -37,6 +49,7 @@ APK 预期输出：`app/build/outputs/apk/debug/app-debug.apk`。
 
 ```powershell
 .\gradlew.bat clean assembleDebug
+.\.venv\Scripts\python.exe -m pytest ml/tests -v
 git status --short
 ```
 
@@ -47,13 +60,15 @@ git status --short
 - 当前代码来自一次性上游提交，且没有 LICENSE；代码、K900 AAR 和 native 库授权边界未确认。
 - 会议没有冻结眼镜准确型号、固件、手机型号、协议版本和“rocket”品牌转写。
 - 三种识别算法缺模型、样本、阈值和可量化验收指标。
+- 当前482张来自同一约44分钟采集，缺跨车辆、跨手机、跨光照和独立测试集；没有受控“正常/松动”真值。
+- 色标候选仍受锈蚀、警示贴、强光和断裂涂线影响，不能作为训练真值；当前训练门为FAIL。
 - 眼镜照片被导入后可能不再出现在 `media.config`，失败重试和证据保全存在数据丢失风险。
 - 明文 HTTP、广泛存储权限和现场影像合规尚未形成交付方案。
 
 ## Next Smallest Action
 
-在指定 Android 手机与指定 CY01 眼镜上完成基线构建、安装、BLE 连接和照片同步复验，记录设备/固件
-矩阵与失败日志；没有这一步，不进入算法集成。
+由业务/算法人员在复核包上确认80—120个场景组的紧固件框和色标端点，并采集少量受控松动/正常对；
+同时在指定Android手机与CY01眼镜上复验BLE连接和照片同步。两项都完成后再训练D-FINE-N并接ncnn。
 
 ## Evidence
 
@@ -62,3 +77,5 @@ git status --short
 - `docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt`：会议需求来源。
 - `docs/analysis/2026-08-25-demo-gap-analysis.md`：现状与目标差距及优先级。
 - `docs/validation/2026-08-25-local-build.md`：本机路径修复、构建与测试证据。
+- `docs/validation/2026-08-25-prelabel-audit.md`：60张/257候选的质量审计。
+- `docs/validation/2026-08-25-training-readiness.md`：训练拒绝条件和达门后的固定训练方案。

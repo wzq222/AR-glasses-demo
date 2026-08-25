@@ -2,8 +2,9 @@
 
 面向轨道交通现场巡检的 AR 眼镜辅助作业项目。当前代码基线来自
 [`wzq222/AR-glasses-demo`](https://github.com/wzq222/AR-glasses-demo)，现阶段已实现的主体是
-CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片同步；二维码、防松线、
-万用表识别目前只有接口，没有实际算法与作业闭环。
+CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片同步。防松线方向现已加入全图
+数据审计、候选预标注、质量门、多目标结果契约和几何判定核心，但候选检测模型尚未达到训练门；二维码、
+万用表识别仍只有接口，三类能力都还没有完成真机作业闭环。
 
 ## 项目入口
 
@@ -12,6 +13,9 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [现有 Demo 缺口分析](docs/analysis/2026-08-25-demo-gap-analysis.md)
 - [两周 MVP 设计](docs/superpowers/specs/2026-08-25-crrc-glasses-mvp-design.md)
 - [实施计划](docs/superpowers/plans/2026-08-25-crrc-glasses-mvp.md)
+- [全图防松线设计](docs/superpowers/specs/2026-08-25-full-image-fastener-vision-design.md)
+- [预标注质量审计](docs/validation/2026-08-25-prelabel-audit.md)
+- [训练就绪判断](docs/validation/2026-08-25-training-readiness.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、
@@ -27,7 +31,8 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - **一键照片同步**：点击「同步照片到手机」后自动建立 WiFi Direct 连接，通过 HTTP 拉取眼镜照片并下载到手机。
 - **选择性导入（带缩略图）**：下载完成后弹出勾选列表，显示每张照片的缩放图，用户可勾选要导入的照片；选中的移动到相册，未选中的自动清理。
 - **原图库浏览**：网格 + 全屏两种方式浏览已同步的照片（保存在 `glass_media/photos` 目录）。
-- **图像识别接口（预留）**：预留「二维码识别」「防松线错位检测（螺母松动）」「电压表数字识别」三个能力接口，待接入具体算法。
+- **全图防松线底座**：提供多目标结果、关键点几何判定和Git外数据工具；尚未接入可用检测模型。
+- **其他图像接口（预留）**：二维码识别和电压表数字识别待实现。
 
 ## 技术栈
 
@@ -64,6 +69,7 @@ ar_glass_app/
 │   │   ├── libs/                             # K900 SDK（ksdk-release.aar 等）
 │   │   └── AndroidManifest.xml
 │   └── build.gradle
+├── ml/                                      # 私有数据审计、预标注、复核与训练门
 ├── build.gradle
 ├── settings.gradle
 └── gradle/                                   # Gradle Wrapper
@@ -119,6 +125,24 @@ CY01 使用两套 BLE 服务：
 - `readMeterValue(Bitmap)` —— 电压表数字识别
 
 默认实现 `DefaultImageAnalyzer` 为占位实现，待接入 ZXing / ML Kit / OCR 等算法；UI 层统一通过 `Vision.get()` 调用。
+
+### 全图防松线开发入口
+
+现场图片、复核图和模型不进入Git，默认放在
+`E:/Work/京新数智/识动hicool/中车眼镜数据资产`，并通过环境变量显式指定：
+
+```powershell
+$env:CRRC_VISION_DATA_ROOT='E:\Work\京新数智\识动hicool\中车眼镜数据资产'
+.\.venv\Scripts\python.exe -m pytest ml/tests -v
+.\.venv\Scripts\python.exe ml\scripts\bootstrap_assets.py
+.\.venv\Scripts\python.exe ml\scripts\build_prelabels.py
+.\.venv\Scripts\python.exe ml\scripts\build_review_pack.py --output review-packs/prelabel-v2
+.\.venv\Scripts\python.exe ml\scripts\train_dfine.py
+```
+
+最后一条命令是强制质量门：只要仍有未复核标注或抽检精确率低于80%，就拒绝训练。Android侧的
+`com.ar.glass.vision.fastener` 已定义全图多目标结果和几何判定；没有现场标定阈值时只返回
+`UNCERTAIN`，当前不代表检测模型已接入。
 
 ## 依赖
 
