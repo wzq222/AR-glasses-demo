@@ -32,8 +32,10 @@
 
 ## Active Work
 
-全图防松线Phase 1代码底座已实现；标注质量门正确拒绝训练。当前工作重心从“继续调HSV”转为建立
-80—120个场景组的人工确认紧固件框与色标端点真值。
+全图防松线Phase 1代码底座已实现；标注质量门正确拒绝训练。路线V2已把生产主线调整为
+`PicoDet-S/M + 全图上下文 + 重叠切片`的物理紧固件检测，随后只在ROI内做色标关键点和几何判断。
+当前工作重心是建立80—120个场景组的人工确认紧固件框与色标端点真值，并在目标手机上对S/M做
+端到端P95基准；RTMDet-tiny-P2和D-FINE-N仅作为离线对照。
 
 ## Run
 
@@ -67,8 +69,9 @@ git status --short
 
 ## Next Smallest Action
 
-由业务/算法人员在复核包上确认80—120个场景组的紧固件框和色标端点，并采集少量受控松动/正常对；
-同时在指定Android手机与CY01眼镜上复验BLE连接和照片同步。两项都完成后再训练D-FINE-N并接ncnn。
+由业务/算法人员在复核包上确认80—120个场景组的物理紧固件框和色标端点，并采集受控正常/错位对；
+真值达门后并行训练PicoDet-S与M，在指定Android手机用相同切片策略测端到端P95，选择生产模型。
+同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
 
@@ -79,3 +82,4 @@ git status --short
 - `docs/validation/2026-08-25-local-build.md`：本机路径修复、构建与测试证据。
 - `docs/validation/2026-08-25-prelabel-audit.md`：60张/257候选的质量审计。
 - `docs/validation/2026-08-25-training-readiness.md`：训练拒绝条件和达门后的固定训练方案。
+- `docs/analysis/2026-08-25-full-image-fastener-route-v2.md`：移动端小目标路线重评与新验收门。

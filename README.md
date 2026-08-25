@@ -16,6 +16,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [全图防松线设计](docs/superpowers/specs/2026-08-25-full-image-fastener-vision-design.md)
 - [预标注质量审计](docs/validation/2026-08-25-prelabel-audit.md)
 - [训练就绪判断](docs/validation/2026-08-25-training-readiness.md)
+- [全图防松线检测路线 V2](docs/analysis/2026-08-25-full-image-fastener-route-v2.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、
