@@ -48,6 +48,24 @@ focus_score、HSV候选数和选择原因。输出必须确定性可复现，同
 复核包包含COCO JSON、逐图叠加图、联系表、`review-index.csv`和Label Studio任务JSON。任何修改通过
 独立脚本合并，原始建议和人工决定都保留，避免覆盖审计证据。
 
+### Git外参考教师
+
+用户提供的YOLOv8s权重只作为隔离的离线参考教师，不替代生产模型，也不绕过人工整图复核。运行器
+必须先静态枚举checkpoint全局类型，只允许PyTorch和Ultralytics官方类型，再使用
+`torch.load(weights_only=True)`加载；普通不受限Pickle加载被禁止。Ultralytics依赖只存在于Git外
+隔离运行时，不加入项目核心依赖。
+
+教师原始三类保留`teacher_class_id`和`teacher_class_name`。根据现有代码注释暂按
+`class_0 -> fastener`、`class_1 -> pipe_joint`、`class_2 -> fastener`映射，但每个候选必须记录
+`mapping_status=inferred_unconfirmed`，人工确认前不得作为正式类别证据。
+
+100张批处理输出到Git外独立目录，至少包含教师权重、代表帧清单和源图SHA-256，原始预测JSON、COCO
+建议副本、逐图叠加图、候选裁剪表、全图联系表和运行清单。脚本执行前后都校验正式
+`annotations/fastener-v2/instances.json`字节哈希不变；教师候选一律为`unreviewed`，训练门继续拒绝。
+
+首轮人工复核分成候选级和图像级两层：候选级可接受、拒绝或标记需人工；图像级只有检查完整张图并
+确认没有漏框后才能标记`accept`或`accept_empty`。只看候选裁剪不能把图片标记为整图已复核。
+
 ## 训练与导出
 
 PicoDet入口调用固定提交的PaddleDetection checkout，生成单类/双类数据配置，分别训练S和M，输出到
@@ -77,4 +95,3 @@ Git外`runs/picodet-{s,m}-v1`。入口在执行外部训练前验证：代表组
 - 训练门的每个拒绝条件有失败测试，干净真值样例能放行但默认不执行外部训练。
 - 切片覆盖、坐标反变换、NMS和耗时分位数有纯单元测试。
 - Python全量测试、Android单元测试和debug APK构建通过；无目标手机时明确记录未完成真机P95。
-
