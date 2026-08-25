@@ -9,3 +9,12 @@
 .cxx
 app/build
 local.properties
+.venv/
+ml/.pytest_cache/
+ml/.cache/
+ml/**/*.egg-info/
+*.pth
+*.pt
+*.onnx
+*.param
+*.bin

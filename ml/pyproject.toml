@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crrc-vision"
+version = "0.1.0"
+description = "Auditable data and training tools for CRRC fastener inspection"
+requires-python = ">=3.12"
+dependencies = [
+    "ImageHash>=4.3,<5",
+    "numpy>=2.0,<3",
+    "opencv-python-headless>=4.10,<5",
+    "Pillow>=10.4,<13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
