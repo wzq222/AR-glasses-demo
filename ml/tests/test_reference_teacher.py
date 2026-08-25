@@ -1,5 +1,6 @@
 from crrc_vision.reference_teacher import (
     TeacherPrediction,
+    build_proposal_document,
     build_run_manifest,
     ensure_complete_selection,
     map_teacher_category,
@@ -70,3 +71,29 @@ def test_xyxy_conversion_clips_to_image_bounds():
         10.0,
         7.0,
     )
+
+
+def test_proposal_document_never_marks_teacher_boxes_as_truth():
+    selection = [
+        {"relative_path": "a.jpg", "scene_group": "g1", "split": "train"}
+    ]
+    manifest = {"a.jpg": {"width": 100, "height": 80}}
+    predictions = [
+        {
+            "id": "p1",
+            "relative_path": "a.jpg",
+            "teacher_class_id": 2,
+            "teacher_class_name": "class_2",
+            "bbox": [1, 2, 3, 4],
+            "score": 0.9,
+            "mapped_category": "fastener",
+            "mapping_status": "inferred_unconfirmed",
+            "review_status": "accept",
+        }
+    ]
+
+    value = build_proposal_document(selection, manifest, predictions)
+
+    assert value["images"][0]["image_review_status"] == "unreviewed"
+    assert value["annotations"][0]["review_status"] == "unreviewed"
+    assert value["annotations"][0]["proposal_source"] == "reference-yolov8s"

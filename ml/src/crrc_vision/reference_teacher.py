@@ -10,6 +10,7 @@ ALLOWED_GLOBAL_PREFIXES = ("torch.nn.modules.", "ultralytics.")
 TEACHER_CATEGORY_MAP = {0: "fastener", 1: "pipe_joint", 2: "fastener"}
 MAPPING_STATUS = "inferred_unconfirmed"
 ULTRALYTICS_VERSION = "8.2.40"
+PROPOSAL_CATEGORIES = {"fastener": 1, "pipe_joint": 2}
 
 
 def build_run_manifest(
@@ -31,6 +32,95 @@ def build_run_manifest(
         "safe_load": "weights_only",
         "mapping_status": MAPPING_STATUS,
         "research_only": True,
+    }
+
+
+def _clip_xywh(
+    box: Iterable[float], *, width: int, height: int
+) -> tuple[float, float, float, float]:
+    x, y, box_width, box_height = (float(value) for value in box)
+    left = min(float(width), max(0.0, x))
+    top = min(float(height), max(0.0, y))
+    right = min(float(width), max(left, x + max(0.0, box_width)))
+    bottom = min(float(height), max(top, y + max(0.0, box_height)))
+    return left, top, right - left, bottom - top
+
+
+def build_proposal_document(
+    selection: list[dict[str, object]],
+    manifest: dict[str, dict[str, object]],
+    predictions: list[dict[str, object]],
+) -> dict[str, object]:
+    """Convert teacher output into an explicitly non-truth COCO review document."""
+    images: list[dict[str, object]] = []
+    image_by_path: dict[str, dict[str, object]] = {}
+    for image_id, selected in enumerate(selection, start=1):
+        relative_path = str(selected["relative_path"])
+        if relative_path in image_by_path:
+            raise ValueError(f"duplicate selected image: {relative_path}")
+        source = manifest.get(relative_path)
+        if source is None:
+            raise ValueError(f"selected image is missing from manifest: {relative_path}")
+        image = {
+            "id": image_id,
+            "file_name": relative_path,
+            "width": int(source["width"]),
+            "height": int(source["height"]),
+            "scene_group": str(selected["scene_group"]),
+            "split": str(selected["split"]),
+            "image_review_status": "unreviewed",
+        }
+        images.append(image)
+        image_by_path[relative_path] = image
+
+    annotations: list[dict[str, object]] = []
+    ordered_predictions = sorted(
+        predictions,
+        key=lambda row: (str(row["relative_path"]), str(row.get("id", ""))),
+    )
+    for annotation_id, prediction in enumerate(ordered_predictions, start=1):
+        relative_path = str(prediction["relative_path"])
+        image = image_by_path.get(relative_path)
+        if image is None:
+            raise ValueError(f"prediction image is outside selection: {relative_path}")
+        category = str(prediction["mapped_category"])
+        if category not in PROPOSAL_CATEGORIES:
+            raise ValueError(f"unsupported mapped category: {category}")
+        bbox = _clip_xywh(
+            prediction["bbox"],
+            width=int(image["width"]),
+            height=int(image["height"]),
+        )
+        if bbox[2] <= 0.0 or bbox[3] <= 0.0:
+            raise ValueError(f"empty teacher box: {prediction.get('id', annotation_id)}")
+        annotations.append(
+            {
+                "id": annotation_id,
+                "image_id": image["id"],
+                "category_id": PROPOSAL_CATEGORIES[category],
+                "bbox": list(bbox),
+                "area": bbox[2] * bbox[3],
+                "iscrowd": 0,
+                "review_status": "unreviewed",
+                "proposal_id": str(prediction.get("id", annotation_id)),
+                "proposal_source": "reference-yolov8s",
+                "proposal_score": float(prediction["score"]),
+                "teacher_class_id": int(prediction["teacher_class_id"]),
+                "teacher_class_name": str(prediction["teacher_class_name"]),
+                "mapping_status": MAPPING_STATUS,
+            }
+        )
+    return {
+        "info": {
+            "version": "reference-teacher-proposals-v1",
+            "truth_status": "not_training_truth",
+        },
+        "images": images,
+        "annotations": annotations,
+        "categories": [
+            {"id": 1, "name": "fastener"},
+            {"id": 2, "name": "pipe_joint"},
+        ],
     }
 
 
