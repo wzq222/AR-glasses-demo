@@ -64,9 +64,10 @@ dependencies {
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.2'
 
     implementation files('libs/ksdk-release.aar')
-
     // 讯飞 SparkChain SDK（在线语音听写）
     implementation files('libs/SparkChain.aar')
     implementation files('libs/Codec.aar')
     implementation 'com.google.code.gson:gson:2.8.8'
+
+    testImplementation 'junit:junit:4.13.2'
 }
