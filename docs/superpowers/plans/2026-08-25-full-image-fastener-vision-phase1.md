@@ -40,6 +40,7 @@ app/src/main/java/com/ar/glass/vision/fastener/
 ├── FastenerState.java
 ├── FastenerInspection.java
 ├── FullImageInspectionResult.java
+├── GeometryThresholds.java
 ├── GeometryDecision.java
 └── AntiLooseGeometry.java
 
@@ -283,6 +284,7 @@ Commit: `test: audit fastener prelabel quality`
 - Create: `app/src/main/java/com/ar/glass/vision/fastener/FastenerState.java`
 - Create: `app/src/main/java/com/ar/glass/vision/fastener/FastenerInspection.java`
 - Create: `app/src/main/java/com/ar/glass/vision/fastener/FullImageInspectionResult.java`
+- Create: `app/src/main/java/com/ar/glass/vision/fastener/GeometryThresholds.java`
 - Create: `app/src/main/java/com/ar/glass/vision/fastener/GeometryDecision.java`
 - Create: `app/src/main/java/com/ar/glass/vision/fastener/AntiLooseGeometry.java`
 - Create: `app/src/test/java/com/ar/glass/vision/fastener/AntiLooseGeometryTest.java`
@@ -292,13 +294,15 @@ Commit: `test: audit fastener prelabel quality`
 ```java
 @Test public void alignedSegmentsAreNormal() {
     GeometryDecision result = AntiLooseGeometry.evaluate(
-        p(0, 0, 0.95f), p(10, 0, 0.95f), p(12, 0, 0.95f), p(22, 0, 0.95f), 100f);
+        p(0, 0, 0.95f), p(10, 0, 0.95f), p(12, 0, 0.95f), p(22, 0, 0.95f), 100f,
+        new GeometryThresholds(10f, 0.05f, 0.05f));
     assertEquals(FastenerState.NORMAL, result.getState());
 }
 
 @Test public void lowConfidenceIsUncertain() {
     GeometryDecision result = AntiLooseGeometry.evaluate(
-        p(0, 0, 0.4f), p(10, 0, 0.95f), p(12, 0, 0.95f), p(22, 0, 0.95f), 100f);
+        p(0, 0, 0.4f), p(10, 0, 0.95f), p(12, 0, 0.95f), p(22, 0, 0.95f), 100f,
+        new GeometryThresholds(10f, 0.05f, 0.05f));
     assertEquals(FastenerState.UNCERTAIN, result.getState());
     assertEquals("KEYPOINT_CONFIDENCE_LOW", result.getReason());
 }
