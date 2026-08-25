@@ -13,6 +13,8 @@ local.properties
 ml/.pytest_cache/
 ml/.cache/
 ml/**/*.egg-info/
+__pycache__/
+*.py[cod]
 *.pth
 *.pt
 *.onnx
