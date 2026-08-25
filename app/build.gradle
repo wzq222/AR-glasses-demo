@@ -44,4 +44,5 @@ dependencies {
     implementation 'com.google.protobuf:protobuf-javalite:3.18.1'
 
     implementation files('libs/ksdk-release.aar')
+    testImplementation 'junit:junit:4.13.2'
 }
