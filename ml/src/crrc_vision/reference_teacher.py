@@ -180,11 +180,22 @@ class TeacherPrediction:
     teacher_class_name: str
     bbox: tuple[float, float, float, float]
     score: float
+    pass_id: str = "full-640"
+    tile: dict[str, int] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.pass_id:
+            raise ValueError("teacher prediction pass_id is required")
+        if self.tile is not None:
+            required = {"index", "x1", "y1", "x2", "y2"}
+            if set(self.tile) != required:
+                raise ValueError("tile metadata must contain index and xyxy bounds")
 
     @property
     def stable_id(self) -> str:
         raw = (
-            f"{self.relative_path}|{self.teacher_class_id}|{self.bbox}".encode("utf-8")
+            f"{self.relative_path}|{self.pass_id}|{self.tile}|"
+            f"{self.teacher_class_id}|{self.bbox}".encode("utf-8")
         )
         return hashlib.sha256(raw).hexdigest()[:16]
 

@@ -36,6 +36,22 @@ def test_prediction_id_is_stable_and_preserves_teacher_class():
     assert item.to_dict()["teacher_class_id"] == 2
 
 
+def test_prediction_pass_records_scale_and_tile():
+    item = TeacherPrediction(
+        relative_path="a.jpg",
+        teacher_class_id=2,
+        teacher_class_name="class_2",
+        bbox=(10.0, 20.0, 30.0, 40.0),
+        score=0.9,
+        pass_id="tile-960-3",
+        tile={"index": 3, "x1": 880, "y1": 660, "x2": 2000, "y2": 1500},
+    )
+
+    value = item.to_dict()
+    assert value["pass_id"] == "tile-960-3"
+    assert value["tile"]["index"] == 3
+
+
 def test_selection_coverage_rejects_missing_and_extra_images():
     assert ensure_complete_selection(["a.jpg", "b.jpg"], ["a.jpg", "b.jpg"]) == ()
     assert ensure_complete_selection(["a.jpg", "b.jpg"], ["a.jpg"]) == (

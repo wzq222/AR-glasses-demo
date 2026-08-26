@@ -1,4 +1,12 @@
-from crrc_vision.auto_labeling import Candidate, fuse_candidates
+import pytest
+
+from crrc_vision.auto_labeling import (
+    Candidate,
+    fuse_candidates,
+    normalize_hsv_document,
+    normalize_teacher_payload,
+    verify_truth_unchanged,
+)
 
 
 def candidate(
@@ -76,3 +84,49 @@ def test_overlapping_categories_are_conflict_not_silently_merged() -> None:
     assert len(fused) == 1
     assert fused[0].category is None
     assert fused[0].consensus_status == "conflict"
+
+
+def test_candidate_manifest_rejects_truth_hash_change() -> None:
+    before = "A" * 64
+
+    with pytest.raises(RuntimeError, match="formal truth changed"):
+        verify_truth_unchanged(before, "B" * 64)
+
+
+def test_teacher_and_hsv_sources_normalize_to_full_image_xyxy() -> None:
+    teacher = normalize_teacher_payload(
+        {
+            "imgsz": 960,
+            "predictions": [
+                {
+                    "id": "p1",
+                    "relative_path": "a.jpg",
+                    "mapped_category": "fastener",
+                    "bbox": [10, 20, 30, 40],
+                    "score": 0.9,
+                    "pass_id": "full-960",
+                }
+            ],
+        }
+    )
+    hsv = normalize_hsv_document(
+        {
+            "images": [{"id": 7, "file_name": "a.jpg"}],
+            "annotations": [
+                {
+                    "id": 8,
+                    "image_id": 7,
+                    "bbox": [12, 22, 30, 40],
+                    "attributes": {
+                        "algorithm_version": "hsv-line-v2",
+                        "candidate_confidence": 0.8,
+                    },
+                }
+            ],
+        }
+    )
+
+    assert teacher[0].xyxy == (10.0, 20.0, 40.0, 60.0)
+    assert teacher[0].source_family == "reference_teacher"
+    assert hsv[0].xyxy == (12.0, 22.0, 42.0, 62.0)
+    assert hsv[0].source_family == "hsv"

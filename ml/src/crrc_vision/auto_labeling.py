@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 
 VALID_CATEGORIES = {"fastener", "pipe_joint"}
@@ -11,6 +13,105 @@ VALID_SOURCE_FAMILIES = {"reference_teacher", "hsv", "temporal", "student"}
 
 
 Box = tuple[float, float, float, float]
+
+
+def verify_truth_unchanged(before_sha256: str, after_sha256: str) -> None:
+    """Stop candidate generation if the formal truth changed during the run."""
+
+    if before_sha256 != after_sha256:
+        raise RuntimeError(
+            f"formal truth changed during candidate generation: "
+            f"{before_sha256} != {after_sha256}"
+        )
+
+
+def _xywh_to_xyxy(value: object) -> Box:
+    if not (
+        isinstance(value, (list, tuple))
+        and len(value) == 4
+        and all(
+            isinstance(coordinate, (int, float))
+            and not isinstance(coordinate, bool)
+            for coordinate in value
+        )
+    ):
+        raise ValueError(f"invalid xywh box: {value}")
+    x, y, width, height = (float(coordinate) for coordinate in value)
+    box = (x, y, x + width, y + height)
+    _validate_box(box)
+    return box
+
+
+def normalize_teacher_payload(payload: Mapping[str, object]) -> list[Candidate]:
+    """Normalize reference-teacher xywh predictions into source-aware candidates."""
+
+    predictions = payload.get("predictions")
+    if not isinstance(predictions, list):
+        raise ValueError("teacher payload predictions must be a list")
+    default_pass = f"full-{payload.get('imgsz', 'legacy')}"
+    output: list[Candidate] = []
+    for index, value in enumerate(predictions):
+        if not isinstance(value, Mapping):
+            raise ValueError(f"invalid teacher prediction at index {index}")
+        pass_id = str(value.get("pass_id") or default_pass)
+        prediction_id = str(value.get("id") or index)
+        output.append(
+            Candidate(
+                relative_path=str(value.get("relative_path") or ""),
+                source_id=f"teacher:{pass_id}:{prediction_id}",
+                source_family="reference_teacher",
+                category=str(value.get("mapped_category") or ""),
+                xyxy=_xywh_to_xyxy(value.get("bbox")),
+                score=float(value.get("score", -1.0)),
+            )
+        )
+    return output
+
+
+def normalize_hsv_document(document: Mapping[str, object]) -> list[Candidate]:
+    """Normalize color-mark COCO candidates as fastener anchors."""
+
+    images = document.get("images")
+    annotations = document.get("annotations")
+    if not isinstance(images, list) or not isinstance(annotations, list):
+        raise ValueError("HSV document requires image and annotation lists")
+    image_paths: dict[object, str] = {}
+    for value in images:
+        if not isinstance(value, Mapping):
+            raise ValueError("invalid HSV image row")
+        image_id = value.get("id")
+        relative_path = str(value.get("file_name") or "")
+        if image_id is None or not relative_path or image_id in image_paths:
+            raise ValueError("invalid or duplicate HSV image reference")
+        image_paths[image_id] = relative_path
+
+    output: list[Candidate] = []
+    for index, value in enumerate(annotations):
+        if not isinstance(value, Mapping):
+            raise ValueError(f"invalid HSV annotation at index {index}")
+        image_id = value.get("image_id")
+        if image_id not in image_paths:
+            raise ValueError(f"unknown HSV image reference: {image_id}")
+        raw_attributes = value.get("attributes")
+        attributes: Mapping[str, Any] = (
+            raw_attributes if isinstance(raw_attributes, Mapping) else {}
+        )
+        algorithm = str(attributes.get("algorithm_version") or "hsv-unknown")
+        annotation_id = str(value.get("id") or index)
+        score = float(
+            attributes.get("candidate_confidence", value.get("score", 0.5))
+        )
+        output.append(
+            Candidate(
+                relative_path=image_paths[image_id],
+                source_id=f"hsv:{algorithm}:{annotation_id}",
+                source_family="hsv",
+                category="fastener",
+                xyxy=_xywh_to_xyxy(value.get("bbox")),
+                score=score,
+            )
+        )
+    return output
 
 
 def _validate_box(box: Box) -> None:

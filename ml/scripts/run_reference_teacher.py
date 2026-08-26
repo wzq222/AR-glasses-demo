@@ -7,9 +7,11 @@ import hashlib
 import importlib
 import json
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 from crrc_vision.assets import asset_root
+from crrc_vision.prelabel import read_bgr_image
 from crrc_vision.reference_teacher import (
     TEACHER_CATEGORY_MAP,
     TeacherPrediction,
@@ -19,6 +21,7 @@ from crrc_vision.reference_teacher import (
     validate_ultralytics_version,
     xyxy_to_xywh,
 )
+from crrc_vision.tiles import Tile, build_tiles, map_tile_box
 
 
 def _sha256(path: Path) -> str:
@@ -62,11 +65,16 @@ def main() -> int:
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
     parser.add_argument("--source", default="source/20240529-luosi")
     parser.add_argument("--output", default="runs/reference-teacher-v1")
-    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--imgsz", type=int, action="append")
+    parser.add_argument("--tiles", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--tile-overlap", type=float, default=0.12)
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--iou", type=float, default=0.70)
     parser.add_argument("--device", default="0")
     args = parser.parse_args()
+    teacher_sizes = sorted(set(args.imgsz or [640]))
+    if any(size <= 0 for size in teacher_sizes):
+        raise ValueError("teacher image sizes must be positive")
 
     root = asset_root()
     checkpoint = Path(args.checkpoint).expanduser().resolve()
@@ -119,8 +127,10 @@ def main() -> int:
     selection = json.loads(selection_bytes.decode("utf-8"))
     items = selection.get("items", [])
     expected_paths = [str(item["relative_path"]) for item in items]
-    if len(expected_paths) != 100:
-        raise RuntimeError(f"EXPECTED_100_SELECTION_ITEMS: got {len(expected_paths)}")
+    if not expected_paths:
+        raise RuntimeError("EMPTY_TEACHER_SELECTION")
+    if len(expected_paths) != len(set(expected_paths)):
+        raise RuntimeError("DUPLICATE_TEACHER_SELECTION_ITEM")
     truth_sha256 = _sha256(truth_path)
     predictions: list[dict[str, object]] = []
     image_runs: list[dict[str, object]] = []
@@ -130,36 +140,81 @@ def main() -> int:
         image_path = (source_root / relative_path).resolve()
         if source_root.resolve() not in image_path.parents or not image_path.is_file():
             raise FileNotFoundError(image_path)
-        if str(args.device).isdigit() and torch.cuda.is_available():
-            torch.cuda.synchronize()
-        started = time.perf_counter()
-        result = wrapper.predict(
-            source=str(image_path),
-            imgsz=args.imgsz,
-            conf=args.conf,
-            iou=args.iou,
-            device=args.device,
-            verbose=False,
-        )[0]
-        if str(args.device).isdigit() and torch.cuda.is_available():
-            torch.cuda.synchronize()
-        wall_ms = (time.perf_counter() - started) * 1000
-        height, width = (int(value) for value in result.orig_shape)
+        image = read_bgr_image(image_path)
+        height, width = image.shape[:2]
         count_before = len(predictions)
-        for xyxy, score, class_id in zip(
-            result.boxes.xyxy.cpu().tolist(),
-            result.boxes.conf.cpu().tolist(),
-            result.boxes.cls.cpu().tolist(),
-        ):
-            class_value = int(class_id)
-            prediction = TeacherPrediction(
-                relative_path=relative_path,
-                teacher_class_id=class_value,
-                teacher_class_name=str(model.names[class_value]),
-                bbox=xyxy_to_xywh(tuple(float(value) for value in xyxy), width=width, height=height),
-                score=float(score),
+        pass_runs: list[dict[str, object]] = []
+        tile_layout = (
+            build_tiles(width, height, grid=2, overlap=args.tile_overlap)
+            if args.tiles
+            else ()
+        )
+
+        def run_pass(
+            source: object,
+            *,
+            size: int,
+            pass_id: str,
+            tile: Tile | None,
+        ) -> None:
+            if str(args.device).isdigit() and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            started = time.perf_counter()
+            result = wrapper.predict(
+                source=source,
+                imgsz=size,
+                conf=args.conf,
+                iou=args.iou,
+                device=args.device,
+                verbose=False,
+            )[0]
+            if str(args.device).isdigit() and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            wall_ms = (time.perf_counter() - started) * 1000
+            pass_before = len(predictions)
+            for xyxy, score, class_id in zip(
+                result.boxes.xyxy.cpu().tolist(),
+                result.boxes.conf.cpu().tolist(),
+                result.boxes.cls.cpu().tolist(),
+            ):
+                class_value = int(class_id)
+                corner_box = tuple(float(value) for value in xyxy)
+                if tile is not None:
+                    corner_box = map_tile_box(tile, corner_box, width, height)
+                prediction = TeacherPrediction(
+                    relative_path=relative_path,
+                    teacher_class_id=class_value,
+                    teacher_class_name=str(model.names[class_value]),
+                    bbox=xyxy_to_xywh(corner_box, width=width, height=height),
+                    score=float(score),
+                    pass_id=pass_id,
+                    tile=asdict(tile) if tile is not None else None,
+                )
+                predictions.append(prediction.to_dict())
+            pass_runs.append(
+                {
+                    "pass_id": pass_id,
+                    "imgsz": size,
+                    "tile": asdict(tile) if tile is not None else None,
+                    "predictions": len(predictions) - pass_before,
+                    "wall_ms": round(wall_ms, 3),
+                    "speed_ms": {
+                        key: round(float(value), 3)
+                        for key, value in result.speed.items()
+                    },
+                }
             )
-            predictions.append(prediction.to_dict())
+
+        for size in teacher_sizes:
+            run_pass(image, size=size, pass_id=f"full-{size}", tile=None)
+            for tile in tile_layout:
+                crop = image[tile.y1 : tile.y2, tile.x1 : tile.x2]
+                run_pass(
+                    crop,
+                    size=size,
+                    pass_id=f"tile-{size}-{tile.index}",
+                    tile=tile,
+                )
         image_runs.append(
             {
                 "relative_path": relative_path,
@@ -168,14 +223,11 @@ def main() -> int:
                 "width": width,
                 "height": height,
                 "predictions": len(predictions) - count_before,
-                "wall_ms": round(wall_ms, 3),
-                "speed_ms": {
-                    key: round(float(value), 3) for key, value in result.speed.items()
-                },
+                "passes": pass_runs,
             }
         )
         print(
-            f"processed {index}/100: {relative_path} "
+            f"processed {index}/{len(items)}: {relative_path} "
             f"({image_runs[-1]['predictions']} proposals)"
         )
 
@@ -196,7 +248,9 @@ def main() -> int:
         "teacher_category_map": {
             str(key): value for key, value in TEACHER_CATEGORY_MAP.items()
         },
-        "imgsz": args.imgsz,
+        "teacher_sizes": teacher_sizes,
+        "tiles": args.tiles,
+        "tile_overlap": args.tile_overlap,
         "conf": args.conf,
         "iou": args.iou,
         "device": args.device,
@@ -216,7 +270,9 @@ def main() -> int:
             "ultralytics_version": ultralytics.__version__,
             "torch_version": torch.__version__,
             "checkpoint_globals": unsafe_names,
-            "imgsz": args.imgsz,
+            "teacher_sizes": teacher_sizes,
+            "tiles": args.tiles,
+            "tile_overlap": args.tile_overlap,
             "conf": args.conf,
             "iou": args.iou,
             "device": args.device,
