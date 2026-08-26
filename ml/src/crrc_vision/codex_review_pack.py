@@ -1,0 +1,339 @@
+"""Render deterministic full-image and candidate-context packs for Codex review."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from PIL import Image, ImageDraw, ImageOps
+
+
+CATEGORY_COLORS = {
+    "fastener": (255, 196, 0),
+    "pipe_joint": (0, 220, 120),
+    None: (255, 60, 60),
+}
+
+
+@dataclass(frozen=True)
+class PackSummary:
+    images: int
+    candidates: int
+    batches: int
+
+
+def _normalized_box(value: object) -> list[float]:
+    box = _valid_box(value)
+    if any(coordinate < 0.0 or coordinate > 1.0 for coordinate in box):
+        raise ValueError(f"second-pass box must be normalized: {value}")
+    return list(box)
+
+
+def build_second_pass_tasks(
+    review_document: dict[str, object],
+    output_root: Path,
+) -> int:
+    """Emit only proposed geometry, never the first-pass decision text."""
+
+    raw_reviews = review_document.get("reviews")
+    reviews = raw_reviews if isinstance(raw_reviews, list) else [review_document]
+    if any(not isinstance(review, dict) for review in reviews):
+        raise ValueError("reviews must contain objects")
+    if output_root.exists():
+        raise FileExistsError(f"second-pass task directory exists: {output_root}")
+
+    tasks: list[dict[str, object]] = []
+    for review in reviews:
+        proposals: list[dict[str, object]] = []
+        decisions = review.get("candidate_decisions", [])
+        if not isinstance(decisions, list):
+            raise ValueError("candidate_decisions must be a list")
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                raise ValueError("candidate decision must be an object")
+            if decision.get("decision") == "needs_adjustment":
+                proposals.append(
+                    {
+                        "candidate_id": decision.get("candidate_id"),
+                        "proposed_xyxy": _normalized_box(
+                            decision.get("corrected_xyxy")
+                        ),
+                        "origin": "adjusted_candidate",
+                    }
+                )
+        added_boxes = review.get("added_boxes", [])
+        if not isinstance(added_boxes, list):
+            raise ValueError("added_boxes must be a list")
+        for index, added in enumerate(added_boxes):
+            if not isinstance(added, dict):
+                raise ValueError("added box must be an object")
+            proposals.append(
+                {
+                    "candidate_id": f"added-{review.get('image_id')}-{index + 1}",
+                    "proposed_xyxy": _normalized_box(added.get("xyxy")),
+                    "category": added.get("category"),
+                    "origin": "added_box",
+                }
+            )
+        if proposals:
+            tasks.append(
+                {
+                    "image_id": review.get("image_id"),
+                    "asset_sha256": review.get("asset_sha256"),
+                    "proposed_boxes": proposals,
+                }
+            )
+
+    output_root.mkdir(parents=True, exist_ok=False)
+    for batch_index in range(math.ceil(len(tasks) / 8)):
+        payload = {
+            "schema_version": "safe-auto-second-pass-task-v1",
+            "prompt_version": "second-v1",
+            "first_result_hidden": True,
+            "instructions": (
+                "Independently judge whether each proposed box matches visible pixels. "
+                "Return uncertain when evidence is insufficient."
+            ),
+            "images": tasks[batch_index * 8 : (batch_index + 1) * 8],
+        }
+        (output_root / f"tasks-{batch_index + 1:03d}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return len(tasks)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
+
+
+def _load_rgb(path: Path) -> Image.Image:
+    with Image.open(path) as opened:
+        return ImageOps.exif_transpose(opened).convert("RGB")
+
+
+def _safe_source(source_root: Path, relative_path: str) -> Path:
+    value = (source_root / relative_path).resolve()
+    if source_root.resolve() not in value.parents or not value.is_file():
+        raise FileNotFoundError(value)
+    return value
+
+
+def _valid_box(value: object) -> tuple[float, float, float, float]:
+    if not (
+        isinstance(value, list)
+        and len(value) == 4
+        and all(isinstance(coordinate, (int, float)) for coordinate in value)
+    ):
+        raise ValueError(f"invalid candidate box: {value}")
+    box = tuple(float(coordinate) for coordinate in value)
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise ValueError(f"empty candidate box: {value}")
+    return box
+
+
+def _draw_grid(draw: ImageDraw.ImageDraw, width: int, height: int) -> None:
+    for index in range(1, 4):
+        x = round(width * index / 4)
+        y = round(height * index / 4)
+        draw.line((x, 0, x, height), fill=(150, 150, 150), width=1)
+        draw.line((0, y, width, y), fill=(150, 150, 150), width=1)
+    for row in range(4):
+        for column in range(4):
+            draw.text(
+                (column * width / 4 + 5, row * height / 4 + 5),
+                f"{chr(65 + row)}{column + 1}",
+                fill=(255, 255, 255),
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+
+def _render_full(
+    image: Image.Image,
+    candidates: list[dict[str, Any]],
+) -> Image.Image:
+    rendered = image.copy()
+    rendered.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+    scale_x = rendered.width / image.width
+    scale_y = rendered.height / image.height
+    draw = ImageDraw.Draw(rendered)
+    _draw_grid(draw, rendered.width, rendered.height)
+    for candidate in candidates:
+        x1, y1, x2, y2 = _valid_box(candidate.get("xyxy"))
+        box = (x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y)
+        color = CATEGORY_COLORS.get(candidate.get("category"), (255, 60, 60))
+        draw.rectangle(box, outline=color, width=4)
+        draw.text(
+            (box[0] + 2, max(0, box[1] - 16)),
+            str(candidate.get("id", ""))[:8],
+            fill=color,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0),
+        )
+    return rendered
+
+
+def _render_context(
+    image: Image.Image,
+    candidate: dict[str, Any],
+) -> Image.Image:
+    x1, y1, x2, y2 = _valid_box(candidate.get("xyxy"))
+    width = x2 - x1
+    height = y2 - y1
+    center_x = (x1 + x2) / 2
+    center_y = (y1 + y2) / 2
+    crop_width = max(64.0, width * 2.0)
+    crop_height = max(64.0, height * 2.0)
+    left = max(0, math.floor(center_x - crop_width / 2))
+    top = max(0, math.floor(center_y - crop_height / 2))
+    right = min(image.width, math.ceil(center_x + crop_width / 2))
+    bottom = min(image.height, math.ceil(center_y + crop_height / 2))
+    context = image.crop((left, top, right, bottom))
+    draw = ImageDraw.Draw(context)
+    color = CATEGORY_COLORS.get(candidate.get("category"), (255, 60, 60))
+    draw.rectangle((x1 - left, y1 - top, x2 - left, y2 - top), outline=color, width=4)
+    context.thumbnail((600, 600), Image.Resampling.LANCZOS)
+    return context
+
+
+def build_pack(
+    candidates: dict[str, object],
+    source_root: Path,
+    output_root: Path,
+) -> PackSummary:
+    """Render all images and candidates, including zero-candidate images."""
+
+    images = candidates.get("images")
+    fused = candidates.get("fused_candidates")
+    if not isinstance(images, list) or any(not isinstance(row, dict) for row in images):
+        raise ValueError("candidate document images must be a list")
+    if not isinstance(fused, list) or any(not isinstance(row, dict) for row in fused):
+        raise ValueError("fused_candidates must be a list")
+    if output_root.exists():
+        raise FileExistsError(f"Codex review pack already exists: {output_root}")
+
+    image_by_id: dict[object, dict[str, Any]] = {}
+    source_by_id: dict[object, Path] = {}
+    for image in images:
+        image_id = image.get("id")
+        relative_path = str(image.get("relative_path") or "")
+        if image_id is None or image_id in image_by_id or not relative_path:
+            raise ValueError("invalid or duplicate candidate image")
+        image_by_id[image_id] = image
+        source_by_id[image_id] = _safe_source(source_root, relative_path)
+
+    by_image: dict[object, list[dict[str, Any]]] = defaultdict(list)
+    candidate_ids: set[str] = set()
+    for candidate in fused:
+        candidate_id = str(candidate.get("id") or "")
+        image_id = candidate.get("image_id")
+        if not candidate_id or candidate_id in candidate_ids:
+            raise ValueError("invalid or duplicate fused candidate ID")
+        if image_id not in image_by_id:
+            raise ValueError(f"candidate references unknown image: {image_id}")
+        _valid_box(candidate.get("xyxy"))
+        candidate_ids.add(candidate_id)
+        by_image[image_id].append(candidate)
+
+    output_root.mkdir(parents=True, exist_ok=False)
+    full_root = output_root / "full-images"
+    context_root = output_root / "candidate-contexts"
+    task_root = output_root / "first-pass"
+    full_root.mkdir()
+    context_root.mkdir()
+    task_root.mkdir()
+
+    task_images: list[dict[str, Any]] = []
+    scene_images: dict[str, list[str]] = defaultdict(list)
+    for image in images:
+        scene_images[str(image.get("scene_group") or "")].append(
+            str(image["relative_path"])
+        )
+    for image in images:
+        image_id = image["id"]
+        relative_path = str(image["relative_path"])
+        original = _load_rgb(source_by_id[image_id])
+        safe_stem = f"{int(image_id):04d}_{Path(relative_path).stem}"
+        full_path = full_root / f"{safe_stem}.jpg"
+        _render_full(original, by_image.get(image_id, [])).save(full_path, quality=93)
+        task_candidates = []
+        for candidate in sorted(
+            by_image.get(image_id, []), key=lambda row: str(row["id"])
+        ):
+            context_path = context_root / f"{candidate['id']}.jpg"
+            _render_context(original, candidate).save(context_path, quality=94)
+            task_candidates.append(
+                {
+                    "candidate_id": candidate["id"],
+                    "category": candidate.get("category"),
+                    "consensus_status": candidate.get("consensus_status"),
+                    "supporting_families": candidate.get("supporting_families", []),
+                    "context": str(context_path.relative_to(output_root)).replace(
+                        "\\", "/"
+                    ),
+                    "context_sha256": _sha256(context_path),
+                }
+            )
+        scene = str(image.get("scene_group") or "")
+        task_images.append(
+            {
+                "image_id": image_id,
+                "relative_path": relative_path,
+                "scene_group": scene,
+                "full_image": str(full_path.relative_to(output_root)).replace(
+                    "\\", "/"
+                ),
+                "asset_sha256": _sha256(full_path),
+                "same_scene_neighbors": [
+                    path for path in scene_images[scene] if path != relative_path
+                ],
+                "candidates": task_candidates,
+            }
+        )
+
+    batches = math.ceil(len(task_images) / 8)
+    for batch_index in range(batches):
+        batch = {
+            "schema_version": "safe-auto-review-task-v1",
+            "reviewer": "codex-visual-auditor",
+            "task_version": "safe-auto-review-v1",
+            "prompt_version": "first-v1",
+            "instructions": (
+                "Review the whole image first, then every candidate. Mark uncertain "
+                "whenever the pixels do not support a confident decision."
+            ),
+            "images": task_images[batch_index * 8 : (batch_index + 1) * 8],
+        }
+        (task_root / f"tasks-{batch_index + 1:03d}.json").write_text(
+            json.dumps(batch, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    summary = PackSummary(len(images), len(fused), batches)
+    manifest = {
+        "schema_version": "safe-auto-review-pack-v1",
+        "images": summary.images,
+        "candidates": summary.candidates,
+        "batches": summary.batches,
+        "max_images_per_batch": 8,
+        "files": {
+            str(path.relative_to(output_root)).replace("\\", "/"): _sha256(path)
+            for path in sorted(output_root.rglob("*"))
+            if path.is_file()
+        },
+    }
+    (output_root / "pack-manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return summary

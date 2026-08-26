@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -120,3 +122,92 @@ def validate_review(review: dict[str, object]) -> tuple[str, ...]:
     ):
         errors.add("INVALID_REASONS")
     return tuple(sorted(errors))
+
+
+def merge_reviews(
+    candidates: dict[str, object],
+    review_document: dict[str, object],
+) -> dict[str, object]:
+    """Require exactly one valid decision for every fused candidate."""
+
+    raw_candidates = candidates.get("fused_candidates")
+    if not isinstance(raw_candidates, list) or any(
+        not isinstance(row, Mapping) for row in raw_candidates
+    ):
+        raise ValueError("invalid fused candidate document")
+    expected_ids = {str(row.get("id") or "") for row in raw_candidates}
+    if "" in expected_ids or len(expected_ids) != len(raw_candidates):
+        raise ValueError("invalid or duplicate fused candidate IDs")
+
+    raw_reviews = review_document.get("reviews")
+    if raw_reviews is None:
+        reviews: list[dict[str, object]] = [review_document]
+        validate_full_schema = "reviewer" in review_document
+    elif isinstance(raw_reviews, list) and all(
+        isinstance(row, dict) for row in raw_reviews
+    ):
+        reviews = raw_reviews
+        validate_full_schema = True
+    else:
+        raise ValueError("reviews must be a list")
+
+    decisions: list[dict[str, object]] = []
+    image_decisions: list[dict[str, object]] = []
+    added_boxes: list[dict[str, object]] = []
+    for review in reviews:
+        if validate_full_schema:
+            errors = validate_review(review)
+            if errors:
+                raise ValueError(f"invalid Codex review: {', '.join(errors)}")
+        raw_decisions = review.get("candidate_decisions")
+        if not isinstance(raw_decisions, list) or any(
+            not isinstance(row, dict) for row in raw_decisions
+        ):
+            raise ValueError("candidate_decisions must be a list")
+        decisions.extend(raw_decisions)
+        raw_added = review.get("added_boxes", [])
+        if isinstance(raw_added, list):
+            added_boxes.extend(row for row in raw_added if isinstance(row, dict))
+        if "image_id" in review:
+            image_decisions.append(
+                {
+                    "image_id": review["image_id"],
+                    "image_status": review.get("image_status"),
+                    "asset_sha256": review.get("asset_sha256"),
+                }
+            )
+
+    decision_ids = [str(row.get("candidate_id") or "") for row in decisions]
+    duplicates = sorted(
+        candidate_id
+        for candidate_id in set(decision_ids)
+        if decision_ids.count(candidate_id) > 1
+    )
+    if duplicates:
+        raise ValueError(f"duplicate candidate decisions: {duplicates}")
+    actual_ids = set(decision_ids)
+    missing = sorted(expected_ids - actual_ids)
+    if missing:
+        raise ValueError(f"missing candidate decisions: {missing}")
+    unknown = sorted(actual_ids - expected_ids)
+    if unknown:
+        raise ValueError(f"unknown candidate decisions: {unknown}")
+
+    ordered_decisions = sorted(decisions, key=lambda row: str(row["candidate_id"]))
+    merged: dict[str, object] = {
+        "schema_version": "safe-auto-decisions-v1",
+        "candidate_decisions": ordered_decisions,
+        "added_boxes": added_boxes,
+        "image_decisions": sorted(
+            image_decisions,
+            key=lambda row: str(row["image_id"]),
+        ),
+    }
+    canonical = json.dumps(
+        merged,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    merged["decision_sha256"] = hashlib.sha256(canonical).hexdigest().upper()
+    return merged
