@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -180,3 +183,97 @@ def evaluate_dataset(document: dict[str, object]) -> SilverReport:
         val_images=len(val_images),
         synthetic_train_images=synthetic_train_images,
     )
+
+
+def _atomic_json(path: Path, value: object) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _document_hash(value: object) -> str:
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest().upper()
+
+
+def export_silver(
+    document: dict[str, object],
+    output_root: Path,
+    *,
+    integrity: dict[str, object] | None = None,
+) -> int:
+    """Write either an isolated silver dataset or a refusal, never both."""
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    reserved = [
+        output_root / "silver-refusal.json",
+        output_root / "instances.silver.json",
+        output_root / "silver-manifest.json",
+        output_root / "accepted-images.json",
+        output_root / "uncertain-images.json",
+    ]
+    existing = [path for path in reserved if path.exists()]
+    if existing:
+        raise FileExistsError(f"silver export already exists: {existing[0]}")
+
+    report = evaluate_dataset(document)
+    source_hash = _document_hash(document)
+    if not report.can_train:
+        _atomic_json(
+            output_root / "silver-refusal.json",
+            {
+                "schema_version": "silver-refusal-v1",
+                "source_document_sha256": source_hash,
+                "errors": list(report.errors),
+                "train_groups": report.train_groups,
+                "val_groups": report.val_groups,
+                "train_images": report.train_images,
+                "val_images": report.val_images,
+                "integrity": integrity or {},
+            },
+        )
+        return 2
+
+    silver = json.loads(json.dumps(document, ensure_ascii=False))
+    info = silver.setdefault("info", {})
+    if not isinstance(info, dict):
+        raise ValueError("COCO info must be an object")
+    info.update(
+        {
+            "schema_version": "ai-silver-truth-v1",
+            "truth_tier": "silver",
+            "production_metrics_allowed": False,
+        }
+    )
+    instances_path = output_root / "instances.silver.json"
+    _atomic_json(instances_path, silver)
+    images = silver["images"]
+    accepted = [row["id"] for row in images]
+    _atomic_json(output_root / "accepted-images.json", accepted)
+    _atomic_json(output_root / "uncertain-images.json", [])
+    _atomic_json(
+        output_root / "silver-manifest.json",
+        {
+            "schema_version": "silver-manifest-v1",
+            "source_document_sha256": source_hash,
+            "instances_sha256": hashlib.sha256(instances_path.read_bytes())
+            .hexdigest()
+            .upper(),
+            "train_groups": report.train_groups,
+            "val_groups": report.val_groups,
+            "train_images": report.train_images,
+            "val_images": report.val_images,
+            "synthetic_train_images": report.synthetic_train_images,
+            "production_metrics_allowed": False,
+            "integrity": integrity or {},
+        },
+    )
+    return 0

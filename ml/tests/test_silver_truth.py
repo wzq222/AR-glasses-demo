@@ -1,4 +1,6 @@
-from crrc_vision.silver_truth import evaluate_dataset, evaluate_image
+import json
+
+from crrc_vision.silver_truth import evaluate_dataset, evaluate_image, export_silver
 
 
 def sample_image(
@@ -97,3 +99,25 @@ def test_synthetic_train_images_are_capped_at_twenty_percent() -> None:
     report = evaluate_dataset(document)
 
     assert "SYNTHETIC_TRAIN_RATIO_EXCEEDED" in report.errors
+
+
+def test_export_writes_refusal_without_silver_coco(tmp_path) -> None:
+    document = sample_complete_document(train_groups=20, val_groups=5)
+
+    code = export_silver(document, tmp_path)
+
+    assert code == 2
+    refusal = json.loads((tmp_path / "silver-refusal.json").read_text())
+    assert "INSUFFICIENT_TRAIN_GROUPS" in refusal["errors"]
+    assert not (tmp_path / "instances.silver.json").exists()
+
+
+def test_export_writes_isolated_silver_truth_after_gate_passes(tmp_path) -> None:
+    document = sample_complete_document()
+
+    code = export_silver(document, tmp_path)
+
+    assert code == 0
+    assert (tmp_path / "instances.silver.json").exists()
+    assert (tmp_path / "silver-manifest.json").exists()
+    assert not (tmp_path / "silver-refusal.json").exists()
