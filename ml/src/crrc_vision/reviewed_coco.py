@@ -64,6 +64,37 @@ def _rows(value: object, name: str) -> list[dict[str, Any]]:
     return value
 
 
+def merge_review_documents(
+    documents: list[dict[str, object]],
+    *,
+    review_kind: str,
+) -> dict[str, object]:
+    """Merge disjoint review batches into one deterministic review document."""
+
+    if review_kind not in {"first", "second"}:
+        raise ValueError("review_kind must be first or second")
+    merged: list[dict[str, Any]] = []
+    for document in documents:
+        merged.extend(_rows(document.get("reviews"), "reviews"))
+    image_ids = [row.get("image_id") for row in merged]
+    if any(image_id is None for image_id in image_ids) or len(image_ids) != len(
+        set(image_ids)
+    ):
+        raise ValueError("duplicate review image or missing image_id")
+    ordered = sorted(merged, key=lambda row: int(row["image_id"]))
+    if review_kind == "second":
+        return {
+            "schema_version": "safe-auto-second-pass-review-v1",
+            "prompt_version": "second-v2",
+            "first_result_hidden": True,
+            "reviews": ordered,
+        }
+    return {
+        "schema_version": "safe-auto-first-pass-merged-v1",
+        "reviews": ordered,
+    }
+
+
 def _xyxy_to_bbox(value: object) -> list[float]:
     if not (
         isinstance(value, list)

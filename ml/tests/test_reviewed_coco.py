@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from crrc_vision.reviewed_coco import assemble_reviewed_coco, write_reviewed_coco
+from crrc_vision.reviewed_coco import (
+    assemble_reviewed_coco,
+    merge_review_documents,
+    write_reviewed_coco,
+)
 
 
 def candidates_document() -> dict[str, object]:
@@ -162,3 +166,28 @@ def test_reviewed_coco_writer_is_atomic_and_refuses_overwrite(tmp_path) -> None:
     assert json.loads((tmp_path / "uncertain-images.json").read_text()) == [2]
     with pytest.raises(FileExistsError):
         write_reviewed_coco(result, tmp_path)
+
+
+def test_merge_first_pass_reviews_keeps_each_completed_image_once() -> None:
+    calibration = {"reviews": [first_reviews()["reviews"][0]]}
+    expansion = {"reviews": [first_reviews()["reviews"][1]]}
+
+    merged = merge_review_documents([calibration, expansion], review_kind="first")
+
+    assert [review["image_id"] for review in merged["reviews"]] == [1, 2]
+
+
+def test_merge_review_documents_refuses_duplicate_image_review() -> None:
+    duplicate = {"reviews": [first_reviews()["reviews"][0]]}
+
+    with pytest.raises(ValueError, match="duplicate review image"):
+        merge_review_documents([duplicate, duplicate], review_kind="first")
+
+
+def test_merge_second_pass_reviews_preserves_assembly_contract() -> None:
+    review = second_reviews()
+
+    merged = merge_review_documents([review], review_kind="second")
+
+    assert merged["schema_version"] == "safe-auto-second-pass-review-v1"
+    assert merged["first_result_hidden"] is True
