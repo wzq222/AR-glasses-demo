@@ -17,6 +17,7 @@ from crrc_vision.reference_teacher import (
     TeacherPrediction,
     build_run_manifest,
     ensure_complete_selection,
+    parse_teacher_selection,
     validate_checkpoint_globals,
     validate_ultralytics_version,
     xyxy_to_xywh,
@@ -124,8 +125,7 @@ def main() -> int:
     wrapper.model.args = checkpoint_data.get("train_args", {})
 
     selection_bytes = selection_path.read_bytes()
-    selection = json.loads(selection_bytes.decode("utf-8"))
-    items = selection.get("items", [])
+    items = parse_teacher_selection(selection_bytes, selection_path.suffix)
     expected_paths = [str(item["relative_path"]) for item in items]
     if not expected_paths:
         raise RuntimeError("EMPTY_TEACHER_SELECTION")

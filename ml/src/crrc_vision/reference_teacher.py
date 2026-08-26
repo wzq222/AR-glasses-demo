@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import asdict, dataclass
 from typing import Iterable
 
@@ -11,6 +12,23 @@ TEACHER_CATEGORY_MAP = {0: "fastener", 1: "pipe_joint", 2: "fastener"}
 MAPPING_STATUS = "inferred_unconfirmed"
 ULTRALYTICS_VERSION = "8.2.40"
 PROPOSAL_CATEGORIES = {"fastener": 1, "pipe_joint": 2}
+
+
+def parse_teacher_selection(data: bytes, suffix: str) -> list[dict[str, object]]:
+    """Load either a curated selection JSON or the complete JSONL manifest."""
+
+    text = data.decode("utf-8")
+    if suffix.lower() == ".jsonl":
+        values = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        document = json.loads(text)
+        values = document.get("items", []) if isinstance(document, dict) else []
+    if not values or any(not isinstance(row, dict) for row in values):
+        raise ValueError("teacher selection is empty or invalid")
+    required = {"relative_path", "scene_group", "split"}
+    if any(not required <= set(row) for row in values):
+        raise ValueError("teacher selection rows are missing required fields")
+    return values
 
 
 def build_run_manifest(

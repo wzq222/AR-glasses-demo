@@ -4,10 +4,22 @@ from crrc_vision.reference_teacher import (
     build_run_manifest,
     ensure_complete_selection,
     map_teacher_category,
+    parse_teacher_selection,
     validate_checkpoint_globals,
     validate_ultralytics_version,
     xyxy_to_xywh,
 )
+
+
+def test_teacher_selection_accepts_full_jsonl_manifest():
+    payload = (
+        b'{"relative_path":"a.jpg","scene_group":"g1","split":"train"}\n'
+        b'{"relative_path":"b.jpg","scene_group":"g2","split":"val"}\n'
+    )
+
+    items = parse_teacher_selection(payload, ".jsonl")
+
+    assert [row["relative_path"] for row in items] == ["a.jpg", "b.jpg"]
 
 
 def test_checkpoint_globals_reject_non_framework_types():
