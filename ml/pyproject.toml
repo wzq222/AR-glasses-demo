@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "crrc-vision"
 version = "0.1.0"
 description = "Auditable data and training tools for CRRC fastener inspection"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "ImageHash>=4.3,<5",
     "numpy>=2.0,<3",
