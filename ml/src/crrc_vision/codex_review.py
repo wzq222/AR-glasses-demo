@@ -11,7 +11,7 @@ from crrc_vision.auto_labeling import VALID_CATEGORIES
 
 
 VALID_CANDIDATE = {"accept", "reject", "needs_adjustment", "uncertain"}
-VALID_IMAGE = {"complete", "uncertain"}
+VALID_IMAGE = {"complete", "pending_second_pass", "uncertain"}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -94,8 +94,10 @@ def validate_review(review: dict[str, object]) -> tuple[str, ...]:
 
     requires_second = "needs_adjustment" in decision_values or bool(added_boxes)
     second_pass_value = review.get("second_pass")
-    if requires_second and not second_pass_value:
+    if (requires_second or image_status == "pending_second_pass") and not second_pass_value:
         errors.add("SECOND_PASS_REQUIRED")
+    if image_status == "pending_second_pass" and second_pass_value:
+        errors.add("PENDING_FINAL_STATUS")
     if second_pass_value:
         second_pass = _mapping(second_pass_value)
         if not _valid_pass(second_pass):
@@ -121,6 +123,26 @@ def validate_review(review: dict[str, object]) -> tuple[str, ...]:
         and all(isinstance(reason, str) and reason for reason in reasons)
     ):
         errors.add("INVALID_REASONS")
+    return tuple(sorted(errors))
+
+
+def validate_first_pass_review(review: dict[str, object]) -> tuple[str, ...]:
+    """Validate a review that may still be waiting for blind geometry review.
+
+    First-pass geometry proposals are useful output, not uncertainty.  They may be
+    persisted with ``pending_second_pass`` and rendered for an independent pass;
+    the stricter :func:`validate_review` still refuses to finalize them.
+    """
+
+    errors = set(validate_review(review))
+    errors.discard("SECOND_PASS_REQUIRED")
+    errors.discard("PENDING_FINAL_STATUS")
+    decisions = _rows(review.get("candidate_decisions"))
+    has_pending_geometry = any(
+        row.get("decision") == "needs_adjustment" for row in decisions
+    ) or bool(_rows(review.get("added_boxes")))
+    if has_pending_geometry and review.get("image_status") == "complete":
+        errors.add("PENDING_SECOND_PASS_COMPLETE_CONFLICT")
     return tuple(sorted(errors))
 
 

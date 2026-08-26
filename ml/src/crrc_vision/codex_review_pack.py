@@ -206,19 +206,79 @@ def _render_context(
     return context
 
 
+def _render_miss_sweep_tiles(
+    image: Image.Image,
+    output_root: Path,
+    safe_stem: str,
+) -> list[dict[str, object]]:
+    """Render four overlapping, high-resolution tiles for whole-image recall review."""
+
+    overlap_x = max(32, round(image.width * 0.08))
+    overlap_y = max(32, round(image.height * 0.08))
+    middle_x = image.width // 2
+    middle_y = image.height // 2
+    bounds = (
+        (0, 0, min(image.width, middle_x + overlap_x), min(image.height, middle_y + overlap_y)),
+        (max(0, middle_x - overlap_x), 0, image.width, min(image.height, middle_y + overlap_y)),
+        (0, max(0, middle_y - overlap_y), min(image.width, middle_x + overlap_x), image.height),
+        (max(0, middle_x - overlap_x), max(0, middle_y - overlap_y), image.width, image.height),
+    )
+    rendered: list[dict[str, object]] = []
+    for index, (left, top, right, bottom) in enumerate(bounds, start=1):
+        tile = image.crop((left, top, right, bottom))
+        tile.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+        draw = ImageDraw.Draw(tile)
+        draw.text(
+            (8, 8),
+            f"T{index}",
+            fill=(255, 255, 255),
+            stroke_width=3,
+            stroke_fill=(0, 0, 0),
+        )
+        path = output_root / f"{safe_stem}_T{index}.jpg"
+        tile.save(path, quality=95)
+        rendered.append(
+            {
+                "tile": f"T{index}",
+                "path": str(path.relative_to(output_root.parent)).replace("\\", "/"),
+                "asset_sha256": _sha256(path),
+                "source_xyxy_normalized": [
+                    left / image.width,
+                    top / image.height,
+                    right / image.width,
+                    bottom / image.height,
+                ],
+            }
+        )
+    return rendered
+
+
 def build_pack(
     candidates: dict[str, object],
     source_root: Path,
     output_root: Path,
+    selected_relative_paths: list[str] | None = None,
 ) -> PackSummary:
     """Render all images and candidates, including zero-candidate images."""
 
-    images = candidates.get("images")
-    fused = candidates.get("fused_candidates")
-    if not isinstance(images, list) or any(not isinstance(row, dict) for row in images):
+    raw_images = candidates.get("images")
+    raw_fused = candidates.get("fused_candidates")
+    if not isinstance(raw_images, list) or any(not isinstance(row, dict) for row in raw_images):
         raise ValueError("candidate document images must be a list")
-    if not isinstance(fused, list) or any(not isinstance(row, dict) for row in fused):
+    if not isinstance(raw_fused, list) or any(not isinstance(row, dict) for row in raw_fused):
         raise ValueError("fused_candidates must be a list")
+    images = raw_images
+    fused = raw_fused
+    if selected_relative_paths is not None:
+        if len(selected_relative_paths) != len(set(selected_relative_paths)):
+            raise ValueError("selected image paths must be unique")
+        by_path = {str(row.get("relative_path") or ""): row for row in raw_images}
+        missing = [path for path in selected_relative_paths if path not in by_path]
+        if missing:
+            raise ValueError(f"selected images missing from candidates: {missing}")
+        images = [by_path[path] for path in selected_relative_paths]
+        selected_ids = {row.get("id") for row in images}
+        fused = [row for row in raw_fused if row.get("image_id") in selected_ids]
     if output_root.exists():
         raise FileExistsError(f"Codex review pack already exists: {output_root}")
 
@@ -247,9 +307,11 @@ def build_pack(
 
     output_root.mkdir(parents=True, exist_ok=False)
     full_root = output_root / "full-images"
+    tile_root = output_root / "miss-sweep-tiles"
     context_root = output_root / "candidate-contexts"
     task_root = output_root / "first-pass"
     full_root.mkdir()
+    tile_root.mkdir()
     context_root.mkdir()
     task_root.mkdir()
 
@@ -266,6 +328,7 @@ def build_pack(
         safe_stem = f"{int(image_id):04d}_{Path(relative_path).stem}"
         full_path = full_root / f"{safe_stem}.jpg"
         _render_full(original, by_image.get(image_id, [])).save(full_path, quality=93)
+        miss_sweep_tiles = _render_miss_sweep_tiles(original, tile_root, safe_stem)
         task_candidates = []
         for candidate in sorted(
             by_image.get(image_id, []), key=lambda row: str(row["id"])
@@ -294,6 +357,7 @@ def build_pack(
                     "\\", "/"
                 ),
                 "asset_sha256": _sha256(full_path),
+                "miss_sweep_tiles": miss_sweep_tiles,
                 "same_scene_neighbors": [
                     path for path in scene_images[scene] if path != relative_path
                 ],
@@ -308,10 +372,26 @@ def build_pack(
             "reviewer": "codex-visual-auditor",
             "task_version": "safe-auto-review-v1",
             "prompt_version": "first-v1",
+            "target_definitions": {
+                "fastener": "A visible bolt, nut, screw, or mechanically connected fastener assembly.",
+                "pipe_joint": "A visible pipe-joint connection carrying an anti-loosening mark.",
+            },
             "instructions": (
-                "Review the whole image first, then every candidate. Mark uncertain "
-                "whenever the pixels do not support a confident decision."
+                "First scan every miss_sweep_tile for targets that have no candidate. "
+                "Then review every candidate context. Use accept for a correct target box, "
+                "reject for background or a duplicate, needs_adjustment plus corrected_xyxy "
+                "for a real target with wrong geometry, and uncertain only when pixels cannot "
+                "support a decision. Put every missed target in added_boxes with category and "
+                "source-image normalized xyxy. Set image_status=complete only when the tile "
+                "sweep found no unresolved miss and every candidate is final; use "
+                "pending_second_pass when corrected_xyxy or added_boxes need blind geometry "
+                "review. Do not use uncertain merely because a second pass is pending."
             ),
+            "output_contract": {
+                "candidate_decisions": "one row per candidate_id",
+                "added_boxes": "missed targets with category and normalized xyxy",
+                "image_status": ["complete", "pending_second_pass", "uncertain"],
+            },
             "images": task_images[batch_index * 8 : (batch_index + 1) * 8],
         }
         (task_root / f"tasks-{batch_index + 1:03d}.json").write_text(
