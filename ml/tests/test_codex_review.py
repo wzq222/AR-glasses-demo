@@ -79,6 +79,15 @@ def test_pending_first_pass_cannot_be_merged_as_final_decision() -> None:
         merge_reviews(candidates, review)
 
 
+def test_pending_first_pass_requires_proposed_geometry() -> None:
+    review = sample_review(first="accept", second=None)
+    review["image_status"] = "pending_second_pass"
+
+    assert validate_first_pass_review(review) == (
+        "PENDING_SECOND_PASS_WITHOUT_GEOMETRY",
+    )
+
+
 def test_uncertain_image_cannot_be_complete() -> None:
     review = sample_review(first="uncertain", second=None, image_status="complete")
 
@@ -169,6 +178,8 @@ def test_review_pack_includes_high_resolution_miss_sweep_tiles(tmp_path) -> None
     assert len(task["images"][0]["miss_sweep_tiles"]) == 4
     assert len(list((output / "miss-sweep-tiles").glob("*.jpg"))) == 4
     assert "fastener" in task["target_definitions"]
+    assert task["annotation_policy"]["exclude_boundary_truncation"] is True
+    assert task["annotation_policy"]["exclude_incidental_tiny_background"] is True
     assert "added_boxes" in task["instructions"]
 
 
@@ -230,3 +241,36 @@ def test_second_pass_task_hides_first_pass_decision(tmp_path) -> None:
     assert count == 1
     assert task["first_result_hidden"] is True
     assert "needs_adjustment" not in json.dumps(task)
+
+
+def test_second_pass_task_renders_proposed_geometry_without_first_decision(
+    tmp_path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    Image.new("RGB", (200, 100), "gray").save(source / "a.jpg")
+    review = sample_review(first="accept", second=None)
+    review.update(
+        {
+            "image_id": 1,
+            "relative_path": "a.jpg",
+            "image_status": "pending_second_pass",
+            "added_boxes": [
+                {"category": "fastener", "xyxy": [0.1, 0.2, 0.3, 0.4]}
+            ],
+        }
+    )
+
+    count = build_second_pass_tasks(
+        {"reviews": [review]},
+        tmp_path / "second",
+        source_root=source,
+    )
+    task = json.loads(
+        next((tmp_path / "second").glob("tasks-*.json")).read_text(encoding="utf-8")
+    )
+
+    assert count == 1
+    assert len(list((tmp_path / "second" / "review-images").glob("*.jpg"))) == 1
+    assert task["images"][0]["review_image"].startswith("review-images/")
+    assert "first_pass" not in json.dumps(task)

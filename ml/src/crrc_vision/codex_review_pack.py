@@ -37,6 +37,8 @@ def _normalized_box(value: object) -> list[float]:
 def build_second_pass_tasks(
     review_document: dict[str, object],
     output_root: Path,
+    *,
+    source_root: Path | None = None,
 ) -> int:
     """Emit only proposed geometry, never the first-pass decision text."""
 
@@ -59,7 +61,7 @@ def build_second_pass_tasks(
             if decision.get("decision") == "needs_adjustment":
                 proposals.append(
                     {
-                        "candidate_id": decision.get("candidate_id"),
+                        "proposal_id": decision.get("candidate_id"),
                         "proposed_xyxy": _normalized_box(
                             decision.get("corrected_xyxy")
                         ),
@@ -74,7 +76,7 @@ def build_second_pass_tasks(
                 raise ValueError("added box must be an object")
             proposals.append(
                 {
-                    "candidate_id": f"added-{review.get('image_id')}-{index + 1}",
+                    "proposal_id": f"added-{review.get('image_id')}-{index + 1}",
                     "proposed_xyxy": _normalized_box(added.get("xyxy")),
                     "category": added.get("category"),
                     "origin": "added_box",
@@ -84,20 +86,63 @@ def build_second_pass_tasks(
             tasks.append(
                 {
                     "image_id": review.get("image_id"),
+                    "relative_path": review.get("relative_path"),
                     "asset_sha256": review.get("asset_sha256"),
                     "proposed_boxes": proposals,
                 }
             )
 
     output_root.mkdir(parents=True, exist_ok=False)
+    if source_root is not None:
+        review_image_root = output_root / "review-images"
+        review_image_root.mkdir()
+        for task in tasks:
+            relative_path = str(task.get("relative_path") or "")
+            if not relative_path:
+                raise ValueError("second-pass review is missing relative_path")
+            original = _load_rgb(_safe_source(source_root, relative_path))
+            rendered = original.copy()
+            draw = ImageDraw.Draw(rendered)
+            proposed_boxes = task.get("proposed_boxes", [])
+            if not isinstance(proposed_boxes, list):
+                raise ValueError("proposed_boxes must be a list")
+            for proposal in proposed_boxes:
+                if not isinstance(proposal, dict):
+                    raise ValueError("proposed box must be an object")
+                x1, y1, x2, y2 = _normalized_box(
+                    proposal.get("proposed_xyxy")
+                )
+                pixel_box = (
+                    x1 * rendered.width,
+                    y1 * rendered.height,
+                    x2 * rendered.width,
+                    y2 * rendered.height,
+                )
+                draw.rectangle(pixel_box, outline=(255, 196, 0), width=6)
+                draw.text(
+                    (pixel_box[0] + 3, max(0, pixel_box[1] - 24)),
+                    str(proposal.get("proposal_id") or ""),
+                    fill=(255, 196, 0),
+                    stroke_width=3,
+                    stroke_fill=(0, 0, 0),
+                )
+            rendered.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+            review_image_path = review_image_root / f"{int(task['image_id']):04d}.jpg"
+            rendered.save(review_image_path, quality=95)
+            task["review_image"] = str(
+                review_image_path.relative_to(output_root)
+            ).replace("\\", "/")
+            task["review_image_sha256"] = _sha256(review_image_path)
     for batch_index in range(math.ceil(len(tasks) / 8)):
         payload = {
             "schema_version": "safe-auto-second-pass-task-v1",
-            "prompt_version": "second-v1",
+            "prompt_version": "second-v2",
             "first_result_hidden": True,
             "instructions": (
-                "Independently judge whether each proposed box matches visible pixels. "
-                "Return uncertain when evidence is insufficient."
+                "Independently judge every proposed box against visible pixels. Return one "
+                "proposal_decision per proposal_id: accept, reject, or uncertain. An accepted "
+                "box may include final_xyxy when its geometry needs correction. Do not infer "
+                "or reproduce any first-pass decision."
             ),
             "images": tasks[batch_index * 8 : (batch_index + 1) * 8],
         }
@@ -375,6 +420,14 @@ def build_pack(
             "target_definitions": {
                 "fastener": "A visible bolt, nut, screw, or mechanically connected fastener assembly.",
                 "pipe_joint": "A visible pipe-joint connection carrying an anti-loosening mark.",
+            },
+            "annotation_policy": {
+                "include_only_independently_boundable_connections": True,
+                "anti_loosening_mark_required_for_fastener": False,
+                "exclude_boundary_truncation": True,
+                "exclude_incidental_tiny_background": True,
+                "exclude_duplicate_subparts": True,
+                "uncertain_for_blur_occlusion_or_class_ambiguity": True,
             },
             "instructions": (
                 "First scan every miss_sweep_tile for targets that have no candidate. "

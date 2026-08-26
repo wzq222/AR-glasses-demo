@@ -143,6 +143,11 @@ def validate_first_pass_review(review: dict[str, object]) -> tuple[str, ...]:
     ) or bool(_rows(review.get("added_boxes")))
     if has_pending_geometry and review.get("image_status") == "complete":
         errors.add("PENDING_SECOND_PASS_COMPLETE_CONFLICT")
+    if (
+        review.get("image_status") == "pending_second_pass"
+        and not has_pending_geometry
+    ):
+        errors.add("PENDING_SECOND_PASS_WITHOUT_GEOMETRY")
     return tuple(sorted(errors))
 
 
