@@ -96,6 +96,45 @@ def test_adjacent_objects_are_not_merged_by_containment_rule() -> None:
     assert len(fused) == 2
 
 
+def test_complete_link_prevents_chain_bridge() -> None:
+    fused = fuse_candidates(
+        [
+            candidate("a", "hsv", "fastener", (0, 0, 20, 20), 0.8),
+            candidate("b", "student", "fastener", (5, 0, 25, 20), 0.8),
+            candidate(
+                "c",
+                "reference_teacher",
+                "fastener",
+                (10, 0, 30, 20),
+                0.8,
+            ),
+        ]
+    )
+
+    assert sorted(len(item.member_ids) for item in fused) == [1, 2]
+
+
+def test_fusion_is_deterministic_across_input_order() -> None:
+    rows = [
+        candidate("a", "hsv", "fastener", (0, 0, 20, 20), 0.7),
+        candidate("b", "student", "fastener", (5, 0, 25, 20), 0.8),
+        candidate(
+            "c",
+            "reference_teacher",
+            "fastener",
+            (10, 0, 30, 20),
+            0.9,
+        ),
+    ]
+
+    forward = fuse_candidates(rows)
+    backward = fuse_candidates(list(reversed(rows)))
+
+    assert [item.stable_id() for item in forward] == [
+        item.stable_id() for item in backward
+    ]
+
+
 def test_overlapping_categories_are_conflict_not_silently_merged() -> None:
     fused = fuse_candidates(
         [

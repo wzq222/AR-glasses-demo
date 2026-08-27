@@ -222,28 +222,23 @@ def _weighted_box(cluster: list[Candidate]) -> Box:
     )  # type: ignore[return-value]
 
 
-def _connected_cluster(
+def _complete_link_cluster(
     seed: Candidate,
     pending: list[Candidate],
     iou_threshold: float,
 ) -> tuple[list[Candidate], list[Candidate]]:
     cluster = [seed]
-    changed = True
-    while changed:
-        changed = False
-        remaining: list[Candidate] = []
-        for row in pending:
-            matches = row.relative_path == seed.relative_path and any(
-                _is_geometric_duplicate(row.xyxy, member.xyxy, iou_threshold)
-                for member in cluster
-            )
-            if matches:
-                cluster.append(row)
-                changed = True
-            else:
-                remaining.append(row)
-        pending = remaining
-    return cluster, pending
+    remaining: list[Candidate] = []
+    for row in pending:
+        matches = row.relative_path == seed.relative_path and all(
+            _is_geometric_duplicate(row.xyxy, member.xyxy, iou_threshold)
+            for member in cluster
+        )
+        if matches:
+            cluster.append(row)
+        else:
+            remaining.append(row)
+    return cluster, remaining
 
 
 def fuse_candidates(
@@ -266,7 +261,7 @@ def fuse_candidates(
     output: list[FusedCandidate] = []
     while pending:
         seed = pending.pop(0)
-        cluster, pending = _connected_cluster(seed, pending, iou_threshold)
+        cluster, pending = _complete_link_cluster(seed, pending, iou_threshold)
         families = tuple(sorted({row.source_family for row in cluster}))
         categories = {row.category for row in cluster}
         if len(categories) > 1:
