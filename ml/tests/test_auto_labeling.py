@@ -61,6 +61,41 @@ def test_two_independent_families_make_high_consensus() -> None:
     assert fused[0].consensus_status == "consensus_high"
 
 
+def test_nested_same_center_candidates_merge_below_iou_threshold() -> None:
+    fused = fuse_candidates(
+        [
+            candidate("small", "hsv", "fastener", (0, 0, 20, 20), 0.8),
+            candidate(
+                "large",
+                "reference_teacher",
+                "fastener",
+                (-5, -5, 25, 25),
+                0.9,
+            ),
+        ]
+    )
+
+    assert len(fused) == 1
+    assert len(fused[0].member_ids) == 2
+
+
+def test_adjacent_objects_are_not_merged_by_containment_rule() -> None:
+    fused = fuse_candidates(
+        [
+            candidate("left", "hsv", "fastener", (0, 0, 20, 20), 0.8),
+            candidate(
+                "spanning",
+                "reference_teacher",
+                "fastener",
+                (0, 0, 40, 20),
+                0.9,
+            ),
+        ]
+    )
+
+    assert len(fused) == 2
+
+
 def test_overlapping_categories_are_conflict_not_silently_merged() -> None:
     fused = fuse_candidates(
         [

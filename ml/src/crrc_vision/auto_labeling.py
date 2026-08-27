@@ -10,6 +10,9 @@ from typing import Any
 
 VALID_CATEGORIES = {"fastener", "pipe_joint"}
 VALID_SOURCE_FAMILIES = {"reference_teacher", "hsv", "temporal", "student"}
+DEFAULT_CONTAINMENT_THRESHOLD = 0.85
+DEFAULT_CENTER_DISTANCE_THRESHOLD = 0.25
+DEFAULT_MAX_AREA_RATIO = 4.0
 
 
 Box = tuple[float, float, float, float]
@@ -164,15 +167,47 @@ class FusedCandidate:
 def iou_xyxy(left: Box, right: Box) -> float:
     _validate_box(left)
     _validate_box(right)
-    x1 = max(left[0], right[0])
-    y1 = max(left[1], right[1])
-    x2 = min(left[2], right[2])
-    y2 = min(left[3], right[3])
-    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-    left_area = (left[2] - left[0]) * (left[3] - left[1])
-    right_area = (right[2] - right[0]) * (right[3] - right[1])
+    intersection = _intersection_area(left, right)
+    left_area = _box_area(left)
+    right_area = _box_area(right)
     union = left_area + right_area - intersection
     return intersection / union if union else 0.0
+
+
+def _box_area(box: Box) -> float:
+    return (box[2] - box[0]) * (box[3] - box[1])
+
+
+def _intersection_area(left: Box, right: Box) -> float:
+    return max(0.0, min(left[2], right[2]) - max(left[0], right[0])) * max(
+        0.0, min(left[3], right[3]) - max(left[1], right[1])
+    )
+
+
+def _is_geometric_duplicate(left: Box, right: Box, iou_threshold: float) -> bool:
+    if iou_xyxy(left, right) >= iou_threshold:
+        return True
+    left_area = _box_area(left)
+    right_area = _box_area(right)
+    smaller = left if left_area <= right_area else right
+    smaller_area = min(left_area, right_area)
+    if (
+        _intersection_area(left, right) / smaller_area
+        < DEFAULT_CONTAINMENT_THRESHOLD
+    ):
+        return False
+    if max(left_area, right_area) / smaller_area > DEFAULT_MAX_AREA_RATIO:
+        return False
+    left_center = ((left[0] + left[2]) / 2, (left[1] + left[3]) / 2)
+    right_center = ((right[0] + right[2]) / 2, (right[1] + right[3]) / 2)
+    center_distance = (
+        (left_center[0] - right_center[0]) ** 2
+        + (left_center[1] - right_center[1]) ** 2
+    ) ** 0.5
+    smaller_diagonal = (
+        (smaller[2] - smaller[0]) ** 2 + (smaller[3] - smaller[1]) ** 2
+    ) ** 0.5
+    return center_distance / smaller_diagonal <= DEFAULT_CENTER_DISTANCE_THRESHOLD
 
 
 def _weighted_box(cluster: list[Candidate]) -> Box:
@@ -199,7 +234,7 @@ def _connected_cluster(
         remaining: list[Candidate] = []
         for row in pending:
             matches = row.relative_path == seed.relative_path and any(
-                iou_xyxy(row.xyxy, member.xyxy) >= iou_threshold
+                _is_geometric_duplicate(row.xyxy, member.xyxy, iou_threshold)
                 for member in cluster
             )
             if matches:
