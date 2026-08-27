@@ -15,6 +15,7 @@ DEFAULT_CENTER_DISTANCE_THRESHOLD = 0.25
 DEFAULT_MAX_AREA_RATIO = 4.0
 DEFAULT_HSV_ANCHOR_EXPANSION = 0.05
 DEFAULT_ANCHOR_ASSIGNMENT_MARGIN = 0.10
+DEFAULT_CLUSTER_RECONCILIATION_IOU = 0.75
 
 
 Box = tuple[float, float, float, float]
@@ -323,6 +324,30 @@ def _select_unique_anchor(
     return None
 
 
+def _reconcile_clusters(
+    clusters: list[list[Candidate]],
+) -> list[list[Candidate]]:
+    pending = list(clusters)
+    output: list[list[Candidate]] = []
+    while pending:
+        cluster = pending.pop(0)
+        anchor_box = _weighted_box(cluster)
+        remaining: list[list[Candidate]] = []
+        for other in pending:
+            matches = (
+                other[0].relative_path == cluster[0].relative_path
+                and iou_xyxy(anchor_box, _weighted_box(other))
+                >= DEFAULT_CLUSTER_RECONCILIATION_IOU
+            )
+            if matches:
+                cluster.extend(other)
+            else:
+                remaining.append(other)
+        output.append(cluster)
+        pending = remaining
+    return output
+
+
 def _clusters_for_path(
     rows: list[Candidate],
     iou_threshold: float,
@@ -347,7 +372,9 @@ def _clusters_for_path(
             residual.append(row)
         else:
             anchor_clusters[anchor_index].append(row)
-    return anchor_clusters + _geometric_clusters(residual, iou_threshold)
+    return _reconcile_clusters(
+        anchor_clusters + _geometric_clusters(residual, iou_threshold)
+    )
 
 
 def fuse_candidates(

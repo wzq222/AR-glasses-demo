@@ -3,6 +3,7 @@ import pytest
 from crrc_vision.auto_labeling import (
     Candidate,
     DEFAULT_ANCHOR_ASSIGNMENT_MARGIN,
+    DEFAULT_CLUSTER_RECONCILIATION_IOU,
     DEFAULT_HSV_ANCHOR_EXPANSION,
     fuse_candidates,
     fusion_stats,
@@ -116,6 +117,50 @@ def test_teacher_variance_matches_cluster_representative() -> None:
             ),
             candidate(
                 "c", "reference_teacher", "fastener", (7, 0, 27, 20), 0.8
+            ),
+        ]
+    )
+
+    assert len(fused) == 1
+
+
+def test_strict_representative_reconciliation_merges_residual_teacher_cluster() -> None:
+    fused = fuse_candidates(
+        [
+            candidate(
+                "flat-seed",
+                "reference_teacher",
+                "fastener",
+                (0, 0, 50, 11),
+                0.8,
+            ),
+            candidate(
+                "early-residual",
+                "reference_teacher",
+                "fastener",
+                (3, 0, 45, 26),
+                0.8,
+            ),
+            candidate(
+                "late-a",
+                "reference_teacher",
+                "fastener",
+                (4, -2, 48, 27),
+                0.8,
+            ),
+            candidate(
+                "late-b",
+                "reference_teacher",
+                "fastener",
+                (5, -2, 49, 28),
+                0.8,
+            ),
+            candidate(
+                "late-c",
+                "reference_teacher",
+                "fastener",
+                (6, -2, 50, 29),
+                0.8,
             ),
         ]
     )
@@ -248,6 +293,7 @@ def test_fusion_stats_report_reduction_and_cluster_sizes() -> None:
 def test_anchor_assignment_thresholds_are_explicit_and_conservative() -> None:
     assert DEFAULT_HSV_ANCHOR_EXPANSION == 0.05
     assert DEFAULT_ANCHOR_ASSIGNMENT_MARGIN == 0.10
+    assert DEFAULT_CLUSTER_RECONCILIATION_IOU == 0.75
 
 
 def test_overlapping_categories_are_conflict_not_silently_merged() -> None:

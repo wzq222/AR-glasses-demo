@@ -18,6 +18,7 @@ from crrc_vision.auto_labeling import (
     Candidate,
     DEFAULT_ANCHOR_ASSIGNMENT_MARGIN,
     DEFAULT_CENTER_DISTANCE_THRESHOLD,
+    DEFAULT_CLUSTER_RECONCILIATION_IOU,
     DEFAULT_CONTAINMENT_THRESHOLD,
     DEFAULT_HSV_ANCHOR_EXPANSION,
     DEFAULT_MAX_AREA_RATIO,
@@ -312,7 +313,7 @@ def main() -> int:
     parser.add_argument("--manifest", default="manifest.jsonl")
     parser.add_argument("--source", default="source/20240529-luosi")
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
-    parser.add_argument("--output", default="runs/safe-auto-candidates-v2.1")
+    parser.add_argument("--output", default="runs/safe-auto-candidates-v2.2")
     parser.add_argument("--iou", type=float, default=0.55)
     parser.add_argument(
         "--temporal",
@@ -417,7 +418,7 @@ def main() -> int:
     truth_after = _sha256(truth_path)
     verify_truth_unchanged(truth_before, truth_after)
     payload = {
-        "schema_version": "safe-auto-candidates-v2.1",
+        "schema_version": "safe-auto-candidates-v2.2",
         "input_hashes": input_hashes,
         "truth_sha256_before": truth_before,
         "truth_sha256_after": truth_after,
@@ -435,6 +436,9 @@ def main() -> int:
                 "strategy": "teacher-anchor",
                 "hsv_anchor_expansion": DEFAULT_HSV_ANCHOR_EXPANSION,
                 "anchor_assignment_margin": DEFAULT_ANCHOR_ASSIGNMENT_MARGIN,
+                "cluster_reconciliation_iou": (
+                    DEFAULT_CLUSTER_RECONCILIATION_IOU
+                ),
                 "linkage": "representative-one-pass",
             },
         },
