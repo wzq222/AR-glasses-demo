@@ -95,6 +95,62 @@ def merge_review_documents(
     }
 
 
+def merge_reviewed_coco(
+    documents: list[dict[str, object]],
+) -> dict[str, object]:
+    """Merge disjoint reviewed COCO outputs across candidate-set versions."""
+
+    if not documents:
+        raise ValueError("reviewed COCO documents are required")
+    categories = documents[0].get("categories")
+    if not isinstance(categories, list) or not categories:
+        raise ValueError("invalid reviewed categories")
+
+    images: list[dict[str, Any]] = []
+    annotations: list[dict[str, Any]] = []
+    image_ids: set[object] = set()
+    scene_groups: set[str] = set()
+    for document in documents:
+        if document.get("categories") != categories:
+            raise ValueError("reviewed categories do not match")
+        rows = _rows(document.get("images"), "reviewed images")
+        document_image_ids: set[object] = set()
+        for row in rows:
+            image_id = row.get("id")
+            scene_group = str(row.get("scene_group") or "")
+            if image_id is None or image_id in image_ids:
+                raise ValueError("duplicate reviewed image")
+            if not scene_group or scene_group in scene_groups:
+                raise ValueError("duplicate reviewed scene")
+            image_ids.add(image_id)
+            document_image_ids.add(image_id)
+            scene_groups.add(scene_group)
+            images.append(dict(row))
+        for annotation in _rows(
+            document.get("annotations"), "reviewed annotations"
+        ):
+            if annotation.get("image_id") not in document_image_ids:
+                raise ValueError("reviewed annotation references unknown image")
+            annotations.append(dict(annotation))
+
+    ordered_images = sorted(images, key=lambda row: int(row["id"]))
+    ordered_annotations = sorted(
+        annotations,
+        key=lambda row: (int(row["image_id"]), int(row.get("id") or 0)),
+    )
+    for annotation_id, annotation in enumerate(ordered_annotations, start=1):
+        annotation["id"] = annotation_id
+    return {
+        "info": {
+            "schema_version": "safe-auto-reviewed-coco-v1",
+            "truth_tier": "reviewed-ai-calibration",
+        },
+        "images": ordered_images,
+        "annotations": ordered_annotations,
+        "categories": categories,
+    }
+
+
 def _xyxy_to_bbox(value: object) -> list[float]:
     if not (
         isinstance(value, list)

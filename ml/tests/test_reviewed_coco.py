@@ -5,6 +5,7 @@ import pytest
 from crrc_vision.reviewed_coco import (
     assemble_reviewed_coco,
     merge_review_documents,
+    merge_reviewed_coco,
     write_reviewed_coco,
 )
 
@@ -191,3 +192,62 @@ def test_merge_second_pass_reviews_preserves_assembly_contract() -> None:
 
     assert merged["schema_version"] == "safe-auto-second-pass-review-v1"
     assert merged["first_result_hidden"] is True
+
+
+def test_merge_reviewed_coco_combines_disjoint_versions_and_reassigns_ids() -> None:
+    first = {
+        "info": {"schema_version": "safe-auto-reviewed-coco-v1"},
+        "images": [candidates_document()["images"][0]],
+        "annotations": [
+            {
+                "id": 9,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [20.0, 10.0, 40.0, 30.0],
+                "area": 1200.0,
+                "iscrowd": 0,
+                "review_status": "accept",
+            }
+        ],
+        "categories": [
+            {"id": 1, "name": "fastener"},
+            {"id": 2, "name": "pipe_joint"},
+        ],
+    }
+    second = {
+        "info": {"schema_version": "safe-auto-reviewed-coco-v1"},
+        "images": [candidates_document()["images"][1]],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 2,
+                "category_id": 2,
+                "bbox": [50.0, 50.0, 30.0, 40.0],
+                "area": 1200.0,
+                "iscrowd": 0,
+                "review_status": "accept",
+            }
+        ],
+        "categories": first["categories"],
+    }
+
+    merged = merge_reviewed_coco([first, second])
+
+    assert [image["id"] for image in merged["images"]] == [1, 2]
+    assert [annotation["id"] for annotation in merged["annotations"]] == [1, 2]
+    assert [annotation["image_id"] for annotation in merged["annotations"]] == [1, 2]
+    assert merged["categories"] == first["categories"]
+
+
+def test_merge_reviewed_coco_refuses_duplicate_image_or_scene() -> None:
+    document = assemble_reviewed_coco(
+        candidates_document(), first_reviews(), second_reviews()
+    ).document
+    duplicate_scene = json.loads(json.dumps(document))
+    duplicate_scene["images"][0]["id"] = 99
+    duplicate_scene["annotations"][0]["image_id"] = 99
+
+    with pytest.raises(ValueError, match="duplicate reviewed image"):
+        merge_reviewed_coco([document, document])
+    with pytest.raises(ValueError, match="duplicate reviewed scene"):
+        merge_reviewed_coco([document, duplicate_scene])
