@@ -3,6 +3,7 @@ import pytest
 from crrc_vision.auto_labeling import (
     Candidate,
     fuse_candidates,
+    fusion_stats,
     normalize_hsv_document,
     normalize_teacher_payload,
     verify_truth_unchanged,
@@ -133,6 +134,28 @@ def test_fusion_is_deterministic_across_input_order() -> None:
     assert [item.stable_id() for item in forward] == [
         item.stable_id() for item in backward
     ]
+
+
+def test_fusion_stats_report_reduction_and_cluster_sizes() -> None:
+    rows = [
+        candidate("a", "hsv", "fastener", (0, 0, 20, 20), 0.8),
+        candidate(
+            "b",
+            "reference_teacher",
+            "fastener",
+            (1, 1, 21, 21),
+            0.9,
+        ),
+        candidate("c", "student", "fastener", (100, 100, 120, 120), 0.7),
+    ]
+    fused = fuse_candidates(rows)
+
+    assert fusion_stats(rows, fused) == {
+        "raw_candidates": 3,
+        "fused_candidates": 2,
+        "candidate_reduction": 1,
+        "cluster_size_histogram": {"1": 1, "2": 1},
+    }
 
 
 def test_overlapping_categories_are_conflict_not_silently_merged() -> None:

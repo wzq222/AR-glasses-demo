@@ -16,8 +16,12 @@ import numpy as np
 from crrc_vision.assets import asset_root
 from crrc_vision.auto_labeling import (
     Candidate,
+    DEFAULT_CENTER_DISTANCE_THRESHOLD,
+    DEFAULT_CONTAINMENT_THRESHOLD,
+    DEFAULT_MAX_AREA_RATIO,
     FusedCandidate,
     fuse_candidates,
+    fusion_stats,
     normalize_hsv_document,
     normalize_teacher_payload,
     verify_truth_unchanged,
@@ -306,7 +310,7 @@ def main() -> int:
     parser.add_argument("--manifest", default="manifest.jsonl")
     parser.add_argument("--source", default="source/20240529-luosi")
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
-    parser.add_argument("--output", default="runs/safe-auto-candidates-v1")
+    parser.add_argument("--output", default="runs/safe-auto-candidates-v2")
     parser.add_argument("--iou", type=float, default=0.55)
     parser.add_argument(
         "--temporal",
@@ -411,7 +415,7 @@ def main() -> int:
     truth_after = _sha256(truth_path)
     verify_truth_unchanged(truth_before, truth_after)
     payload = {
-        "schema_version": "safe-auto-candidates-v1",
+        "schema_version": "safe-auto-candidates-v2",
         "input_hashes": input_hashes,
         "truth_sha256_before": truth_before,
         "truth_sha256_after": truth_after,
@@ -420,6 +424,14 @@ def main() -> int:
             "teacher_sizes": sorted(observed_teacher_sizes),
             "tile_overlaps": sorted(observed_tile_overlaps),
             "temporal": args.temporal,
+            "dedup": {
+                "containment_threshold": DEFAULT_CONTAINMENT_THRESHOLD,
+                "normalized_center_distance_threshold": (
+                    DEFAULT_CENTER_DISTANCE_THRESHOLD
+                ),
+                "maximum_area_ratio": DEFAULT_MAX_AREA_RATIO,
+                "linkage": "complete",
+            },
         },
         "images": image_rows,
         "raw_candidates": [_candidate_dict(value) for value in raw_candidates],
@@ -428,9 +440,8 @@ def main() -> int:
         "errors": [],
         "stats": {
             "images": len(image_rows),
-            "raw_candidates": len(raw_candidates),
             "temporal_candidates": len(temporal),
-            "fused_candidates": len(fused),
+            **fusion_stats(raw_candidates, fused),
         },
     }
     output_root.mkdir(parents=True, exist_ok=False)

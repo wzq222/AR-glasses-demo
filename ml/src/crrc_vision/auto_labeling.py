@@ -286,3 +286,23 @@ def fuse_candidates(
             )
         )
     return output
+
+
+def fusion_stats(
+    rows: list[Candidate],
+    fused: list[FusedCandidate],
+) -> dict[str, int | dict[str, int]]:
+    """Summarize physical-candidate reduction for an audit manifest."""
+
+    histogram: dict[str, int] = {}
+    for item in fused:
+        key = str(len(item.member_ids))
+        histogram[key] = histogram.get(key, 0) + 1
+    return {
+        "raw_candidates": len(rows),
+        "fused_candidates": len(fused),
+        "candidate_reduction": len(rows) - len(fused),
+        "cluster_size_histogram": dict(
+            sorted(histogram.items(), key=lambda row: int(row[0]))
+        ),
+    }
