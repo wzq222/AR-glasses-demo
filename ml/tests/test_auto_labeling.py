@@ -2,6 +2,8 @@ import pytest
 
 from crrc_vision.auto_labeling import (
     Candidate,
+    DEFAULT_ANCHOR_ASSIGNMENT_MARGIN,
+    DEFAULT_HSV_ANCHOR_EXPANSION,
     fuse_candidates,
     fusion_stats,
     normalize_hsv_document,
@@ -83,7 +85,13 @@ def test_nested_same_center_candidates_merge_below_iou_threshold() -> None:
 def test_adjacent_objects_are_not_merged_by_containment_rule() -> None:
     fused = fuse_candidates(
         [
-            candidate("left", "hsv", "fastener", (0, 0, 20, 20), 0.8),
+            candidate(
+                "left",
+                "reference_teacher",
+                "fastener",
+                (0, 0, 20, 20),
+                0.8,
+            ),
             candidate(
                 "spanning",
                 "reference_teacher",
@@ -97,22 +105,101 @@ def test_adjacent_objects_are_not_merged_by_containment_rule() -> None:
     assert len(fused) == 2
 
 
-def test_complete_link_prevents_chain_bridge() -> None:
+def test_teacher_variance_matches_cluster_representative() -> None:
     fused = fuse_candidates(
         [
-            candidate("a", "hsv", "fastener", (0, 0, 20, 20), 0.8),
-            candidate("b", "student", "fastener", (5, 0, 25, 20), 0.8),
             candidate(
-                "c",
-                "reference_teacher",
-                "fastener",
-                (10, 0, 30, 20),
-                0.8,
+                "a", "reference_teacher", "fastener", (0, 0, 20, 20), 0.8
+            ),
+            candidate(
+                "b", "reference_teacher", "fastener", (4, 0, 24, 20), 0.8
+            ),
+            candidate(
+                "c", "reference_teacher", "fastener", (7, 0, 27, 20), 0.8
+            ),
+        ]
+    )
+
+    assert len(fused) == 1
+
+
+def test_representative_link_prevents_teacher_chain_bridge() -> None:
+    fused = fuse_candidates(
+        [
+            candidate(
+                "a", "reference_teacher", "fastener", (0, 0, 20, 20), 0.8
+            ),
+            candidate(
+                "b", "reference_teacher", "fastener", (5, 0, 25, 20), 0.8
+            ),
+            candidate(
+                "c", "reference_teacher", "fastener", (10, 0, 30, 20), 0.8
             ),
         ]
     )
 
     assert sorted(len(item.member_ids) for item in fused) == [1, 2]
+
+
+def test_hsv_marker_center_uniquely_attaches_to_teacher_anchor() -> None:
+    fused = fuse_candidates(
+        [
+            candidate(
+                "teacher",
+                "reference_teacher",
+                "fastener",
+                (0, 0, 20, 20),
+                0.9,
+            ),
+            candidate("marker", "hsv", "fastener", (-80, -80, 100, 100), 0.8),
+        ]
+    )
+
+    assert len(fused) == 1
+    assert fused[0].supporting_families == ("hsv", "reference_teacher")
+
+
+def test_hsv_marker_between_two_teacher_anchors_remains_independent() -> None:
+    fused = fuse_candidates(
+        [
+            candidate(
+                "left",
+                "reference_teacher",
+                "fastener",
+                (0, 0, 20, 20),
+                0.9,
+            ),
+            candidate(
+                "right",
+                "reference_teacher",
+                "fastener",
+                (22, 0, 42, 20),
+                0.9,
+            ),
+            candidate("marker", "hsv", "fastener", (-69, -80, 111, 100), 0.8),
+        ]
+    )
+
+    assert len(fused) == 3
+
+
+def test_hsv_marker_cross_category_attachment_is_conflict() -> None:
+    fused = fuse_candidates(
+        [
+            candidate(
+                "teacher",
+                "reference_teacher",
+                "pipe_joint",
+                (0, 0, 20, 20),
+                0.9,
+            ),
+            candidate("marker", "hsv", "fastener", (-80, -80, 100, 100), 0.8),
+        ]
+    )
+
+    assert len(fused) == 1
+    assert fused[0].category is None
+    assert fused[0].consensus_status == "conflict"
 
 
 def test_fusion_is_deterministic_across_input_order() -> None:
@@ -156,6 +243,11 @@ def test_fusion_stats_report_reduction_and_cluster_sizes() -> None:
         "candidate_reduction": 1,
         "cluster_size_histogram": {"1": 1, "2": 1},
     }
+
+
+def test_anchor_assignment_thresholds_are_explicit_and_conservative() -> None:
+    assert DEFAULT_HSV_ANCHOR_EXPANSION == 0.05
+    assert DEFAULT_ANCHOR_ASSIGNMENT_MARGIN == 0.10
 
 
 def test_overlapping_categories_are_conflict_not_silently_merged() -> None:

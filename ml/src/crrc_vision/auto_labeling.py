@@ -13,6 +13,8 @@ VALID_SOURCE_FAMILIES = {"reference_teacher", "hsv", "temporal", "student"}
 DEFAULT_CONTAINMENT_THRESHOLD = 0.85
 DEFAULT_CENTER_DISTANCE_THRESHOLD = 0.25
 DEFAULT_MAX_AREA_RATIO = 4.0
+DEFAULT_HSV_ANCHOR_EXPANSION = 0.05
+DEFAULT_ANCHOR_ASSIGNMENT_MARGIN = 0.10
 
 
 Box = tuple[float, float, float, float]
@@ -222,7 +224,11 @@ def _weighted_box(cluster: list[Candidate]) -> Box:
     )  # type: ignore[return-value]
 
 
-def _complete_link_cluster(
+def _candidate_sort_key(row: Candidate) -> tuple[object, ...]:
+    return (row.relative_path, row.xyxy, row.category, row.source_id)
+
+
+def _representative_cluster(
     seed: Candidate,
     pending: list[Candidate],
     iou_threshold: float,
@@ -230,15 +236,118 @@ def _complete_link_cluster(
     cluster = [seed]
     remaining: list[Candidate] = []
     for row in pending:
-        matches = row.relative_path == seed.relative_path and all(
-            _is_geometric_duplicate(row.xyxy, member.xyxy, iou_threshold)
-            for member in cluster
+        matches = row.relative_path == seed.relative_path and (
+            _is_geometric_duplicate(
+                row.xyxy,
+                _weighted_box(cluster),
+                iou_threshold,
+            )
         )
         if matches:
             cluster.append(row)
         else:
             remaining.append(row)
     return cluster, remaining
+
+
+def _geometric_clusters(
+    rows: list[Candidate],
+    iou_threshold: float,
+) -> list[list[Candidate]]:
+    pending = sorted(rows, key=_candidate_sort_key)
+    clusters: list[list[Candidate]] = []
+    while pending:
+        seed = pending.pop(0)
+        cluster, pending = _representative_cluster(seed, pending, iou_threshold)
+        clusters.append(cluster)
+    return clusters
+
+
+def _box_center(box: Box) -> tuple[float, float]:
+    return ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+
+
+def _box_diagonal(box: Box) -> float:
+    return ((box[2] - box[0]) ** 2 + (box[3] - box[1]) ** 2) ** 0.5
+
+
+def _normalized_center_distance(left: Box, right: Box) -> float:
+    left_center = _box_center(left)
+    right_center = _box_center(right)
+    distance = (
+        (left_center[0] - right_center[0]) ** 2
+        + (left_center[1] - right_center[1]) ** 2
+    ) ** 0.5
+    return distance / _box_diagonal(right)
+
+
+def _normalized_point_to_box_distance(point_box: Box, anchor_box: Box) -> float:
+    x, y = _box_center(point_box)
+    dx = max(anchor_box[0] - x, 0.0, x - anchor_box[2])
+    dy = max(anchor_box[1] - y, 0.0, y - anchor_box[3])
+    return (dx**2 + dy**2) ** 0.5 / _box_diagonal(anchor_box)
+
+
+def _select_unique_anchor(
+    row: Candidate,
+    anchor_clusters: list[list[Candidate]],
+    anchor_boxes: list[Box],
+    iou_threshold: float,
+) -> int | None:
+    matches: list[tuple[float, int]] = []
+    for index, (cluster, anchor_box) in enumerate(
+        zip(anchor_clusters, anchor_boxes)
+    ):
+        if row.relative_path != cluster[0].relative_path:
+            continue
+        geometric_match = _is_geometric_duplicate(
+            row.xyxy,
+            anchor_box,
+            iou_threshold,
+        )
+        marker_match = row.source_family == "hsv" and (
+            _normalized_point_to_box_distance(row.xyxy, anchor_box)
+            <= DEFAULT_HSV_ANCHOR_EXPANSION
+        )
+        if geometric_match or marker_match:
+            matches.append(
+                (_normalized_center_distance(row.xyxy, anchor_box), index)
+            )
+    matches.sort()
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0][1]
+    if matches[1][0] - matches[0][0] >= DEFAULT_ANCHOR_ASSIGNMENT_MARGIN:
+        return matches[0][1]
+    return None
+
+
+def _clusters_for_path(
+    rows: list[Candidate],
+    iou_threshold: float,
+) -> list[list[Candidate]]:
+    teacher_rows = [
+        row for row in rows if row.source_family == "reference_teacher"
+    ]
+    other_rows = [
+        row for row in rows if row.source_family != "reference_teacher"
+    ]
+    anchor_clusters = _geometric_clusters(teacher_rows, iou_threshold)
+    anchor_boxes = [_weighted_box(cluster) for cluster in anchor_clusters]
+    residual: list[Candidate] = []
+    for row in sorted(other_rows, key=_candidate_sort_key):
+        anchor_index = _select_unique_anchor(
+            row,
+            anchor_clusters,
+            anchor_boxes,
+            iou_threshold,
+        )
+        if anchor_index is None:
+            residual.append(row)
+        else:
+            anchor_clusters[anchor_index].append(row)
+    return anchor_clusters + _geometric_clusters(residual, iou_threshold)
 
 
 def fuse_candidates(
@@ -249,19 +358,17 @@ def fuse_candidates(
 
     if not 0.0 < iou_threshold <= 1.0:
         raise ValueError("IoU threshold must be in (0, 1]")
-    pending = sorted(
-        rows,
-        key=lambda row: (
-            row.relative_path,
-            row.xyxy,
-            row.category,
-            row.source_id,
-        ),
-    )
+    rows_by_path: dict[str, list[Candidate]] = {}
+    for row in rows:
+        rows_by_path.setdefault(row.relative_path, []).append(row)
     output: list[FusedCandidate] = []
-    while pending:
-        seed = pending.pop(0)
-        cluster, pending = _complete_link_cluster(seed, pending, iou_threshold)
+    clusters: list[list[Candidate]] = []
+    for relative_path in sorted(rows_by_path):
+        clusters.extend(
+            _clusters_for_path(rows_by_path[relative_path], iou_threshold)
+        )
+    for cluster in clusters:
+        seed = cluster[0]
         families = tuple(sorted({row.source_family for row in cluster}))
         categories = {row.category for row in cluster}
         if len(categories) > 1:
