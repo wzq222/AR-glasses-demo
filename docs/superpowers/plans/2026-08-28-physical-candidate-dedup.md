@@ -270,6 +270,8 @@ git commit -m "feat: report candidate dedup audit metrics"
 
 ### Task 4: External regeneration and acceptance gate
 
+> **Empirical revision:** The first complete-link v2 asset failed the real-data gate (`5617` total, image 0007 `15`, image 0047 `10`). Preserve it. Before continuing this task, add a new TDD slice that replaces complete-link with fixed teacher-anchor representative grouping plus unique HSV marker assignment, adds the same-source chain, representative-variance, unique-marker and ambiguous-marker tests, and emits `safe-auto-candidates-v2.1` without overwriting v2.
+
 **Files:**
 - Create outside Git: `E:/Work/京新数智/识动hicool/中车眼镜数据资产/runs/safe-auto-candidates-v2/candidates.json`
 - Create outside Git: a v2 review-pack directory selected by the existing review-pack builder
