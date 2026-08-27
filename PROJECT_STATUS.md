@@ -76,6 +76,11 @@
   `uncertain`。累计达到19个完整场景/87框（train 14/64、val 5/16），累计uncertain为12；累计
   reviewed COCO SHA-256为`68A96293D9D4C81B73573C99B20481B76D393FF2AFE903991C0A1C49A8905AFD`。
   银标门仍仅拒绝train/val场景数不足，正式真值SHA-256保持不变。
+- 2026-08-28：`safe-auto-v2.2`固定批次003按清晰度、亮度和实际候选数复筛后完成6个train、2个val
+  独立场景的高清全图扫描、28个候选首审，并对6张补框图执行隐藏首审结论的几何盲审；新增8个
+  完整场景/26框、0个新增uncertain。累计达到27个完整场景/113框（train 20/64、val 7/16），
+  累计uncertain仍为12；银标门仅拒绝train/val场景数不足，正式真值SHA-256保持
+  `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`，100项Python测试通过。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -134,7 +139,7 @@ git status --short
 
 继续每30分钟一次的固定8场景审核：只使用Git外`review-packs/safe-auto-v2.2`和当前
 `fused_candidates`实际数量选图，跳过累计COCO已完成场景；目标每批6个train、2个val，完成整图扫描、
-逐候选首审、必要的隐藏结论二审、COCO组装和银标门。当前优先补足train 50、val 11，达64/16后
+逐候选首审、必要的隐藏结论二审、COCO组装和银标门。当前优先补足train 44、val 9，达64/16后
 立即停止扩量并运行PicoDet-S/M训练门。
 同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
