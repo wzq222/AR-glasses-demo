@@ -112,6 +112,11 @@
 - 2026-08-28：最佳S-P2 fused的严格误差包有70 FN、4 FP；主桶为tiny 33、lookalike 21、
   dense pipes 8、blur 7、border truncation 4、dark 1。现有1,022个目标框没有防松线端点或
   正常/松动状态真值，因此只能证明几何判定单元测试通过，不能声称端到端松动识别可用。
+- 2026-08-29：方案2的带防松标记检查点闭环已完成代码与开发集审计。修复了“先去重后剔除”
+  吞掉全图补框和二审完整性集合判定两个缺陷。Git外 `marked-point-v1.4` 有30个train、
+  17个val完整场景和248个标记点，12张因模糊/遮挡/边界归属不清排除。候选门
+  248/248，但这仍是同源开发集指标，不是生产精度。train低于64场景且没有防松线端点/
+  NORMAL/LOOSE状态真值，训练门保持FAIL。209项Python测试通过，正式真值哈希保持不变。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -124,10 +129,9 @@
 
 ## Active Work
 
-全图防松线Phase 1代码底座和严格数据/评估闭环已实现。S-P2三种子及M-P2挑战者均未通过
-高准确率门；最佳严格结果是在precision 0.9048时recall 0.3519、完整场景0/19。
-当前主瓶颈是真实场景覆盖、微小目标与相似结构分离，以及防松线正常/松动受控真值，
-不是继续更换模型名称。sealed-test未打开，模型未获准接入Android。
+带防松标记检查点的候选和全图审计闭环已实现，开发集候选覆盖为248/248；但只有30个
+train完整场景，尚不足64场景训练门。既有S/M-P2仍未通过高准确率门；新真值也没有防松线端点和
+NORMAL/LOOSE状态，所以当前不允许训练、打开sealed-test或接入Android。
 
 ## Run
 
@@ -188,4 +192,6 @@ Android runtime并在指定手机连续热机50次测端到端P50/P95；同时�
 - `docs/validation/2026-08-28-small-object-accuracy-recovery.md`：小目标根因、P2对照、阈值与ONNX边界。
 - `docs/validation/2026-08-28-high-accuracy-validation.md`：三种子严格门、M-P2挑战者、误差桶、
   密封测试和防松状态能力边界。
+- `docs/validation/2026-08-29-marked-point-candidate-recall.md`：带防松标记检查点真值、全图审计、
+  候选覆盖和训练拒绝结论。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。

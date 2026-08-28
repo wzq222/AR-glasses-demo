@@ -21,6 +21,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [V2标注引导链路验证](docs/validation/2026-08-25-full-image-v2-bootstrap.md)
 - [小目标准确率恢复验证](docs/validation/2026-08-28-small-object-accuracy-recovery.md)
 - [高准确率严格验证收口](docs/validation/2026-08-28-high-accuracy-validation.md)
+- [带防松标记检查点候选门](docs/validation/2026-08-29-marked-point-candidate-recall.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、
@@ -38,6 +39,8 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - **原图库浏览**：网格 + 全屏两种方式浏览已同步的照片（保存在 `glass_media/photos` 目录）。
 - **全图防松线底座**：提供多目标结果、关键点几何判定和Git外数据工具；尚未接入可用检测模型。
 - **严格验证结论**：S/M-P2 均未通过 `P>=0.90` 的召回与完整场景门；封存测试保持未打开。
+- **标记点候选闭环**：Git外开发真值为30 train/17 val场景、248框，候选覆盖248/248；
+  仍因train场景少于64且缺正常/松动状态真值而禁止训练或声称可判断松动。
 - **其他图像接口（预留）**：二维码识别和电压表数字识别待实现。
 
 ## 技术栈
