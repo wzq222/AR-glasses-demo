@@ -63,6 +63,20 @@ def _write_images(document: dict[str, object], root: Path) -> None:
         (root / image["relative_path"]).write_bytes(f"image-{image['id']}".encode())
 
 
+def _write_jpeg_images(document: dict[str, object], root: Path) -> None:
+    from PIL import Image
+
+    root.mkdir(parents=True, exist_ok=True)
+    for image in document["images"]:
+        path = root / image["relative_path"]
+        Image.new("RGB", (image["width"], image["height"]), (image["id"] % 255, 20, 30)).save(
+            path,
+            format="JPEG",
+            quality=95,
+        )
+        image["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_gate_accepts_exact_64_train_16_val_real_scenes(tmp_path: Path) -> None:
     document = _document()
     _write_images(document, tmp_path)
@@ -168,6 +182,66 @@ def test_prepare_can_emit_ascii_runtime_paths_for_windows_gbk_loader(
     )
 
 
+def test_prepare_tiled_train_keeps_full_val_and_covers_every_training_box(
+    tmp_path: Path,
+) -> None:
+    document = _document()
+    source_root = tmp_path / "source"
+    _write_jpeg_images(document, source_root)
+    document_path = tmp_path / "instances.silver.json"
+    document_path.write_text(json.dumps(document), encoding="utf-8")
+    truth_path = tmp_path / "formal.json"
+    truth_path.write_text("{}", encoding="utf-8")
+    truth_sha = hashlib.sha256(truth_path.read_bytes()).hexdigest().upper()
+
+    manifest = prepare_picodet_dataset(
+        document_path=document_path,
+        source_root=source_root,
+        runtime_source_root=source_root,
+        run_root=tmp_path / "run",
+        formal_truth_path=truth_path,
+        expected_truth_sha256=truth_sha,
+        train_tiles=True,
+        tile_overlap=0.12,
+    )
+
+    train = json.loads((tmp_path / "run/dataset/annotations/train.json").read_text())
+    val = json.loads((tmp_path / "run/dataset/annotations/val.json").read_text())
+    source_ids = {image["id"] for image in document["images"] if image["split"] == "train"}
+    tiled_sources = {
+        image["source_image_id"]
+        for image in train["images"]
+        if image.get("view") == "tile"
+    }
+
+    assert len(train["images"]) == 64 * 5
+    assert len(val["images"]) == 16
+    assert all(image.get("view") != "tile" for image in val["images"])
+    assert tiled_sources == source_ids
+    assert manifest["train_source_images"] == 64
+    assert manifest["train_effective_images"] == 64 * 5
+    assert manifest["tile_overlap"] == 0.12
+    assert all(
+        any(
+            annotation.get("source_annotation_id") == source_annotation["id"]
+            for annotation in train["annotations"]
+        )
+        for source_annotation in document["annotations"]
+        if source_annotation["image_id"] in source_ids
+    )
+    assert all(
+        (tmp_path / "run/dataset/images/train" / Path(image["file_name"]).name).is_file()
+        for image in train["images"]
+        if image.get("view") == "tile"
+    )
+    assert all(
+        image["sha256"]
+        == hashlib.sha256(Path(image["file_name"]).read_bytes()).hexdigest().upper()
+        for image in train["images"]
+        if image.get("view") == "tile"
+    )
+
+
 def test_prepare_refuses_changed_formal_truth(tmp_path: Path) -> None:
     document = _document()
     source_root = tmp_path / "source"
@@ -251,10 +325,12 @@ def test_runtime_config_overrides_schedule_and_dataset_without_touching_checkout
     assert base.resolve().as_posix() in text
     assert "epoch: 80" in text
     assert "max_epochs: 80" in text
+    assert "static_assigner_epoch: 26" in text
     assert "batch_size: 8" in text
     assert "num_classes: 2" in text
     assert "annotations/train.json" in text
     assert "annotations/val.json" in text
+    assert text.count("allow_empty: true") == 2
 
 
 def test_runtime_config_can_be_ascii_only_when_assets_live_below_chinese_path(
@@ -276,3 +352,20 @@ def test_runtime_config_can_be_ascii_only_when_assets_live_below_chinese_path(
     )
 
     assert all(byte < 128 for byte in output.read_bytes())
+
+
+def test_runtime_config_scales_learning_rate_with_batch_size(tmp_path: Path) -> None:
+    checkout = tmp_path / "PaddleDetection"
+    base = checkout / "configs/picodet/picodet_s_416_coco_lcnet.yml"
+    base.parent.mkdir(parents=True)
+    base.write_text("epoch: 300\n", encoding="utf-8")
+
+    output = write_picodet_config(
+        paddledetection_root=checkout,
+        variant="s",
+        run_root=tmp_path / "run-s",
+        epochs=80,
+        batch_size=16,
+    )
+
+    assert "base_lr: 0.08" in output.read_text(encoding="utf-8")

@@ -57,6 +57,8 @@ def main() -> int:
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--train-tiles", action="store_true")
+    parser.add_argument("--tile-overlap", type=float, default=0.12)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
@@ -90,9 +92,12 @@ def main() -> int:
         document_path=silver,
         source_root=source,
         runtime_source_root=runtime_source,
+        runtime_run_root=runtime_run,
         run_root=run_root,
         formal_truth_path=truth,
         expected_truth_sha256=EXPECTED_TRUTH_SHA256,
+        train_tiles=args.train_tiles,
+        tile_overlap=args.tile_overlap,
     )
     config = write_picodet_config(
         paddledetection_root=checkout,

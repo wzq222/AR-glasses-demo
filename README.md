@@ -3,7 +3,8 @@
 面向轨道交通现场巡检的 AR 眼镜辅助作业项目。当前代码基线来自
 [`wzq222/AR-glasses-demo`](https://github.com/wzq222/AR-glasses-demo)，现阶段已实现的主体是
 CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片同步。防松线方向现已加入全图
-数据审计、候选预标注、质量门、多目标结果契约和几何判定核心，但候选检测模型尚未达到训练门；二维码、
+数据审计、候选预标注、质量门、多目标结果契约和几何判定核心，银标训练门已通过并有一个
+内部P2准确率基线，但它尚未达生产精度或接入Android；二维码、
 万用表识别仍只有接口，三类能力都还没有完成真机作业闭环。
 
 ## 项目入口
@@ -18,6 +19,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [训练就绪判断](docs/validation/2026-08-25-training-readiness.md)
 - [全图防松线检测路线 V2](docs/analysis/2026-08-25-full-image-fastener-route-v2.md)
 - [V2标注引导链路验证](docs/validation/2026-08-25-full-image-v2-bootstrap.md)
+- [小目标准确率恢复验证](docs/validation/2026-08-28-small-object-accuracy-recovery.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、

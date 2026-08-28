@@ -95,6 +95,12 @@
   AP分别为0.064/0.071，AP50为0.189/0.197，AR100为0.190/0.192，small AP均为0；best权重约
   4.8MB/14.0MB。两模型均通过Paddle 2.6.2兼容导出、整图及12%重叠切片推理冒烟。桌面CPU纯模型
   P50/P95为S 27.4/30.4ms、M 39.8/48.5ms；这不是手机指标，也不是生产准确率。
+- 2026-08-28：完成小目标根因修复和P2挑战者对照。PicoDet-S加入保留负样本、2×2重叠
+  切片训练、训练周期内assigner切换后，全图+切片原始双类AP50为0.285，物理目标合并
+  口径为0.448。stride-4 YOLOv8s-P2在相同16个全图银标场景上使用同一合并口径后，
+  640微调版达到AP 0.288、AP50 0.605、AR100 0.479；阈值0.20时precision 0.641、
+  recall 0.584。这是当前最优内部基线，仍未达生产准确率。固定640 ONNX已导出到
+  Git外`exports/android/yolov8s-p2-v3-640`并通过ONNX结构校验；尚未接入Android或做手机实测。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -107,12 +113,11 @@
 
 ## Active Work
 
-全图防松线Phase 1代码底座已实现；路线V2已把生产主线调整为
-`PicoDet-S/M + 全图上下文 + 重叠切片`的物理紧固件检测，随后只在ROI内做色标关键点和几何判断。
-银标门现已达到64个train和16个val完整场景，S/M首轮训练、复评、导出和桌面冒烟完成。当前瓶颈
-不是模型大小而是小目标：两模型small AP均为0。下一阶段先做确定性2×2重叠切片训练并复评，S作为
-手机基线、M作为挑战者；教师候选只用于提速，不承担整图完整性判断。RTMDet-tiny-P2和D-FINE-N
-仅作为离线对照。
+全图防松线Phase 1代码底座已实现，64/16银标场景已达训练门。PicoDet切片训练和
+P2挑战者对照已完成；当前临时精度冠军是`YOLOv8s-P2 640 + 物理目标类合并`，
+随后仍需只在ROI内判断类型、色标关键点和防松状态。它在小而同域的AI银标验证集上
+AP50只有0.605，因此尚不授权接入生产Android流程。当前主瓶颈是真实场景覆盖和独立
+人工真值测试集，而不是继续无限更换模型名称。
 
 ## Run
 
@@ -138,7 +143,7 @@ git status --short
 
 - 当前代码来自一次性上游提交，且没有 LICENSE；代码、K900 AAR 和 native 库授权边界未确认。
 - 会议没有冻结眼镜准确型号、固件、手机型号、协议版本和“rocket”品牌转写。
-- 二维码可用系统解码；防松线已有首轮物理目标模型，但small AP为0且尚未接入Android；万用表读数
+- 二维码可用系统解码；防松线当前P2基线AP50为0.605且尚未接入Android；万用表读数
   仍缺模型、样本、阈值和可量化验收指标。
 - 当前482张来自同一约44分钟采集，缺跨车辆、跨手机、跨光照和独立测试集；没有受控“正常/松动”真值。
 - 色标候选仍受锈蚀、警示贴、强光和断裂涂线影响，不能作为状态真值；整图银标训练门已PASS，但
@@ -152,9 +157,10 @@ git status --short
 
 ## Next Smallest Action
 
-停止审核扩量。用当前64/16完整场景生成按scene split隔离的全图+2×2、12%重叠切片训练COCO，先重训
-PicoDet-S并要求small AP、AR100相对首轮有明确提升；随后把S静态模型接入Android runtime并在指定
-手机连续热机50次测端到端P50/P95。同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
+从当前FN/FP中制定采集清单，新增至少100–150个独立真实场景，覆盖暗部、遮挡、运动模糊、
+镜面反光、管路密集区和不同车型；由独立人工真值测试集给出precision/recall验收结果。
+达精度门后再把授权清晰的模型接入Android runtime，并在指定手机连续热机50次测端到端
+P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
 
@@ -168,4 +174,5 @@ PicoDet-S并要求small AP、AR100相对首轮有明确提升；随后把S静态
 - `docs/analysis/2026-08-25-full-image-fastener-route-v2.md`：移动端小目标路线重评与新验收门。
 - `docs/validation/2026-08-25-full-image-v2-bootstrap.md`：代表帧、真值门与开放词汇试跑证据。
 - `docs/validation/2026-08-28-picodet-phase-b.md`：80场景银标门、S/M训练、导出、推理和时延证据。
+- `docs/validation/2026-08-28-small-object-accuracy-recovery.md`：小目标根因、P2对照、阈值与ONNX边界。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。

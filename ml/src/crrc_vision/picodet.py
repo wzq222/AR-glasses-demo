@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, ImageOps
+
+from crrc_vision.tiles import build_tiles
+
 
 PINNED_PADDLEDETECTION_REVISION = "v2.9.0"
 PINNED_PADDLEDETECTION_COMMIT = "b25522a0f4bde8c80603f3ba5e3472059972e3b5"
@@ -160,9 +164,12 @@ def prepare_picodet_dataset(
     document_path: Path,
     source_root: Path,
     runtime_source_root: Path | None = None,
+    runtime_run_root: Path | None = None,
     run_root: Path,
     formal_truth_path: Path,
     expected_truth_sha256: str,
+    train_tiles: bool = False,
+    tile_overlap: float = 0.12,
 ) -> dict[str, object]:
     """Write deterministic train/val COCO plus a provenance manifest outside Git."""
 
@@ -181,6 +188,14 @@ def prepare_picodet_dataset(
     annotations_root.mkdir(parents=True, exist_ok=True)
     source = source_root.resolve()
     runtime_source = runtime_source_root.absolute() if runtime_source_root else source
+    runtime_run = runtime_run_root.absolute() if runtime_run_root else run_root.resolve()
+    next_image_id = max(int(image["id"]) for image in images) + 1
+    next_annotation_id = max(int(annotation["id"]) for annotation in annotations) + 1
+    annotations_by_image: dict[int, list[dict[str, Any]]] = {}
+    for annotation in annotations:
+        annotations_by_image.setdefault(int(annotation["image_id"]), []).append(annotation)
+    train_source_images = sum(image["split"] == "train" for image in images)
+    train_effective_images = train_source_images
     for split in ("train", "val"):
         split_images = [dict(image) for image in images if image["split"] == split]
         split_ids = {int(image["id"]) for image in split_images}
@@ -188,11 +203,97 @@ def prepare_picodet_dataset(
             image["file_name"] = (
                 runtime_source / str(image["relative_path"])
             ).absolute().as_posix()
+            if split == "train" and train_tiles:
+                image["view"] = "full"
+                image["source_image_id"] = int(image["id"])
+        split_annotations = [
+            dict(annotation)
+            for annotation in annotations
+            if int(annotation["image_id"]) in split_ids
+        ]
+        if split == "train" and train_tiles:
+            tile_root = dataset_root / "images" / "train"
+            tile_root.mkdir(parents=True, exist_ok=True)
+            source_train_images = list(split_images)
+            for source_image in source_train_images:
+                source_image_id = int(source_image["id"])
+                source_path = source / str(source_image["relative_path"])
+                with Image.open(source_path) as opened:
+                    decoded = ImageOps.exif_transpose(opened).convert("RGB")
+                expected_size = (int(source_image["width"]), int(source_image["height"]))
+                if decoded.size != expected_size:
+                    raise ValueError(f"IMAGE_SIZE_MISMATCH:{source_image_id}")
+                for tile in build_tiles(*expected_size, overlap=tile_overlap):
+                    tile_name = f"{source_image_id:06d}_tile_{tile.index}.jpg"
+                    tile_path = tile_root / tile_name
+                    decoded.crop((tile.x1, tile.y1, tile.x2, tile.y2)).save(
+                        tile_path,
+                        format="JPEG",
+                        quality=95,
+                        subsampling=0,
+                    )
+                    tile_image_id = next_image_id
+                    next_image_id += 1
+                    split_images.append(
+                        {
+                            "id": tile_image_id,
+                            "file_name": (
+                                runtime_run / "dataset" / "images" / "train" / tile_name
+                            ).as_posix(),
+                            "relative_path": f"images/train/{tile_name}",
+                            "width": tile.width,
+                            "height": tile.height,
+                            "scene_group": source_image["scene_group"],
+                            "split": "train",
+                            "synthetic": False,
+                            "image_review_status": "complete",
+                            "sha256": _sha256(tile_path),
+                            "view": "tile",
+                            "source_image_id": source_image_id,
+                            "tile_index": tile.index,
+                            "tile_origin": [tile.x1, tile.y1],
+                        }
+                    )
+                    for source_annotation in annotations_by_image.get(source_image_id, []):
+                        x, y, width, height = (float(value) for value in source_annotation["bbox"])
+                        center_x = x + width / 2
+                        center_y = y + height / 2
+                        if not (
+                            tile.x1 <= center_x <= tile.x2
+                            and tile.y1 <= center_y <= tile.y2
+                        ):
+                            continue
+                        clipped_x1 = max(x, tile.x1)
+                        clipped_y1 = max(y, tile.y1)
+                        clipped_x2 = min(x + width, tile.x2)
+                        clipped_y2 = min(y + height, tile.y2)
+                        clipped_width = clipped_x2 - clipped_x1
+                        clipped_height = clipped_y2 - clipped_y1
+                        if clipped_width <= 0 or clipped_height <= 0:
+                            continue
+                        tiled_annotation = dict(source_annotation)
+                        tiled_annotation.update(
+                            {
+                                "id": next_annotation_id,
+                                "image_id": tile_image_id,
+                                "bbox": [
+                                    clipped_x1 - tile.x1,
+                                    clipped_y1 - tile.y1,
+                                    clipped_width,
+                                    clipped_height,
+                                ],
+                                "area": clipped_width * clipped_height,
+                                "source_annotation_id": int(source_annotation["id"]),
+                            }
+                        )
+                        next_annotation_id += 1
+                        split_annotations.append(tiled_annotation)
+            train_effective_images = len(split_images)
         split_document = {
             "info": document.get("info", {}),
             "images": sorted(split_images, key=lambda image: int(image["id"])),
             "annotations": sorted(
-                (dict(annotation) for annotation in annotations if int(annotation["image_id"]) in split_ids),
+                split_annotations,
                 key=lambda annotation: int(annotation["id"]),
             ),
             "categories": document["categories"],
@@ -211,6 +312,10 @@ def prepare_picodet_dataset(
         "formal_truth_path": str(formal_truth_path.resolve()),
         "formal_truth_sha256": truth_after,
         "source_root": str(source),
+        "train_tiles": train_tiles,
+        "tile_overlap": tile_overlap if train_tiles else None,
+        "train_source_images": train_source_images,
+        "train_effective_images": train_effective_images,
         "paddledetection_revision": PINNED_PADDLEDETECTION_REVISION,
     }
     (run_root / "training-manifest.json").write_bytes(_json_bytes(manifest))
@@ -309,6 +414,8 @@ def write_picodet_config(
     config_root.mkdir(parents=True, exist_ok=True)
     config = config_root / base.name
     warmup_steps = min(100, max(10, epochs * 2))
+    static_assigner_epoch = max(1, epochs // 3)
+    base_learning_rate = f"{0.24 * batch_size / 48:.6g}"
     content = f"""_BASE_: ['{runtime_base.as_posix()}']
 
 use_gpu: true
@@ -318,12 +425,16 @@ worker_num: 0
 num_classes: 2
 save_dir: '{output}'
 
+PicoHeadV2:
+  static_assigner_epoch: {static_assigner_epoch}
+
 TrainDataset:
   name: COCODataSet
   image_dir: ''
   anno_path: annotations/train.json
   dataset_dir: '{dataset}'
   data_fields: ['image', 'gt_bbox', 'gt_class', 'is_crowd']
+  allow_empty: true
 
 EvalDataset:
   name: COCODataSet
@@ -341,7 +452,7 @@ TrainReader:
   batch_size: {batch_size}
 
 LearningRate:
-  base_lr: 0.04
+  base_lr: {base_learning_rate}
   schedulers:
   - !CosineDecay
     max_epochs: {epochs}
