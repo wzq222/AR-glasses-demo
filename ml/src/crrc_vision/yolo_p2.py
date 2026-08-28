@@ -199,12 +199,12 @@ def _materialize_split(
                     tile_candidates,
                     key=lambda item: (-len(item[1]), item[0].index),
                 )
-                chosen = [ranked[0]]
+                negative_ranked = sorted(
+                    tile_candidates,
+                    key=lambda item: (len(item[1]), item[0].index),
+                )
+                chosen = [ranked[0] if image_id % 2 == 0 else negative_ranked[0]]
                 if tile_views > 1:
-                    negative_ranked = sorted(
-                        tile_candidates,
-                        key=lambda item: (len(item[1]), item[0].index),
-                    )
                     chosen.extend(
                         item for item in negative_ranked if item[0] != chosen[0][0]
                     )
