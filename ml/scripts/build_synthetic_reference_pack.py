@@ -17,6 +17,7 @@ from crrc_vision.synthetic_contract import (  # noqa: E402
     assert_formal_truth_unchanged,
     sha256_file,
 )
+from crrc_vision.synthetic_reference import select_reference_candidates  # noqa: E402
 
 
 STATES = ("NORMAL", "SLIGHT_LOOSE", "OBVIOUS_LOOSE")
@@ -30,49 +31,6 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--count", type=int, default=12)
     return parser.parse_args()
-
-
-def _select(coco: dict, count: int) -> list[tuple[dict, dict]]:
-    by_image: dict[int, list[dict]] = {}
-    for annotation in coco["annotations"]:
-        by_image.setdefault(int(annotation["image_id"]), []).append(annotation)
-    candidates: list[tuple[dict, dict]] = []
-    seen_scenes: set[str] = set()
-    for image in sorted(coco["images"], key=lambda item: (item["scene_group"], item["id"])):
-        scene = str(image["scene_group"])
-        annotations = by_image.get(int(image["id"]), [])
-        valid = [
-            annotation
-            for annotation in annotations
-            if min(float(annotation["bbox"][2]), float(annotation["bbox"][3])) >= 36.0
-            and float(annotation["bbox"][0]) > 4.0
-            and float(annotation["bbox"][1]) > 4.0
-            and float(annotation["bbox"][0]) + float(annotation["bbox"][2]) < float(image["width"]) - 4.0
-            and float(annotation["bbox"][1]) + float(annotation["bbox"][3]) < float(image["height"]) - 4.0
-        ]
-        if not valid or scene in seen_scenes:
-            continue
-        best = max(valid, key=lambda item: float(item["bbox"][2]) * float(item["bbox"][3]))
-        seen_scenes.add(scene)
-        candidates.append((image, best))
-    if len(candidates) < count:
-        raise RuntimeError(f"eligible train references {len(candidates)} < requested {count}")
-    if count == 1:
-        return [candidates[len(candidates) // 2]]
-    positions = [round(index * (len(candidates) - 1) / (count - 1)) for index in range(count)]
-    return [candidates[position] for position in positions]
-
-
-def _context_box(bbox: list[float], width: int, height: int) -> tuple[int, int, int, int]:
-    x, y, box_width, box_height = map(float, bbox)
-    side = max(box_width, box_height) * 2.6
-    center_x = x + box_width / 2.0
-    center_y = y + box_height / 2.0
-    left = max(0, int(round(center_x - side / 2.0)))
-    top = max(0, int(round(center_y - side / 2.0)))
-    right = min(width, int(round(center_x + side / 2.0)))
-    bottom = min(height, int(round(center_y + side / 2.0)))
-    return left, top, right, bottom
 
 
 def _prompt(reference_id: str, state: str) -> str:
@@ -101,18 +59,20 @@ def main() -> int:
     formal_truth = data_root / "annotations/fastener-v2/instances.json"
     formal_hash_before = assert_formal_truth_unchanged(formal_truth)
     coco = json.loads(reviewed_coco.read_text(encoding="utf-8"))
-    selected = _select(coco, args.count)
+    selected = select_reference_candidates(coco, source_dir, args.count)
     crops_dir = output / "crops"
     prompts_dir = output / "prompts"
     crops_dir.mkdir(parents=True, exist_ok=True)
     prompts_dir.mkdir(parents=True, exist_ok=True)
     records = []
-    for index, (image_record, annotation) in enumerate(selected, start=1):
+    for index, candidate in enumerate(selected, start=1):
+        image_record = candidate.image
+        annotation = candidate.annotation
         reference_id = f"ref-{index:02d}"
         source_path = source_dir / image_record["file_name"]
         with Image.open(source_path) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGB")
-            crop_box = _context_box(annotation["bbox"], image.width, image.height)
+            crop_box = candidate.crop_box_xyxy
             crop = image.crop(crop_box)
             crop_path = crops_dir / f"{reference_id}.png"
             crop.save(crop_path, format="PNG", optimize=True)
@@ -135,6 +95,8 @@ def main() -> int:
                 "crop_path": crop_path.relative_to(output).as_posix(),
                 "crop_box_xyxy": list(crop_box),
                 "source_bbox_xywh": annotation["bbox"],
+                "brightness": candidate.brightness,
+                "sharpness": candidate.sharpness,
                 "prompts": prompt_paths,
                 "prompt_sha256": prompt_hashes,
             }
