@@ -6,6 +6,35 @@ from pathlib import Path
 
 
 P2_SEEDS = (20260828, 20260829, 20260830)
+P2_MODEL_YAMLS = {"s": "yolov8s-p2.yaml", "m": "yolov8m-p2.yaml"}
+
+
+def p2_model_yaml(variant: str) -> str:
+    try:
+        return P2_MODEL_YAMLS[variant]
+    except KeyError as exc:
+        raise ValueError(f"INVALID_P2_VARIANT:{variant}") from exc
+
+
+def validate_pretraining_mode(*, variant: str, transfer_pretrained: bool) -> None:
+    p2_model_yaml(variant)
+    if variant == "m" and not transfer_pretrained:
+        raise ValueError("M_CHALLENGER_REQUIRES_TRANSFER")
+
+
+def validate_training_checkpoint(
+    *,
+    checkpoint_version: str,
+    transfer_pretrained: bool,
+    actual_sha256: str,
+    expected_sha256: str | None,
+) -> None:
+    if checkpoint_version == "8.2.40":
+        return
+    if not transfer_pretrained:
+        raise ValueError(f"CHECKPOINT_VERSION_MISMATCH:{checkpoint_version}")
+    if expected_sha256 is None or actual_sha256.upper() != expected_sha256.upper():
+        raise ValueError("TRANSFER_CHECKPOINT_HASH_MISMATCH")
 
 
 def checkpoint_model(checkpoint: dict[str, object]) -> object:

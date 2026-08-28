@@ -7,6 +7,9 @@ from crrc_vision.p2_training import (
     build_resume_kwargs,
     build_train_kwargs,
     checkpoint_model,
+    p2_model_yaml,
+    validate_pretraining_mode,
+    validate_training_checkpoint,
     validate_training_inputs,
 )
 
@@ -128,3 +131,41 @@ def test_resume_kwargs_can_lower_batch_without_changing_the_run_contract() -> No
     }
     with pytest.raises(ValueError, match="INVALID_RESUME_BATCH"):
         build_resume_kwargs(batch_size=0)
+
+
+def test_p2_challenger_uses_m_scale_and_requires_backbone_transfer() -> None:
+    assert p2_model_yaml("s") == "yolov8s-p2.yaml"
+    assert p2_model_yaml("m") == "yolov8m-p2.yaml"
+    validate_pretraining_mode(variant="s", transfer_pretrained=False)
+    validate_pretraining_mode(variant="m", transfer_pretrained=True)
+    with pytest.raises(ValueError, match="M_CHALLENGER_REQUIRES_TRANSFER"):
+        validate_pretraining_mode(variant="m", transfer_pretrained=False)
+
+
+def test_transfer_allows_a_legacy_official_checkpoint_only_by_exact_hash() -> None:
+    validate_training_checkpoint(
+        checkpoint_version="8.0.0.dev0",
+        transfer_pretrained=True,
+        actual_sha256="A" * 64,
+        expected_sha256="A" * 64,
+    )
+    validate_training_checkpoint(
+        checkpoint_version="8.2.40",
+        transfer_pretrained=False,
+        actual_sha256="B" * 64,
+        expected_sha256=None,
+    )
+    with pytest.raises(ValueError, match="TRANSFER_CHECKPOINT_HASH_MISMATCH"):
+        validate_training_checkpoint(
+            checkpoint_version="8.0.0.dev0",
+            transfer_pretrained=True,
+            actual_sha256="A" * 64,
+            expected_sha256="C" * 64,
+        )
+    with pytest.raises(ValueError, match="CHECKPOINT_VERSION_MISMATCH"):
+        validate_training_checkpoint(
+            checkpoint_version="8.0.0.dev0",
+            transfer_pretrained=False,
+            actual_sha256="A" * 64,
+            expected_sha256=None,
+        )

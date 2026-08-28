@@ -17,6 +17,9 @@ from crrc_vision.p2_training import (
     build_resume_kwargs,
     build_train_kwargs,
     checkpoint_model,
+    p2_model_yaml,
+    validate_pretraining_mode,
+    validate_training_checkpoint,
     validate_training_inputs,
 )
 from crrc_vision.reference_teacher import (
@@ -66,7 +69,13 @@ def _git_commit() -> str:
     return result.stdout.strip()
 
 
-def _safe_model(weights: Path):
+def _safe_model(
+    weights: Path,
+    *,
+    model_yaml: str,
+    transfer_pretrained: bool,
+    expected_sha256: str | None = None,
+):
     import torch
     from ultralytics import YOLO
 
@@ -84,14 +93,24 @@ def _safe_model(weights: Path):
     # function returns. Keep the same narrowly validated framework allowlist active.
     torch.serialization.add_safe_globals(allowed)
     checkpoint = torch.load(str(weights), map_location="cpu", weights_only=True)
-    if checkpoint.get("version") != "8.2.40":
-        raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT")
+    try:
+        validate_training_checkpoint(
+            checkpoint_version=str(checkpoint.get("version", "")),
+            transfer_pretrained=transfer_pretrained,
+            actual_sha256=_sha256(weights),
+            expected_sha256=expected_sha256,
+        )
+    except ValueError as exc:
+        raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT") from exc
     try:
         selected_model = checkpoint_model(checkpoint)
     except ValueError as exc:
         raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT") from exc
-    model = YOLO("yolov8s-p2.yaml")
-    model.model = selected_model.float()
+    model = YOLO(model_yaml)
+    if transfer_pretrained:
+        model.model.load(selected_model.float())
+    else:
+        model.model = selected_model.float()
     model.ckpt = checkpoint
     model.ckpt_path = str(weights)
     model.task = "detect"
@@ -117,12 +136,22 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, choices=P2_SEEDS)
+    parser.add_argument("--variant", choices=("s", "m"), default="s")
+    parser.add_argument("--transfer-pretrained", action="store_true")
+    parser.add_argument("--expected-pretrained-sha256")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
     if args.resume and (args.seed is None or not args.execute):
         raise ValueError("RESUME_REQUIRES_ONE_SEED_AND_EXECUTE")
+    if not args.resume:
+        validate_pretraining_mode(
+            variant=args.variant, transfer_pretrained=args.transfer_pretrained
+        )
+        if args.transfer_pretrained and args.expected_pretrained_sha256 is None:
+            raise ValueError("TRANSFER_REQUIRES_EXPECTED_HASH")
+    model_yaml = p2_model_yaml(args.variant)
 
     root = asset_root().resolve()
     configured_root = Path(os.environ["CRRC_VISION_DATA_ROOT"]).absolute()
@@ -164,7 +193,9 @@ def main() -> int:
             {"status": "resuming", "resume_checkpoint_sha256": _sha256(last)}
         )
         _atomic_json(manifest_path, manifest)
-        model = _safe_model(last)
+        model = _safe_model(
+            last, model_yaml=model_yaml, transfer_pretrained=False
+        )
         model.train(**build_resume_kwargs(batch_size=args.batch_size))
         best = seed_root / "train" / "weights" / "best.pt"
         if not best.is_file() or not last.is_file():
@@ -206,6 +237,10 @@ def main() -> int:
         "formal_truth_sha256": _sha256(truth),
         "license_status": "AGPL-3.0; commercial deployment unresolved",
         "sealed_test_visible": False,
+        "model_variant": args.variant,
+        "model_yaml": model_yaml,
+        "transfer_pretrained": args.transfer_pretrained,
+        "expected_pretrained_sha256": args.expected_pretrained_sha256,
     }
     selected_seeds = (args.seed,) if args.seed is not None else P2_SEEDS
     for seed in selected_seeds:
@@ -222,7 +257,12 @@ def main() -> int:
         _atomic_json(manifest_path, manifest)
         if not args.execute:
             continue
-        model = _safe_model(pretrained)
+        model = _safe_model(
+            pretrained,
+            model_yaml=model_yaml,
+            transfer_pretrained=args.transfer_pretrained,
+            expected_sha256=args.expected_pretrained_sha256,
+        )
         model.train(**kwargs)
         best = seed_root / "train" / "weights" / "best.pt"
         last = seed_root / "train" / "weights" / "last.pt"
