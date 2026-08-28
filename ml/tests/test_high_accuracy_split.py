@@ -9,6 +9,7 @@ from crrc_vision.high_accuracy_split import (
     assert_partition_isolated,
     build_high_accuracy_partition,
     partition_document,
+    repair_partition_with_reviewed_sealed_test,
 )
 
 
@@ -163,3 +164,44 @@ def test_partition_refuses_existing_scene_overlap() -> None:
             sealed_test_count=30,
             seed=20260828,
         )
+
+
+def test_repair_replaces_unusable_sealed_rows_with_completed_new_reviews() -> None:
+    rows = _rows_for_177_scenes()
+    original = partition_document(_build(rows), input_hashes={"before": "A"})
+    existing = _scene_ids(1, 80)
+    eligible = [
+        row
+        for split in ("train", "val")
+        for row in original[split]
+        if row["scene_group"] not in existing
+    ]
+    annotations = {
+        row["scene_group"]: index + 1 for index, row in enumerate(eligible)
+    }
+
+    repaired, quarantined = repair_partition_with_reviewed_sealed_test(
+        original,
+        completed_box_counts=annotations,
+        existing_reviewed_scenes=existing,
+        excluded_scenes=set(),
+        sealed_test_count=30,
+        minimum_sealed_test_boxes=0,
+    )
+
+    expected = {
+        row["scene_group"]
+        for row in sorted(
+            eligible,
+            key=lambda row: (-annotations[row["scene_group"]], row["scene_group"]),
+        )[:30]
+    }
+    assert {row["scene_group"] for row in repaired["sealed_test"]} == expected
+    assert {row["scene_group"] for row in quarantined} == {
+        row["scene_group"] for row in original["sealed_test"]
+    }
+    assert all(row["reason"] == "quality_quarantine" for row in quarantined)
+    assert len(repaired["train"]) == 116
+    assert len(repaired["val"]) == 31
+    assert len(repaired["sealed_test"]) == 30
+    assert_partition_isolated(repaired)

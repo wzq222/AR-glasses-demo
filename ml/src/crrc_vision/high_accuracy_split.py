@@ -258,6 +258,118 @@ def partition_document(
     return document
 
 
+def repair_partition_with_reviewed_sealed_test(
+    document: Mapping[str, object],
+    *,
+    completed_box_counts: Mapping[str, int],
+    existing_reviewed_scenes: set[str],
+    excluded_scenes: set[str],
+    sealed_test_count: int,
+    minimum_sealed_test_boxes: int,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """Replace an unusable sealed split with completed, previously unused reviews.
+
+    The original sealed rows are retained in train as quarantined identities, so the
+    frozen scene universe and partition sizes do not change.  Only complete reviews
+    that have never appeared in the existing training corpus may enter sealed test.
+    """
+
+    if document.get("schema_version") != "high-accuracy-partition-v1":
+        raise ValueError("INVALID_HIGH_ACCURACY_PARTITION")
+    assert_partition_isolated(document)
+    if sealed_test_count <= 0:
+        raise ValueError("INVALID_SEALED_TEST_COUNT")
+
+    candidates: list[dict[str, object]] = []
+    for split in ("train", "val"):
+        rows = document.get(split)
+        assert isinstance(rows, list)
+        for source_row in rows:
+            assert isinstance(source_row, Mapping)
+            scene = _as_scene(source_row)
+            if (
+                scene in completed_box_counts
+                and scene not in existing_reviewed_scenes
+                and scene not in excluded_scenes
+            ):
+                count = completed_box_counts[scene]
+                if not isinstance(count, int) or count < 0:
+                    raise ValueError(f"INVALID_COMPLETED_BOX_COUNT:{scene}")
+                candidates.append(dict(source_row))
+
+    ranked = sorted(
+        candidates,
+        key=lambda row: (-completed_box_counts[_as_scene(row)], _as_scene(row)),
+    )
+    selected = ranked[:sealed_test_count]
+    if len(selected) != sealed_test_count:
+        raise ValueError(
+            f"SEALED_TEST_COMPLETED_SCENES_TOO_LOW:{len(selected)}:"
+            f"required={sealed_test_count}"
+        )
+    selected_boxes = sum(completed_box_counts[_as_scene(row)] for row in selected)
+    if selected_boxes < minimum_sealed_test_boxes:
+        raise ValueError(
+            f"SEALED_TEST_COMPLETED_BOXES_TOO_LOW:{selected_boxes}:"
+            f"required={minimum_sealed_test_boxes}"
+        )
+
+    selected_scenes = {_as_scene(row) for row in selected}
+    original_sealed = document.get("sealed_test")
+    assert isinstance(original_sealed, list)
+    quarantined = [
+        {**dict(row), "reason": "quality_quarantine"}
+        for row in original_sealed
+        if isinstance(row, Mapping)
+    ]
+    if len(quarantined) != len(original_sealed):
+        raise ValueError("HIGH_ACCURACY_SPLIT_INVALID_ROW:sealed_test")
+
+    original_train = document.get("train")
+    original_val = document.get("val")
+    assert isinstance(original_train, list) and isinstance(original_val, list)
+    train = [
+        dict(row)
+        for row in original_train
+        if isinstance(row, Mapping) and _as_scene(row) not in selected_scenes
+    ]
+    val = [
+        dict(row)
+        for row in original_val
+        if isinstance(row, Mapping) and _as_scene(row) not in selected_scenes
+    ]
+    removed_from_train = len(original_train) - len(train)
+    removed_from_val = len(original_val) - len(val)
+    if removed_from_train + removed_from_val != sealed_test_count:
+        raise AssertionError("selected sealed scenes were not owned by train/val")
+    replacement_rows = [
+        {key: value for key, value in row.items() if key != "reason"}
+        for row in quarantined
+    ]
+    train.extend(replacement_rows[:removed_from_train])
+    val.extend(replacement_rows[removed_from_train:])
+
+    repaired = dict(document)
+    repaired["train"] = sorted(train, key=_as_scene)
+    repaired["val"] = sorted(val, key=_as_scene)
+    repaired["sealed_test"] = sorted(selected, key=_as_scene)
+    repaired["sealed_test_opened"] = False
+    repaired["repair"] = {
+        "schema_version": "high-accuracy-partition-repair-v1",
+        "sealed_test_scenes": sealed_test_count,
+        "sealed_test_boxes": selected_boxes,
+        "quarantined_scenes": len(quarantined),
+        "quarantined_to_train": removed_from_train,
+        "quarantined_to_val": removed_from_val,
+    }
+    before_count = sum(len(document[split]) for split in PARTITIONS)  # type: ignore[arg-type]
+    after_count = sum(len(repaired[split]) for split in PARTITIONS)  # type: ignore[arg-type]
+    if before_count != after_count:
+        raise AssertionError("partition repair changed the scene universe")
+    assert_partition_isolated(repaired)
+    return repaired, sorted(quarantined, key=_as_scene)
+
+
 def assert_partition_isolated(document: Mapping[str, object]) -> None:
     """Reject a scene or representative identity appearing in two partitions."""
 
