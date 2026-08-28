@@ -78,8 +78,10 @@ def _safe_model(weights: Path):
     for name in unsafe_names:
         module_name, attribute = name.rsplit(".", 1)
         allowed.append(getattr(importlib.import_module(module_name), attribute))
-    with torch.serialization.safe_globals(allowed):
-        checkpoint = torch.load(str(weights), map_location="cpu", weights_only=True)
+    # Ultralytics' AMP self-check loads its bundled yolov8n checkpoint after this
+    # function returns. Keep the same narrowly validated framework allowlist active.
+    torch.serialization.add_safe_globals(allowed)
+    checkpoint = torch.load(str(weights), map_location="cpu", weights_only=True)
     if checkpoint.get("version") != "8.2.40" or checkpoint.get("model") is None:
         raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT")
     model = YOLO("yolov8s-p2.yaml")
@@ -112,6 +114,7 @@ def main() -> int:
     args = parser.parse_args()
 
     root = asset_root().resolve()
+    configured_root = Path(os.environ["CRRC_VISION_DATA_ROOT"]).absolute()
     train_coco = (root / args.train_coco).resolve()
     val_coco = (root / args.val_coco).resolve()
     source_root = (root / args.source).resolve()
@@ -138,10 +141,12 @@ def main() -> int:
         raise RuntimeError("FORMAL_TRUTH_HASH_MISMATCH")
     output_root.mkdir(parents=True, exist_ok=True)
     dataset_root = output_root / "dataset"
+    runtime_dataset_root = configured_root / args.output / "dataset"
     dataset_counts = prepare_yolo_dataset(
         train_coco=train_coco,
         val_coco=val_coco,
         output_root=dataset_root,
+        runtime_output_root=runtime_dataset_root,
         source_root=source_root,
         train_tiles=True,
         merge_target_categories=True,
