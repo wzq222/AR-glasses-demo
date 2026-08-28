@@ -87,6 +87,14 @@
   val 9/16），累计uncertain仍为12。累计reviewed COCO SHA-256为
   `8966C5245F360DB280F8461E248E4628429C0D904EEBD9DE4B5BDBCA1DF74874`；银标门仅拒绝train/val
   场景数不足，正式真值SHA-256保持不变，100项Python测试通过。
+- 2026-08-28：停止30分钟自动批次后连续完成剩余48个代表场景审核；其中45个达到整图完整门，3个
+  因暗部模糊或成组遮挡保留`uncertain`。累计达到80个完整独立场景、697框（train 64、val 16），
+  累计uncertain 15；AI银标门正式PASS并导出`silver-gate-cumulative-013`。累计reviewed COCO
+  SHA-256为`8CC7332D16060572D394B4437EB65C367BA6F6D0BCAC205A91EF4761E5F820DA`，正式真值哈希未变。
+- 2026-08-28：PicoDet-S/M 416在相同64/16银标场景上完成80 epoch首轮训练和best权重复评。S/M的
+  AP分别为0.064/0.071，AP50为0.189/0.197，AR100为0.190/0.192，small AP均为0；best权重约
+  4.8MB/14.0MB。两模型均通过Paddle 2.6.2兼容导出、整图及12%重叠切片推理冒烟。桌面CPU纯模型
+  P50/P95为S 27.4/30.4ms、M 39.8/48.5ms；这不是手机指标，也不是生产准确率。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -99,13 +107,12 @@
 
 ## Active Work
 
-全图防松线Phase 1代码底座已实现；标注质量门正确拒绝训练。路线V2已把生产主线调整为
+全图防松线Phase 1代码底座已实现；路线V2已把生产主线调整为
 `PicoDet-S/M + 全图上下文 + 重叠切片`的物理紧固件检测，随后只在ROI内做色标关键点和几何判断。
-旧61批顺序审核已停止；前四批只保留为候选层证据，不再用于估计整图完成率。当前工作重心改为
-校准闭环已完成；当前按`safe-auto-v2.2`的100个独立代表场景执行高清漏检扫描、候选审核和补框盲审。
-只有银标门达到至少64个train和16个val完整场景组，才进入
-PicoDet-S/M训练与目标手机端P95基准；教师候选只用于提速，不承担整图完整性判断。
-RTMDet-tiny-P2和D-FINE-N仅作为离线对照。
+银标门现已达到64个train和16个val完整场景，S/M首轮训练、复评、导出和桌面冒烟完成。当前瓶颈
+不是模型大小而是小目标：两模型small AP均为0。下一阶段先做确定性2×2重叠切片训练并复评，S作为
+手机基线、M作为挑战者；教师候选只用于提速，不承担整图完整性判断。RTMDet-tiny-P2和D-FINE-N
+仅作为离线对照。
 
 ## Run
 
@@ -131,9 +138,11 @@ git status --short
 
 - 当前代码来自一次性上游提交，且没有 LICENSE；代码、K900 AAR 和 native 库授权边界未确认。
 - 会议没有冻结眼镜准确型号、固件、手机型号、协议版本和“rocket”品牌转写。
-- 三种识别算法缺模型、样本、阈值和可量化验收指标。
+- 二维码可用系统解码；防松线已有首轮物理目标模型，但small AP为0且尚未接入Android；万用表读数
+  仍缺模型、样本、阈值和可量化验收指标。
 - 当前482张来自同一约44分钟采集，缺跨车辆、跨手机、跨光照和独立测试集；没有受控“正常/松动”真值。
-- 色标候选仍受锈蚀、警示贴、强光和断裂涂线影响，不能作为训练真值；当前训练门为FAIL。
+- 色标候选仍受锈蚀、警示贴、强光和断裂涂线影响，不能作为状态真值；整图银标训练门已PASS，但
+  只覆盖单次采集和AI银标内部验证。
 - 通用开放词汇模型会把波纹管、滤筒和整束管线误判为连接件，且严重漏掉小紧固件；不能作为本批
   数据的批量自动标注器。
 - 参考YOLOv8s教师虽然候选质量高，但100张整图复核均未证明完整，且6张完全零检测；类别名只能从
@@ -143,11 +152,9 @@ git status --short
 
 ## Next Smallest Action
 
-继续每30分钟一次的固定8场景审核：只使用Git外`review-packs/safe-auto-v2.2`和当前
-`fused_candidates`实际数量选图，跳过累计COCO已完成场景；目标每批6个train、2个val，完成整图扫描、
-逐候选首审、必要的隐藏结论二审、COCO组装和银标门。当前优先补足train 38、val 7，达64/16后
-立即停止扩量并运行PicoDet-S/M训练门。
-同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
+停止审核扩量。用当前64/16完整场景生成按scene split隔离的全图+2×2、12%重叠切片训练COCO，先重训
+PicoDet-S并要求small AP、AR100相对首轮有明确提升；随后把S静态模型接入Android runtime并在指定
+手机连续热机50次测端到端P50/P95。同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
 
@@ -160,4 +167,5 @@ git status --short
 - `docs/validation/2026-08-25-training-readiness.md`：训练拒绝条件和达门后的固定训练方案。
 - `docs/analysis/2026-08-25-full-image-fastener-route-v2.md`：移动端小目标路线重评与新验收门。
 - `docs/validation/2026-08-25-full-image-v2-bootstrap.md`：代表帧、真值门与开放词汇试跑证据。
+- `docs/validation/2026-08-28-picodet-phase-b.md`：80场景银标门、S/M训练、导出、推理和时延证据。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。
