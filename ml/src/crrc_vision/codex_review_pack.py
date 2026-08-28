@@ -206,6 +206,8 @@ def _draw_grid(draw: ImageDraw.ImageDraw, width: int, height: int) -> None:
 def _render_full(
     image: Image.Image,
     candidates: list[dict[str, Any]],
+    *,
+    blind: bool = False,
 ) -> Image.Image:
     rendered = image.copy()
     rendered.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
@@ -216,7 +218,11 @@ def _render_full(
     for candidate in candidates:
         x1, y1, x2, y2 = _valid_box(candidate.get("xyxy"))
         box = (x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y)
-        color = CATEGORY_COLORS.get(candidate.get("category"), (255, 60, 60))
+        color = (
+            CATEGORY_COLORS[None]
+            if blind
+            else CATEGORY_COLORS.get(candidate.get("category"), CATEGORY_COLORS[None])
+        )
         draw.rectangle(box, outline=color, width=4)
         draw.text(
             (box[0] + 2, max(0, box[1] - 16)),
@@ -231,6 +237,8 @@ def _render_full(
 def _render_context(
     image: Image.Image,
     candidate: dict[str, Any],
+    *,
+    blind: bool = False,
 ) -> Image.Image:
     x1, y1, x2, y2 = _valid_box(candidate.get("xyxy"))
     width = x2 - x1
@@ -245,7 +253,11 @@ def _render_context(
     bottom = min(image.height, math.ceil(center_y + crop_height / 2))
     context = image.crop((left, top, right, bottom))
     draw = ImageDraw.Draw(context)
-    color = CATEGORY_COLORS.get(candidate.get("category"), (255, 60, 60))
+    color = (
+        CATEGORY_COLORS[None]
+        if blind
+        else CATEGORY_COLORS.get(candidate.get("category"), CATEGORY_COLORS[None])
+    )
     draw.rectangle((x1 - left, y1 - top, x2 - left, y2 - top), outline=color, width=4)
     context.thumbnail((600, 600), Image.Resampling.LANCZOS)
     return context
@@ -303,8 +315,17 @@ def build_pack(
     source_root: Path,
     output_root: Path,
     selected_relative_paths: list[str] | None = None,
+    *,
+    partition: str | None = None,
+    partition_manifest_sha256: str | None = None,
+    include_existing_decisions: bool = False,
 ) -> PackSummary:
     """Render all images and candidates, including zero-candidate images."""
+
+    if partition not in {None, "train", "val", "sealed_test"}:
+        raise ValueError(f"invalid high-accuracy partition: {partition}")
+    if partition == "sealed_test":
+        include_existing_decisions = False
 
     raw_images = candidates.get("images")
     raw_fused = candidates.get("fused_candidates")
@@ -372,26 +393,39 @@ def build_pack(
         original = _load_rgb(source_by_id[image_id])
         safe_stem = f"{int(image_id):04d}_{Path(relative_path).stem}"
         full_path = full_root / f"{safe_stem}.jpg"
-        _render_full(original, by_image.get(image_id, [])).save(full_path, quality=93)
+        blind = partition == "sealed_test"
+        _render_full(original, by_image.get(image_id, []), blind=blind).save(
+            full_path, quality=93
+        )
         miss_sweep_tiles = _render_miss_sweep_tiles(original, tile_root, safe_stem)
         task_candidates = []
         for candidate in sorted(
             by_image.get(image_id, []), key=lambda row: str(row["id"])
         ):
             context_path = context_root / f"{candidate['id']}.jpg"
-            _render_context(original, candidate).save(context_path, quality=94)
-            task_candidates.append(
-                {
-                    "candidate_id": candidate["id"],
-                    "category": candidate.get("category"),
-                    "consensus_status": candidate.get("consensus_status"),
-                    "supporting_families": candidate.get("supporting_families", []),
-                    "context": str(context_path.relative_to(output_root)).replace(
-                        "\\", "/"
-                    ),
-                    "context_sha256": _sha256(context_path),
-                }
+            _render_context(original, candidate, blind=blind).save(
+                context_path, quality=94
             )
+            task_candidate: dict[str, object] = {
+                "candidate_id": candidate["id"],
+                "context": str(context_path.relative_to(output_root)).replace(
+                    "\\", "/"
+                ),
+                "context_sha256": _sha256(context_path),
+            }
+            if partition != "sealed_test":
+                task_candidate.update(
+                    {
+                        "category": candidate.get("category"),
+                        "consensus_status": candidate.get("consensus_status"),
+                        "supporting_families": candidate.get(
+                            "supporting_families", []
+                        ),
+                    }
+                )
+                if include_existing_decisions and "decision" in candidate:
+                    task_candidate["existing_decision"] = candidate["decision"]
+            task_candidates.append(task_candidate)
         scene = str(image.get("scene_group") or "")
         task_images.append(
             {
@@ -414,6 +448,8 @@ def build_pack(
     for batch_index in range(batches):
         batch = {
             "schema_version": "safe-auto-review-task-v1",
+            "partition": partition,
+            "partition_manifest_sha256": partition_manifest_sha256,
             "reviewer": "codex-visual-auditor",
             "task_version": "safe-auto-review-v1",
             "prompt_version": "first-v1",
@@ -455,6 +491,8 @@ def build_pack(
     summary = PackSummary(len(images), len(fused), batches)
     manifest = {
         "schema_version": "safe-auto-review-pack-v1",
+        "partition": partition,
+        "partition_manifest_sha256": partition_manifest_sha256,
         "images": summary.images,
         "candidates": summary.candidates,
         "batches": summary.batches,
