@@ -19,6 +19,12 @@ def checkpoint_model(checkpoint: dict[str, object]) -> object:
     return model
 
 
+def build_resume_kwargs(*, batch_size: int) -> dict[str, object]:
+    if batch_size <= 0:
+        raise ValueError("INVALID_RESUME_BATCH")
+    return {"resume": True, "batch": batch_size, "workers": 0}
+
+
 def validate_training_inputs(
     *,
     asset_root: Path,

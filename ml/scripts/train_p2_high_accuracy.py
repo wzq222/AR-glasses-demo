@@ -14,6 +14,7 @@ from pathlib import Path
 from crrc_vision.assets import asset_root
 from crrc_vision.p2_training import (
     P2_SEEDS,
+    build_resume_kwargs,
     build_train_kwargs,
     checkpoint_model,
     validate_training_inputs,
@@ -164,7 +165,7 @@ def main() -> int:
         )
         _atomic_json(manifest_path, manifest)
         model = _safe_model(last)
-        model.train(resume=True)
+        model.train(**build_resume_kwargs(batch_size=args.batch_size))
         best = seed_root / "train" / "weights" / "best.pt"
         if not best.is_file() or not last.is_file():
             raise RuntimeError(f"TRAINING_CHECKPOINT_MISSING:{args.seed}")

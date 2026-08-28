@@ -4,6 +4,7 @@ import pytest
 
 from crrc_vision.p2_training import (
     P2_SEEDS,
+    build_resume_kwargs,
     build_train_kwargs,
     checkpoint_model,
     validate_training_inputs,
@@ -117,3 +118,13 @@ def test_checkpoint_model_accepts_training_ema_but_prefers_export_model() -> Non
     assert checkpoint_model({"model": None, "ema": ema_model}) is ema_model
     with pytest.raises(ValueError, match="CHECKPOINT_MODEL_MISSING"):
         checkpoint_model({"model": None, "ema": None})
+
+
+def test_resume_kwargs_can_lower_batch_without_changing_the_run_contract() -> None:
+    assert build_resume_kwargs(batch_size=8) == {
+        "resume": True,
+        "batch": 8,
+        "workers": 0,
+    }
+    with pytest.raises(ValueError, match="INVALID_RESUME_BATCH"):
+        build_resume_kwargs(batch_size=0)
