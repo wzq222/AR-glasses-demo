@@ -48,6 +48,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--val-coco", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--imgsz", type=int, default=512)
     parser.add_argument("--conf", type=float, default=0.001)
@@ -85,9 +86,12 @@ def main() -> int:
     document = json.loads(args.val_coco.read_text(encoding="utf-8"))
     predictions: list[dict[str, object]] = []
     for image in sorted(document["images"], key=lambda row: int(row["id"])):
-        original = cv2.imread(str(Path(image["file_name"])), cv2.IMREAD_COLOR)
+        image_path = Path(image["file_name"])
+        if not image_path.is_absolute() and args.source_root is not None:
+            image_path = args.source_root / image_path
+        original = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if original is None:
-            raise FileNotFoundError(image["file_name"])
+            raise FileNotFoundError(image_path)
         height, width = original.shape[:2]
         tiles = build_tiles(width, height, overlap=0.12)
         inputs = [original] + [

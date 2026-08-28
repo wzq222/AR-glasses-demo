@@ -149,6 +149,7 @@ def main() -> int:
         runtime_output_root=runtime_dataset_root,
         source_root=source_root,
         train_tiles=True,
+        train_tile_views=2,
         merge_target_categories=True,
     )
     common = {

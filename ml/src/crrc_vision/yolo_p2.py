@@ -81,6 +81,7 @@ def _materialize_split(
     merge_target_categories: bool = False,
     source_root: Path | None = None,
     include_tiles: bool = False,
+    tile_views: int = 4,
 ) -> tuple[int, int]:
     document = json.loads(coco_path.read_text(encoding="utf-8"))
     images = _rows(document, "images")
@@ -177,11 +178,8 @@ def _materialize_split(
         )
         if include_tiles:
             with Image.open(source) as source_image:
+                tile_candidates = []
                 for tile in build_tiles(int(width), int(height), overlap=0.12):
-                    tile_stem = f"{image_id:06d}_t{tile.index}"
-                    source_image.crop((tile.x1, tile.y1, tile.x2, tile.y2)).save(
-                        image_root / f"{tile_stem}{suffix}"
-                    )
                     selected = [
                         annotation
                         for annotation in source_annotations
@@ -194,6 +192,31 @@ def _materialize_split(
                         + float(annotation["bbox"][3]) / 2
                         <= tile.y2
                     ]
+                    tile_candidates.append((tile, selected))
+                if not 1 <= tile_views <= len(tile_candidates):
+                    raise ValueError("TRAIN_TILE_VIEWS_OUT_OF_RANGE")
+                ranked = sorted(
+                    tile_candidates,
+                    key=lambda item: (-len(item[1]), item[0].index),
+                )
+                chosen = [ranked[0]]
+                if tile_views > 1:
+                    negative_ranked = sorted(
+                        tile_candidates,
+                        key=lambda item: (len(item[1]), item[0].index),
+                    )
+                    chosen.extend(
+                        item for item in negative_ranked if item[0] != chosen[0][0]
+                    )
+                chosen_ids = {item[0].index for item in chosen[:tile_views]}
+                selected_tiles = [
+                    item for item in tile_candidates if item[0].index in chosen_ids
+                ]
+                for tile, selected in selected_tiles:
+                    tile_stem = f"{image_id:06d}_t{tile.index}"
+                    source_image.crop((tile.x1, tile.y1, tile.x2, tile.y2)).save(
+                        image_root / f"{tile_stem}{suffix}"
+                    )
                     write_view(
                         tile_stem,
                         origin_x=tile.x1,
@@ -214,6 +237,7 @@ def prepare_yolo_dataset(
     merge_target_categories: bool = False,
     source_root: Path | None = None,
     train_tiles: bool = False,
+    train_tile_views: int = 4,
 ) -> dict[str, int]:
     """Materialize split-isolated YOLO images/labels and an ASCII runtime YAML."""
 
@@ -233,6 +257,7 @@ def prepare_yolo_dataset(
         merge_target_categories=merge_target_categories,
         source_root=source_root,
         include_tiles=train_tiles,
+        tile_views=train_tile_views,
     )
     val_images, val_annotations = _materialize_split(
         val_coco,

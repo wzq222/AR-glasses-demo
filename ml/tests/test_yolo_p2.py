@@ -200,3 +200,14 @@ def test_prepare_high_accuracy_single_class_with_relative_source_and_tiles(
     assert report["val_images"] == 1
     assert len(list((tmp_path / "output/images/train").glob("*"))) == 5
     assert len(list((tmp_path / "output/labels/train").glob("*"))) == 5
+
+    capped = prepare_yolo_dataset(
+        train_coco=train_path,
+        val_coco=val_path,
+        output_root=tmp_path / "capped",
+        source_root=source_root,
+        train_tiles=True,
+        train_tile_views=2,
+        merge_target_categories=True,
+    )
+    assert capped["train_images"] == 3
