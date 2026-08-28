@@ -110,6 +110,7 @@ def main() -> int:
     parser.add_argument("--output", default="runs/high-accuracy-p2-s-640")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--seed", type=int, choices=P2_SEEDS)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
@@ -165,7 +166,8 @@ def main() -> int:
         "license_status": "AGPL-3.0; commercial deployment unresolved",
         "sealed_test_visible": False,
     }
-    for seed in P2_SEEDS:
+    selected_seeds = (args.seed,) if args.seed is not None else P2_SEEDS
+    for seed in selected_seeds:
         seed_root = output_root / f"seed-{seed}"
         kwargs = build_train_kwargs(
             seed=seed,
@@ -193,7 +195,7 @@ def main() -> int:
             }
         )
         _atomic_json(manifest_path, manifest)
-    print(json.dumps({**common, "seeds": P2_SEEDS, "execute": args.execute}))
+    print(json.dumps({**common, "seeds": selected_seeds, "execute": args.execute}))
     return 0
 
 
