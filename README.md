@@ -20,6 +20,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [全图防松线检测路线 V2](docs/analysis/2026-08-25-full-image-fastener-route-v2.md)
 - [V2标注引导链路验证](docs/validation/2026-08-25-full-image-v2-bootstrap.md)
 - [小目标准确率恢复验证](docs/validation/2026-08-28-small-object-accuracy-recovery.md)
+- [高准确率严格验证收口](docs/validation/2026-08-28-high-accuracy-validation.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、
@@ -36,6 +37,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - **选择性导入（带缩略图）**：下载完成后弹出勾选列表，显示每张照片的缩放图，用户可勾选要导入的照片；选中的移动到相册，未选中的自动清理。
 - **原图库浏览**：网格 + 全屏两种方式浏览已同步的照片（保存在 `glass_media/photos` 目录）。
 - **全图防松线底座**：提供多目标结果、关键点几何判定和Git外数据工具；尚未接入可用检测模型。
+- **严格验证结论**：S/M-P2 均未通过 `P>=0.90` 的召回与完整场景门；封存测试保持未打开。
 - **其他图像接口（预留）**：二维码识别和电压表数字识别待实现。
 
 ## 技术栈

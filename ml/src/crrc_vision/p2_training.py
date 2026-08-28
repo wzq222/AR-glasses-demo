@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 
@@ -46,6 +47,34 @@ def checkpoint_model(checkpoint: dict[str, object]) -> object:
     if model is None:
         raise ValueError("CHECKPOINT_MODEL_MISSING")
     return model
+
+
+def is_recoverable_finalization_failure(
+    *,
+    error: BaseException,
+    results_csv: Path,
+    best: Path,
+    last: Path,
+    expected_epochs: int,
+) -> bool:
+    """Recognize the pinned runtime's post-training torch.load incompatibility.
+
+    Recovery is deliberately narrow: the exact weights-only failure must happen
+    after every requested epoch was recorded and both local checkpoints exist.
+    """
+
+    if "Weights only load failed" not in str(error):
+        return False
+    if expected_epochs <= 0 or not all(path.is_file() for path in (results_csv, best, last)):
+        return False
+    try:
+        with results_csv.open("r", encoding="utf-8-sig", newline="") as stream:
+            completed = max(
+                int(float(row["epoch"])) for row in csv.DictReader(stream)
+            )
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+    return completed >= expected_epochs
 
 
 def build_resume_kwargs(*, batch_size: int) -> dict[str, object]:

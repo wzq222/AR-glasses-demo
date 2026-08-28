@@ -7,6 +7,7 @@ from crrc_vision.p2_training import (
     build_resume_kwargs,
     build_train_kwargs,
     checkpoint_model,
+    is_recoverable_finalization_failure,
     p2_model_yaml,
     validate_pretraining_mode,
     validate_training_checkpoint,
@@ -140,6 +141,39 @@ def test_p2_challenger_uses_m_scale_and_requires_backbone_transfer() -> None:
     validate_pretraining_mode(variant="m", transfer_pretrained=True)
     with pytest.raises(ValueError, match="M_CHALLENGER_REQUIRES_TRANSFER"):
         validate_pretraining_mode(variant="m", transfer_pretrained=False)
+
+
+def test_only_complete_weights_only_finalization_failure_is_recoverable(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results.csv"
+    best = tmp_path / "best.pt"
+    last = tmp_path / "last.pt"
+    results.write_text("epoch,loss\n1,2.0\n30,1.0\n", encoding="utf-8")
+    best.write_bytes(b"best")
+    last.write_bytes(b"last")
+
+    assert is_recoverable_finalization_failure(
+        error=RuntimeError("Weights only load failed during strip_optimizer"),
+        results_csv=results,
+        best=best,
+        last=last,
+        expected_epochs=30,
+    )
+    assert not is_recoverable_finalization_failure(
+        error=RuntimeError("CUDA out of memory"),
+        results_csv=results,
+        best=best,
+        last=last,
+        expected_epochs=30,
+    )
+    assert not is_recoverable_finalization_failure(
+        error=RuntimeError("Weights only load failed"),
+        results_csv=results,
+        best=best,
+        last=last,
+        expected_epochs=31,
+    )
 
 
 def test_transfer_allows_a_legacy_official_checkpoint_only_by_exact_hash() -> None:

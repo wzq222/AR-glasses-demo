@@ -101,6 +101,17 @@
   640微调版达到AP 0.288、AP50 0.605、AR100 0.479；阈值0.20时precision 0.641、
   recall 0.584。这是当前最优内部基线，仍未达生产准确率。固定640 ONNX已导出到
   Git外`exports/android/yolov8s-p2-v3-640`并通过ONNX结构校验；尚未接入Android或做手机实测。
+- 2026-08-28：高准确率V2数据已冻结为train 78场景/638框、val 19场景/108框、sealed-test
+  30场景/276框。S-P2三个固定种子在`precision >= 0.90`下的full recall为0.1944/0.2222/
+  0.2500，fused recall为0.2037/0.3519/0.2593，所有运行的完整场景率均为0/19，且种子
+  稳定性未过门。最佳为seed 20260829 fused：precision 0.9048、recall 0.3519。
+- 2026-08-28：单一M-P2挑战者完成30 epoch；同seed的full/fused recall分别为0.1667/0.0833，
+  未达到相对S-P2至少+0.03的继续条件，故停止其余M种子和蒸馏。其训练结束时遇到Ultralytics
+  8.2.40与PyTorch 2.7.1的optimizer剥离兼容问题，但本地best checkpoint已通过受限安全加载
+  完成评估。验证门失败，sealed-test保持未打开，Android集成继续关闭。
+- 2026-08-28：最佳S-P2 fused的严格误差包有70 FN、4 FP；主桶为tiny 33、lookalike 21、
+  dense pipes 8、blur 7、border truncation 4、dark 1。现有1,022个目标框没有防松线端点或
+  正常/松动状态真值，因此只能证明几何判定单元测试通过，不能声称端到端松动识别可用。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -113,11 +124,10 @@
 
 ## Active Work
 
-全图防松线Phase 1代码底座已实现，64/16银标场景已达训练门。PicoDet切片训练和
-P2挑战者对照已完成；当前临时精度冠军是`YOLOv8s-P2 640 + 物理目标类合并`，
-随后仍需只在ROI内判断类型、色标关键点和防松状态。它在小而同域的AI银标验证集上
-AP50只有0.605，因此尚不授权接入生产Android流程。当前主瓶颈是真实场景覆盖和独立
-人工真值测试集，而不是继续无限更换模型名称。
+全图防松线Phase 1代码底座和严格数据/评估闭环已实现。S-P2三种子及M-P2挑战者均未通过
+高准确率门；最佳严格结果是在precision 0.9048时recall 0.3519、完整场景0/19。
+当前主瓶颈是真实场景覆盖、微小目标与相似结构分离，以及防松线正常/松动受控真值，
+不是继续更换模型名称。sealed-test未打开，模型未获准接入Android。
 
 ## Run
 
@@ -157,10 +167,11 @@ git status --short
 
 ## Next Smallest Action
 
-从当前FN/FP中制定采集清单，新增至少100–150个独立真实场景，覆盖暗部、遮挡、运动模糊、
-镜面反光、管路密集区和不同车型；由独立人工真值测试集给出precision/recall验收结果。
-达精度门后再把授权清晰的模型接入Android runtime，并在指定手机连续热机50次测端到端
-P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
+新增至少100–150个独立真实检测场景，优先覆盖tiny、lookalike、blur、dense pipes及不同车型、
+设备和光照；另采集同一紧固件受控NORMAL/LOOSE成对照片并标注两段防松线端点、可见性和状态。
+重新建立全新的独立测试集并通过precision/recall/完整场景门后，再使用授权清晰的模型接入
+Android runtime并在指定手机连续热机50次测端到端P50/P95；同时在指定手机与CY01眼镜上
+复验BLE连接和照片同步。
 
 ## Evidence
 
@@ -175,4 +186,6 @@ P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 - `docs/validation/2026-08-25-full-image-v2-bootstrap.md`：代表帧、真值门与开放词汇试跑证据。
 - `docs/validation/2026-08-28-picodet-phase-b.md`：80场景银标门、S/M训练、导出、推理和时延证据。
 - `docs/validation/2026-08-28-small-object-accuracy-recovery.md`：小目标根因、P2对照、阈值与ONNX边界。
+- `docs/validation/2026-08-28-high-accuracy-validation.md`：三种子严格门、M-P2挑战者、误差桶、
+  密封测试和防松状态能力边界。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。

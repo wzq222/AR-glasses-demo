@@ -16,6 +16,7 @@ from crrc_vision.detection_fusion import (
     select_detection_mode,
     to_coco_predictions,
 )
+from crrc_vision.p2_training import checkpoint_model
 from crrc_vision.reference_teacher import (
     validate_checkpoint_globals,
     validate_ultralytics_version,
@@ -74,11 +75,14 @@ def main() -> int:
         checkpoint = torch.load(
             str(args.weights), map_location="cpu", weights_only=True
         )
-    checkpoint_model = checkpoint.get("model")
-    if checkpoint_model is None or checkpoint.get("version") != "8.2.40":
+    if checkpoint.get("version") != "8.2.40":
         raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT")
+    try:
+        selected_model = checkpoint_model(checkpoint)
+    except ValueError as exc:
+        raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT") from exc
     model = YOLO("yolov8s-p2.yaml")
-    model.model = checkpoint_model.float().eval()
+    model.model = selected_model.float().eval()
     model.ckpt = checkpoint
     model.ckpt_path = str(args.weights)
     model.task = "detect"

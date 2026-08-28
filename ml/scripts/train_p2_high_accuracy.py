@@ -17,6 +17,7 @@ from crrc_vision.p2_training import (
     build_resume_kwargs,
     build_train_kwargs,
     checkpoint_model,
+    is_recoverable_finalization_failure,
     p2_model_yaml,
     validate_pretraining_mode,
     validate_training_checkpoint,
@@ -263,16 +264,34 @@ def main() -> int:
             transfer_pretrained=args.transfer_pretrained,
             expected_sha256=args.expected_pretrained_sha256,
         )
-        model.train(**kwargs)
         best = seed_root / "train" / "weights" / "best.pt"
         last = seed_root / "train" / "weights" / "last.pt"
+        results_csv = seed_root / "train" / "results.csv"
+        finalization_error = None
+        try:
+            model.train(**kwargs)
+        except BaseException as exc:
+            if not is_recoverable_finalization_failure(
+                error=exc,
+                results_csv=results_csv,
+                best=best,
+                last=last,
+                expected_epochs=args.epochs,
+            ):
+                raise
+            finalization_error = f"{type(exc).__name__}:{exc}"
         if not best.is_file() or not last.is_file():
             raise RuntimeError(f"TRAINING_CHECKPOINT_MISSING:{seed}")
         manifest.update(
             {
-                "status": "complete",
+                "status": (
+                    "trained_with_finalization_error"
+                    if finalization_error
+                    else "complete"
+                ),
                 "best_sha256": _sha256(best),
                 "last_sha256": _sha256(last),
+                "finalization_error": finalization_error,
             }
         )
         _atomic_json(manifest_path, manifest)
