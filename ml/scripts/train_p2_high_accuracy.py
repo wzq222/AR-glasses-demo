@@ -15,6 +15,7 @@ from crrc_vision.assets import asset_root
 from crrc_vision.p2_training import (
     P2_SEEDS,
     build_train_kwargs,
+    checkpoint_model,
     validate_training_inputs,
 )
 from crrc_vision.reference_teacher import (
@@ -82,10 +83,14 @@ def _safe_model(weights: Path):
     # function returns. Keep the same narrowly validated framework allowlist active.
     torch.serialization.add_safe_globals(allowed)
     checkpoint = torch.load(str(weights), map_location="cpu", weights_only=True)
-    if checkpoint.get("version") != "8.2.40" or checkpoint.get("model") is None:
+    if checkpoint.get("version") != "8.2.40":
         raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT")
+    try:
+        selected_model = checkpoint_model(checkpoint)
+    except ValueError as exc:
+        raise RuntimeError("INCOMPATIBLE_YOLO_CHECKPOINT") from exc
     model = YOLO("yolov8s-p2.yaml")
-    model.model = checkpoint["model"].float()
+    model.model = selected_model.float()
     model.ckpt = checkpoint
     model.ckpt_path = str(weights)
     model.task = "detect"
@@ -111,8 +116,12 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, choices=P2_SEEDS)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
+
+    if args.resume and (args.seed is None or not args.execute):
+        raise ValueError("RESUME_REQUIRES_ONE_SEED_AND_EXECUTE")
 
     root = asset_root().resolve()
     configured_root = Path(os.environ["CRRC_VISION_DATA_ROOT"]).absolute()
@@ -135,11 +144,42 @@ def main() -> int:
         pretrained=pretrained,
         output_root=output_root,
         ultralytics_version=ultralytics.__version__,
+        allow_existing_output=args.resume,
     )
     if not source_root.is_dir() or not truth.is_file():
         raise FileNotFoundError(source_root if not source_root.is_dir() else truth)
     if _sha256(truth) != FORMAL_TRUTH_SHA256:
         raise RuntimeError("FORMAL_TRUTH_HASH_MISMATCH")
+    if args.resume:
+        seed_root = output_root / f"seed-{args.seed}"
+        manifest_path = seed_root / "training-manifest.json"
+        last = seed_root / "train" / "weights" / "last.pt"
+        if not manifest_path.is_file() or not last.is_file():
+            raise FileNotFoundError(
+                manifest_path if not manifest_path.is_file() else last
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update(
+            {"status": "resuming", "resume_checkpoint_sha256": _sha256(last)}
+        )
+        _atomic_json(manifest_path, manifest)
+        model = _safe_model(last)
+        model.train(resume=True)
+        best = seed_root / "train" / "weights" / "best.pt"
+        if not best.is_file() or not last.is_file():
+            raise RuntimeError(f"TRAINING_CHECKPOINT_MISSING:{args.seed}")
+        manifest.update(
+            {
+                "status": "complete",
+                "resumed": True,
+                "best_sha256": _sha256(best),
+                "last_sha256": _sha256(last),
+            }
+        )
+        _atomic_json(manifest_path, manifest)
+        print(json.dumps({"seed": args.seed, "execute": True, "resumed": True}))
+        return 0
+
     output_root.mkdir(parents=True, exist_ok=True)
     dataset_root = output_root / "dataset"
     runtime_dataset_root = configured_root / args.output / "dataset"

@@ -5,6 +5,7 @@ import pytest
 from crrc_vision.p2_training import (
     P2_SEEDS,
     build_train_kwargs,
+    checkpoint_model,
     validate_training_inputs,
 )
 
@@ -70,3 +71,49 @@ def test_training_inputs_must_be_inside_assets_and_never_include_sealed(
             output_root=output,
             ultralytics_version="8.3.0",
         )
+
+
+def test_resume_allows_only_an_existing_nonempty_output_inside_assets(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "assets"
+    root.mkdir()
+    train = root / "train.json"
+    val = root / "val.json"
+    weights = root / "best.pt"
+    for path in (train, val, weights):
+        path.write_bytes(b"x")
+    output = root / "runs/existing"
+    output.mkdir(parents=True)
+    (output / "checkpoint.txt").write_text("ready", encoding="utf-8")
+
+    validate_training_inputs(
+        asset_root=root,
+        train_coco=train,
+        val_coco=val,
+        pretrained=weights,
+        output_root=output,
+        ultralytics_version="8.2.40",
+        allow_existing_output=True,
+    )
+
+    with pytest.raises(FileNotFoundError, match="RESUME_OUTPUT_MISSING"):
+        validate_training_inputs(
+            asset_root=root,
+            train_coco=train,
+            val_coco=val,
+            pretrained=weights,
+            output_root=root / "runs/missing",
+            ultralytics_version="8.2.40",
+            allow_existing_output=True,
+        )
+
+
+def test_checkpoint_model_accepts_training_ema_but_prefers_export_model() -> None:
+    export_model = object()
+    ema_model = object()
+
+    assert checkpoint_model({"model": export_model, "ema": ema_model}) is export_model
+    assert checkpoint_model({"model": None, "ema": ema_model}) is ema_model
+    with pytest.raises(ValueError, match="CHECKPOINT_MODEL_MISSING"):
+        checkpoint_model({"model": None, "ema": None})

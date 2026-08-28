@@ -8,6 +8,17 @@ from pathlib import Path
 P2_SEEDS = (20260828, 20260829, 20260830)
 
 
+def checkpoint_model(checkpoint: dict[str, object]) -> object:
+    """Return an export model or the EMA model kept in a resumable checkpoint."""
+
+    model = checkpoint.get("model")
+    if model is None:
+        model = checkpoint.get("ema")
+    if model is None:
+        raise ValueError("CHECKPOINT_MODEL_MISSING")
+    return model
+
+
 def validate_training_inputs(
     *,
     asset_root: Path,
@@ -16,6 +27,7 @@ def validate_training_inputs(
     pretrained: Path,
     output_root: Path,
     ultralytics_version: str,
+    allow_existing_output: bool = False,
 ) -> None:
     root = asset_root.resolve()
     for path in (train_coco, val_coco, pretrained):
@@ -29,7 +41,10 @@ def validate_training_inputs(
         raise ValueError(f"TRAINING_PATH_OUTSIDE_ASSETS:{output_root}")
     if any("sealed" in part.lower() for path in (train_coco, val_coco) for part in path.parts):
         raise ValueError("SEALED_TEST_PATH_FORBIDDEN")
-    if output.exists() and any(output.iterdir()):
+    if allow_existing_output:
+        if not output.is_dir() or not any(output.iterdir()):
+            raise FileNotFoundError(f"RESUME_OUTPUT_MISSING:{output}")
+    elif output.exists() and any(output.iterdir()):
         raise FileExistsError(f"TRAINING_OUTPUT_NOT_EMPTY:{output}")
     if ultralytics_version != "8.2.40":
         raise ValueError(
