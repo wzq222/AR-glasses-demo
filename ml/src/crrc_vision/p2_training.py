@@ -1,0 +1,92 @@
+"""Guardrails and reproducible arguments for high-accuracy P2 training."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+P2_SEEDS = (20260828, 20260829, 20260830)
+
+
+def validate_training_inputs(
+    *,
+    asset_root: Path,
+    train_coco: Path,
+    val_coco: Path,
+    pretrained: Path,
+    output_root: Path,
+    ultralytics_version: str,
+) -> None:
+    root = asset_root.resolve()
+    for path in (train_coco, val_coco, pretrained):
+        resolved = path.resolve()
+        if root not in resolved.parents:
+            raise ValueError(f"TRAINING_PATH_OUTSIDE_ASSETS:{path}")
+        if not resolved.is_file():
+            raise FileNotFoundError(resolved)
+    output = output_root.resolve()
+    if root not in output.parents:
+        raise ValueError(f"TRAINING_PATH_OUTSIDE_ASSETS:{output_root}")
+    if any("sealed" in part.lower() for path in (train_coco, val_coco) for part in path.parts):
+        raise ValueError("SEALED_TEST_PATH_FORBIDDEN")
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f"TRAINING_OUTPUT_NOT_EMPTY:{output}")
+    if ultralytics_version != "8.2.40":
+        raise ValueError(
+            f"ULTRALYTICS_VERSION_MISMATCH:{ultralytics_version}:expected=8.2.40"
+        )
+
+
+def build_train_kwargs(
+    *,
+    seed: int,
+    dataset_yaml: Path,
+    run_root: Path,
+    epochs: int,
+    batch_size: int,
+) -> dict[str, object]:
+    if seed not in P2_SEEDS:
+        raise ValueError(f"INVALID_P2_SEED:{seed}")
+    if epochs <= 0 or batch_size <= 0:
+        raise ValueError("INVALID_TRAINING_DURATION")
+    return {
+        "data": str(dataset_yaml.resolve()),
+        "epochs": epochs,
+        "patience": 15,
+        "batch": batch_size,
+        "imgsz": 640,
+        "device": 0,
+        "workers": 0,
+        "project": str(run_root.resolve()),
+        "name": "train",
+        "exist_ok": False,
+        "pretrained": True,
+        "optimizer": "AdamW",
+        "lr0": 0.0005,
+        "lrf": 0.1,
+        "weight_decay": 0.0005,
+        "warmup_epochs": 3.0,
+        "seed": seed,
+        "deterministic": True,
+        "single_cls": True,
+        "amp": True,
+        "cache": False,
+        "hsv_h": 0.01,
+        "hsv_s": 0.3,
+        "hsv_v": 0.2,
+        "degrees": 5.0,
+        "translate": 0.05,
+        "scale": 0.2,
+        "shear": 0.0,
+        "perspective": 0.0,
+        "flipud": 0.0,
+        "fliplr": 0.5,
+        "mosaic": 0.0,
+        "mixup": 0.0,
+        "copy_paste": 0.0,
+        "erasing": 0.0,
+        "close_mosaic": 0,
+        "max_det": 300,
+        "verbose": False,
+        "plots": True,
+    }

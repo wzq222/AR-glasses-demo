@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from crrc_vision.yolo_p2 import prepare_yolo_dataset
 
@@ -162,3 +163,40 @@ def test_prepare_yolo_dataset_refuses_nonempty_output_and_wrong_runtime_root(
             output_root=output,
             runtime_output_root=wrong_runtime,
         )
+
+
+def test_prepare_high_accuracy_single_class_with_relative_source_and_tiles(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    Image.new("RGB", (100, 80), "white").save(source_root / "train.jpg")
+    Image.new("RGB", (100, 80), "black").save(source_root / "val.jpg")
+    train = {
+        "images": [{"id": 1, "file_name": "train.jpg", "width": 100, "height": 80, "scene_group": "a"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 10, 10]}],
+        "categories": [{"id": 1, "name": "fastener_target"}],
+    }
+    val = {
+        "images": [{"id": 2, "file_name": "val.jpg", "width": 100, "height": 80, "scene_group": "b"}],
+        "annotations": [{"id": 2, "image_id": 2, "category_id": 1, "bbox": [10, 10, 10, 10]}],
+        "categories": [{"id": 1, "name": "fastener_target"}],
+    }
+    train_path = tmp_path / "train.json"
+    val_path = tmp_path / "val.json"
+    train_path.write_text(json.dumps(train), encoding="utf-8")
+    val_path.write_text(json.dumps(val), encoding="utf-8")
+
+    report = prepare_yolo_dataset(
+        train_coco=train_path,
+        val_coco=val_path,
+        output_root=tmp_path / "output",
+        source_root=source_root,
+        train_tiles=True,
+        merge_target_categories=True,
+    )
+
+    assert report["train_images"] == 5
+    assert report["val_images"] == 1
+    assert len(list((tmp_path / "output/images/train").glob("*"))) == 5
+    assert len(list((tmp_path / "output/labels/train").glob("*"))) == 5
