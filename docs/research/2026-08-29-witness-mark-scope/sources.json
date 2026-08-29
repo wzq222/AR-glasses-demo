@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "title": "LOCTITE SF 7414",
+    "url": "https://www.henkel-adhesives.com/sk/en/product/industrial-inks-and-coatings/loctite_sf_7414.html",
+    "type": "official manufacturer"
+  },
+  {
+    "id": 2,
+    "title": "Equipment Specification EQ 2-228 A",
+    "url": "https://ntrs.nasa.gov/api/citations/19710001585/downloads/19710001585.pdf",
+    "type": "official engineering archive"
+  },
+  {
+    "id": 3,
+    "title": "CN112014400A",
+    "url": "https://patents.google.com/patent/CN112014400A/zh",
+    "type": "patent"
+  },
+  {
+    "id": 4,
+    "title": "轨道交通装备螺栓紧固防松标识操作规程转载页",
+    "url": "https://www.doczj.com/doc/1e1874262.html",
+    "type": "secondary corroboration"
+  }
+]

@@ -38,6 +38,9 @@ INTENT_TO_STATE = {
     "INSUFFICIENT": "INSUFFICIENT",
     "LOOKALIKE": None,
 }
+DECIDABLE_INTENTS = frozenset(
+    {"ALIGNED", "SUBTLE_DISPLACED", "OBVIOUS_DISPLACED", "DAMAGED_MARK"}
+)
 
 
 def _digest(value: object) -> bool:
@@ -58,6 +61,10 @@ def validate_h1_record(record: Mapping[str, object]) -> tuple[str, ...]:
         errors.append("INVALID_TOPOLOGY")
     if str(record.get("mark_role", "")) not in MARK_ROLES:
         errors.append("INVALID_MARK_ROLE")
+    if intent in DECIDABLE_INTENTS and record.get("mark_role") != "bridges_moving_fixed":
+        errors.append("DECIDABLE_STATE_REQUIRES_BRIDGE")
+    if intent in DECIDABLE_INTENTS and record.get("topology") == "unknown":
+        errors.append("DECIDABLE_STATE_REQUIRES_KNOWN_TOPOLOGY")
     if intent == "LOOKALIKE" and record.get("has_marked_point") is not False:
         errors.append("LOOKALIKE_MARKED_POINT_CONFLICT")
     if intent != "LOOKALIKE" and record.get("has_marked_point") is not True:

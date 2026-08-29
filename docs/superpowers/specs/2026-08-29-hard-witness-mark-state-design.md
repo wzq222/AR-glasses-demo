@@ -18,6 +18,19 @@
 `DAMAGED_MARK`与`INSUFFICIENT`不得自动折算成`DISPLACED`或`ALIGNED`。生产界面不输出“绝对没松”，
 只输出“未发现相对位移”并保留证据图。
 
+### 1.1 检查点范围
+
+防松标记并非只用于普通螺栓/螺母。工程资料还明确覆盖压缩管接头、螺纹管接头、管卡和其他按规定
+扭矩或位置装配的可旋转组件。项目因此保留两类有效正样本：
+
+1. 螺栓、螺母、螺柱、双螺母等结构紧固点；
+2. 有明确螺纹/夹紧运动副的管接头、压缩接头或管卡。
+
+类别名称不决定能否判定。只有标记跨越可识别的moving/fixed两侧，且连接拓扑已知，才允许进入
+`ALIGNED / DISPLACED / DAMAGED_MARK`。单边涂点、普通管身色线、热缩管、警示漆、锈迹或无法确认
+运动副的红黄色区域只进入`INSUFFICIENT / LOOKALIKE`。客户工艺文件若限定了更窄清单，以客户SOP为
+最终范围。
+
 ## 2. 选择的技术路线
 
 采用“高召回检测 + 局部多任务模型 + 拓扑几何 + 可选历史基准 + 拒判”的混合路线。
@@ -214,3 +227,7 @@ H1a优先覆盖轻微位移、漆面损坏、视角伪错位、遮挡和红色�
   <https://arxiv.org/abs/2211.13968>
 - DYKEM Cross Check，防松胶作为松动/拆动可视指示器的产品定义：
   <https://www.itwprobrands.com/product/cross-check>
+- Henkel LOCTITE SF 7414，明确列出compression fittings、studs、nuts、parts和assemblies：
+  <https://www.henkel-adhesives.com/sk/en/product/industrial-inks-and-coatings/loctite_sf_7414.html>
+- NASA/TRW工程规范，要求nuts and fittings达到扭矩后涂torque stripe：
+  <https://ntrs.nasa.gov/api/citations/19710001585/downloads/19710001585.pdf>

@@ -1,0 +1,10 @@
+{
+  "schema_version": "deep-research-run-summary-v1",
+  "date": "2026-08-29",
+  "mode": "single-agent",
+  "output_type": "brief",
+  "sources_approved": 4,
+  "primary_sources": 3,
+  "conclusion": "witness marks are not limited to bolts and nuts; threaded fittings and clamps are in scope when the mark bridges a known moving/fixed interface",
+  "limitations": "customer-specific SOP remains authoritative"
+}
