@@ -22,6 +22,7 @@ from crrc_vision.p2_training import (
     validate_pretraining_mode,
     validate_training_checkpoint,
     validate_training_inputs,
+    validate_synthetic_ablation_mode,
 )
 from crrc_vision.reference_teacher import (
     validate_checkpoint_globals,
@@ -141,6 +142,7 @@ def main() -> int:
     parser.add_argument("--transfer-pretrained", action="store_true")
     parser.add_argument("--expected-pretrained-sha256")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--maximum-synthetic-fraction", type=float)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
@@ -181,6 +183,20 @@ def main() -> int:
         raise FileNotFoundError(source_root if not source_root.is_dir() else truth)
     if _sha256(truth) != FORMAL_TRUTH_SHA256:
         raise RuntimeError("FORMAL_TRUTH_HASH_MISMATCH")
+    train_document = json.loads(train_coco.read_text(encoding="utf-8"))
+    synthetic_policy = validate_synthetic_ablation_mode(
+        train_document,
+        maximum_synthetic_fraction=args.maximum_synthetic_fraction,
+        batch_size=args.batch_size,
+    )
+    trainer_class = None
+    if synthetic_policy["synthetic_images"]:
+        from crrc_vision.ultralytics_ablation import make_synthetic_cap_trainer
+
+        trainer_class = make_synthetic_cap_trainer(
+            maximum_synthetic_fraction=args.maximum_synthetic_fraction,
+            seed=args.seed or P2_SEEDS[0],
+        )
     if args.resume:
         seed_root = output_root / f"seed-{args.seed}"
         manifest_path = seed_root / "training-manifest.json"
@@ -197,7 +213,11 @@ def main() -> int:
         model = _safe_model(
             last, model_yaml=model_yaml, transfer_pretrained=False
         )
-        model.train(**build_resume_kwargs(batch_size=args.batch_size))
+        resume_kwargs = build_resume_kwargs(batch_size=args.batch_size)
+        if trainer_class is None:
+            model.train(**resume_kwargs)
+        else:
+            model.train(trainer=trainer_class, **resume_kwargs)
         best = seed_root / "train" / "weights" / "best.pt"
         if not best.is_file() or not last.is_file():
             raise RuntimeError(f"TRAINING_CHECKPOINT_MISSING:{args.seed}")
@@ -242,6 +262,10 @@ def main() -> int:
         "model_yaml": model_yaml,
         "transfer_pretrained": args.transfer_pretrained,
         "expected_pretrained_sha256": args.expected_pretrained_sha256,
+        "synthetic_batch_policy": {
+            **synthetic_policy,
+            "maximum_synthetic_fraction": args.maximum_synthetic_fraction,
+        },
     }
     selected_seeds = (args.seed,) if args.seed is not None else P2_SEEDS
     for seed in selected_seeds:
@@ -269,7 +293,10 @@ def main() -> int:
         results_csv = seed_root / "train" / "results.csv"
         finalization_error = None
         try:
-            model.train(**kwargs)
+            if trainer_class is None:
+                model.train(**kwargs)
+            else:
+                model.train(trainer=trainer_class, **kwargs)
         except BaseException as exc:
             if not is_recoverable_finalization_failure(
                 error=exc,

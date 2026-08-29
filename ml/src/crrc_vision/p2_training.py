@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 
 
@@ -114,6 +115,33 @@ def validate_training_inputs(
         raise ValueError(
             f"ULTRALYTICS_VERSION_MISMATCH:{ultralytics_version}:expected=8.2.40"
         )
+
+
+def validate_synthetic_ablation_mode(
+    train_document: dict,
+    *,
+    maximum_synthetic_fraction: float | None,
+    batch_size: int,
+) -> dict[str, int]:
+    images = train_document.get("images", [])
+    synthetic = [item for item in images if item.get("synthetic") is True]
+    real = [item for item in images if item.get("synthetic") is not True]
+    if synthetic and maximum_synthetic_fraction is None:
+        raise ValueError("SYNTHETIC_TRAIN_REQUIRES_CAP")
+    if not synthetic:
+        return {"real_images": len(real), "synthetic_images": 0, "synthetic_per_batch": 0}
+    if maximum_synthetic_fraction is None or maximum_synthetic_fraction > 0.30:
+        raise ValueError("SYNTHETIC_BATCH_CAP_TOO_HIGH")
+    synthetic_per_batch = math.floor(batch_size * maximum_synthetic_fraction)
+    if synthetic_per_batch < 1:
+        raise ValueError("BATCH_TOO_SMALL_FOR_SYNTHETIC_CAP")
+    if any(int(item.get("id", -1)) < 1_000_000 for item in synthetic):
+        raise ValueError("SYNTHETIC_IMAGE_ID_NOT_RESERVED")
+    return {
+        "real_images": len(real),
+        "synthetic_images": len(synthetic),
+        "synthetic_per_batch": synthetic_per_batch,
+    }
 
 
 def build_train_kwargs(

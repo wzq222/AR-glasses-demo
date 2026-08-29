@@ -12,6 +12,7 @@ from crrc_vision.p2_training import (
     validate_pretraining_mode,
     validate_training_checkpoint,
     validate_training_inputs,
+    validate_synthetic_ablation_mode,
 )
 
 
@@ -203,3 +204,19 @@ def test_transfer_allows_a_legacy_official_checkpoint_only_by_exact_hash() -> No
             actual_sha256="A" * 64,
             expected_sha256=None,
         )
+
+
+def test_synthetic_training_requires_explicit_capped_batch_mode() -> None:
+    mixed = {"info": {"partition": "train"}, "images": [
+        {"id": 1, "synthetic": False}, {"id": 1_000_000, "synthetic": True}
+    ]}
+    with pytest.raises(ValueError, match="SYNTHETIC_TRAIN_REQUIRES_CAP"):
+        validate_synthetic_ablation_mode(mixed, maximum_synthetic_fraction=None, batch_size=4)
+    report = validate_synthetic_ablation_mode(
+        mixed, maximum_synthetic_fraction=0.30, batch_size=4
+    )
+    assert report == {"real_images": 1, "synthetic_images": 1, "synthetic_per_batch": 1}
+    with pytest.raises(ValueError, match="SYNTHETIC_BATCH_CAP_TOO_HIGH"):
+        validate_synthetic_ablation_mode(mixed, maximum_synthetic_fraction=0.31, batch_size=4)
+    with pytest.raises(ValueError, match="BATCH_TOO_SMALL_FOR_SYNTHETIC_CAP"):
+        validate_synthetic_ablation_mode(mixed, maximum_synthetic_fraction=0.30, batch_size=2)
