@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import math
+import pickle
 from pathlib import Path
 
 
@@ -57,25 +58,46 @@ def is_recoverable_finalization_failure(
     best: Path,
     last: Path,
     expected_epochs: int,
+    patience: int | None = None,
 ) -> bool:
     """Recognize the pinned runtime's post-training torch.load incompatibility.
 
     Recovery is deliberately narrow: the exact weights-only failure must happen
-    after every requested epoch was recorded and both local checkpoints exist.
+    after either every requested epoch was recorded or a legitimate early-stop
+    window elapsed, and both local checkpoints exist.
     """
 
-    if "Weights only load failed" not in str(error):
+    if (
+        not isinstance(error, pickle.UnpicklingError)
+        or "Weights only load failed" not in str(error)
+    ):
         return False
     if expected_epochs <= 0 or not all(path.is_file() for path in (results_csv, best, last)):
         return False
     try:
+        progress: list[tuple[int, float | None]] = []
         with results_csv.open("r", encoding="utf-8-sig", newline="") as stream:
-            completed = max(
-                int(float(row["epoch"])) for row in csv.DictReader(stream)
-            )
+            for raw_row in csv.DictReader(stream):
+                row = {str(key).strip(): value for key, value in raw_row.items()}
+                epoch = int(float(row["epoch"]))
+                fitness = None
+                if "metrics/mAP50(B)" in row and "metrics/mAP50-95(B)" in row:
+                    fitness = 0.1 * float(row["metrics/mAP50(B)"]) + 0.9 * float(
+                        row["metrics/mAP50-95(B)"]
+                    )
+                progress.append((epoch, fitness))
     except (KeyError, OSError, TypeError, ValueError):
         return False
-    return completed >= expected_epochs
+    if not progress:
+        return False
+    completed = max(epoch for epoch, _ in progress)
+    if completed >= expected_epochs:
+        return True
+    measured = [(epoch, fitness) for epoch, fitness in progress if fitness is not None]
+    if patience is None or patience <= 0 or not measured:
+        return False
+    best_epoch, _ = max(measured, key=lambda item: (item[1], item[0]))
+    return completed - best_epoch >= patience
 
 
 def build_resume_kwargs(*, batch_size: int) -> dict[str, object]:

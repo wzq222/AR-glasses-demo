@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 
 import pytest
@@ -155,7 +156,7 @@ def test_only_complete_weights_only_finalization_failure_is_recoverable(
     last.write_bytes(b"last")
 
     assert is_recoverable_finalization_failure(
-        error=RuntimeError("Weights only load failed during strip_optimizer"),
+        error=pickle.UnpicklingError("Weights only load failed during strip_optimizer"),
         results_csv=results,
         best=best,
         last=last,
@@ -169,11 +170,45 @@ def test_only_complete_weights_only_finalization_failure_is_recoverable(
         expected_epochs=30,
     )
     assert not is_recoverable_finalization_failure(
-        error=RuntimeError("Weights only load failed"),
+        error=pickle.UnpicklingError("Weights only load failed"),
         results_csv=results,
         best=best,
         last=last,
         expected_epochs=31,
+    )
+
+
+def test_early_stopped_run_can_recover_from_finalization_failure(tmp_path: Path) -> None:
+    results = tmp_path / "results.csv"
+    best = tmp_path / "best.pt"
+    last = tmp_path / "last.pt"
+    results.write_text(
+        "  epoch, metrics/mAP50(B), metrics/mAP50-95(B)\n"
+        "1,0.5,0.2\n4,0.6,0.3\n19,0.5,0.2\n",
+        encoding="utf-8",
+    )
+    best.write_bytes(b"best")
+    last.write_bytes(b"last")
+    assert is_recoverable_finalization_failure(
+        error=pickle.UnpicklingError("Weights only load failed during strip_optimizer"),
+        results_csv=results,
+        best=best,
+        last=last,
+        expected_epochs=20,
+        patience=15,
+    )
+    results.write_text(
+        "epoch,metrics/mAP50(B),metrics/mAP50-95(B)\n"
+        "1,0.5,0.2\n15,0.6,0.3\n19,0.5,0.2\n",
+        encoding="utf-8",
+    )
+    assert not is_recoverable_finalization_failure(
+        error=pickle.UnpicklingError("Weights only load failed during strip_optimizer"),
+        results_csv=results,
+        best=best,
+        last=last,
+        expected_epochs=20,
+        patience=15,
     )
 
 

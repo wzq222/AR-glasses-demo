@@ -304,6 +304,7 @@ def main() -> int:
                 best=best,
                 last=last,
                 expected_epochs=args.epochs,
+                patience=int(kwargs["patience"]),
             ):
                 raise
             finalization_error = f"{type(exc).__name__}:{exc}"

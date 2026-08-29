@@ -125,6 +125,11 @@
   复跑的内容哈希均为`68C2A420E151329C9CF57D894EEE39243B8FC8CA26119F5953F27DD7BB540016`。
   严格全图审计0错误，248项Python测试通过，正式真值SHA-256仍为
   `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`。
+- 2026-08-29：完成真实control与25%合成批次的YOLOv8s-P2单seed公平消融。相同19张/108实例
+  真实val上，mixed相对control的recall由0.5463升至0.6278、mAP50由0.5900升至0.6259、
+  mAP50-95由0.2936升至0.3095，但precision由0.7093降至0.6175。合成数据对漏检有正向信号，
+  但精确率与召回率均未达到生产门；sealed-test未打开，正式真值哈希未变。mixed在第19 epoch
+  正常早停，PyTorch 2.7.1最终剥离兼容问题已增加早停回归保护并保留原始权重。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -137,10 +142,10 @@
 
 ## Active Work
 
-带防松标记检查点的候选和全图审计闭环已实现，开发集候选覆盖为248/248；ImageGen合成试点也已
-形成8个场景、24张三态全图，可用于synthetic-training ablation。它不能替代独立真实验证：当前仍只有
-30个真实train完整场景，且真实数据没有防松线端点和NORMAL/LOOSE状态真值。既有S/M-P2未通过
-高准确率门，因此不允许把合成集结果表述为生产准确率、打开sealed-test或接入Android。
+带防松标记检查点的候选和全图审计闭环已实现，开发集候选覆盖为248/248；ImageGen合成试点及
+synthetic-training ablation均已完成。24张合成图提高了真实val召回，但同时降低precision，当前仍只有
+30个真实train完整场景，且真实数据没有防松线端点和NORMAL/LOOSE状态真值。既有S/M-P2与本轮
+mixed P2均未通过高准确率门，因此不允许把结果表述为生产准确率、打开sealed-test或接入Android。
 
 ## Run
 
@@ -180,10 +185,11 @@ git status --short
 
 ## Next Smallest Action
 
-先以每个batch不超过30%的合成占比运行一次训练消融，并只用真实val比较检测召回是否提升；状态头
-不得用合成val自证准确。并行新增至少100–150个独立真实检测场景，优先覆盖tiny、lookalike、blur、
+保留每个batch不超过30%的合成占比，新增至少100–150个独立真实检测场景和真实困难负样本，优先
+覆盖tiny、lookalike、blur、
 dense pipes及不同车型、设备和光照；另采集同一紧固件受控NORMAL/LOOSE成对照片并标注两段防松线
-端点、可见性和状态。建立全新独立测试集并通过precision/recall/完整场景门后，再接入Android runtime
+端点、可见性和状态。数据补齐后做三seed消融复验；状态头不得用合成val自证准确。建立全新独立测试
+集并通过precision/recall/完整场景门后，再接入Android runtime
 并在指定手机连续热机50次测端到端P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
@@ -205,4 +211,6 @@ dense pipes及不同车型、设备和光照；另采集同一紧固件受控NOR
   候选覆盖和训练拒绝结论。
 - `docs/validation/2026-08-29-synthetic-marked-point-pilot.md`：ImageGen防松线来源、双层复核、
   合成全图哈希、可重复性与训练边界。
+- `docs/validation/2026-08-29-synthetic-training-ablation.md`：25%合成批次公平训练、真实val结果、
+  权重哈希、兼容恢复与能力边界。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。
