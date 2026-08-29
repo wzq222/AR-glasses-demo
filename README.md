@@ -22,6 +22,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [小目标准确率恢复验证](docs/validation/2026-08-28-small-object-accuracy-recovery.md)
 - [高准确率严格验证收口](docs/validation/2026-08-28-high-accuracy-validation.md)
 - [带防松标记检查点候选门](docs/validation/2026-08-29-marked-point-candidate-recall.md)
+- [ImageGen 防松线合成试点](docs/validation/2026-08-29-synthetic-marked-point-pilot.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、

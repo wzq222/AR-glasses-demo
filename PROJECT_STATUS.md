@@ -117,6 +117,14 @@
   17个val完整场景和248个标记点，12张因模糊/遮挡/边界归属不清排除。候选门
   248/248，但这仍是同源开发集指标，不是生产精度。train低于64场景且没有防松线端点/
   NORMAL/LOOSE状态真值，训练门保持FAIL。209项Python测试通过，正式真值哈希保持不变。
+- 2026-08-29：ImageGen防松线合成试点达到全图门。最终保留8个train来源场景，每个场景生成
+  NORMAL/SLIGHT_LOOSE/OBVIOUS_LOOSE三态，共24张局部和24张现场全图，三类各8张。防松线像素
+  来自ImageGen供体，仅做分段仿射重定位；全图阶段只迁移涂料像素，不再搬运异种紧固件外观，
+  并以保守门清除原红/黄线。mark-only检测框严格保留真实COCO框，训练分区、来源图和背景图均校验
+  SHA-256；24张经局部和整图双层复核后全部APPROVED，结论绑定全图、裁剪图和审核包哈希。相同种子
+  复跑的内容哈希均为`68C2A420E151329C9CF57D894EEE39243B8FC8CA26119F5953F27DD7BB540016`。
+  严格全图审计0错误，248项Python测试通过，正式真值SHA-256仍为
+  `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -129,9 +137,10 @@
 
 ## Active Work
 
-带防松标记检查点的候选和全图审计闭环已实现，开发集候选覆盖为248/248；但只有30个
-train完整场景，尚不足64场景训练门。既有S/M-P2仍未通过高准确率门；新真值也没有防松线端点和
-NORMAL/LOOSE状态，所以当前不允许训练、打开sealed-test或接入Android。
+带防松标记检查点的候选和全图审计闭环已实现，开发集候选覆盖为248/248；ImageGen合成试点也已
+形成8个场景、24张三态全图，可用于synthetic-training ablation。它不能替代独立真实验证：当前仍只有
+30个真实train完整场景，且真实数据没有防松线端点和NORMAL/LOOSE状态真值。既有S/M-P2未通过
+高准确率门，因此不允许把合成集结果表述为生产准确率、打开sealed-test或接入Android。
 
 ## Run
 
@@ -171,11 +180,11 @@ git status --short
 
 ## Next Smallest Action
 
-新增至少100–150个独立真实检测场景，优先覆盖tiny、lookalike、blur、dense pipes及不同车型、
-设备和光照；另采集同一紧固件受控NORMAL/LOOSE成对照片并标注两段防松线端点、可见性和状态。
-重新建立全新的独立测试集并通过precision/recall/完整场景门后，再使用授权清晰的模型接入
-Android runtime并在指定手机连续热机50次测端到端P50/P95；同时在指定手机与CY01眼镜上
-复验BLE连接和照片同步。
+先以每个batch不超过30%的合成占比运行一次训练消融，并只用真实val比较检测召回是否提升；状态头
+不得用合成val自证准确。并行新增至少100–150个独立真实检测场景，优先覆盖tiny、lookalike、blur、
+dense pipes及不同车型、设备和光照；另采集同一紧固件受控NORMAL/LOOSE成对照片并标注两段防松线
+端点、可见性和状态。建立全新独立测试集并通过precision/recall/完整场景门后，再接入Android runtime
+并在指定手机连续热机50次测端到端P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
 
@@ -194,4 +203,6 @@ Android runtime并在指定手机连续热机50次测端到端P50/P95；同时�
   密封测试和防松状态能力边界。
 - `docs/validation/2026-08-29-marked-point-candidate-recall.md`：带防松标记检查点真值、全图审计、
   候选覆盖和训练拒绝结论。
+- `docs/validation/2026-08-29-synthetic-marked-point-pilot.md`：ImageGen防松线来源、双层复核、
+  合成全图哈希、可重复性与训练边界。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。

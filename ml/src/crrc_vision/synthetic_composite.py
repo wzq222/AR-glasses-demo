@@ -82,11 +82,15 @@ def composite_sample(
     existing_boxes: tuple[BBox, ...] = (),
     max_overlap_iou: float = 0.05,
     minimum_short_side: float = 12.0,
+    blend_mode: str = "alpha",
+    preserve_mask: np.ndarray | None = None,
 ) -> CompositeResult:
     if background.ndim != 3 or patch.ndim != 3 or mask.ndim != 2:
         raise ValueError("background/patch/mask维度无效")
     if patch.shape[:2] != mask.shape[:2]:
         raise ValueError("patch与mask尺寸不一致")
+    if preserve_mask is not None and preserve_mask.shape != mask.shape:
+        raise ValueError("preserve_mask与patch尺寸不一致")
 
     background_height, background_width = background.shape[:2]
     patch_height, patch_width = patch.shape[:2]
@@ -117,16 +121,70 @@ def composite_sample(
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
     )
-    alpha = cv2.GaussianBlur(warped_mask, (5, 5), 0).astype(np.float32) / 255.0
-    alpha = np.clip(alpha, 0.0, 1.0)[..., None]
-    blended = np.clip(
-        warped_patch.astype(np.float32) * alpha
-        + background.astype(np.float32) * (1.0 - alpha),
-        0,
-        255,
-    ).astype(np.uint8)
+    if blend_mode == "mark_only":
+        if preserve_mask is None:
+            raise ValueError("mark_only模式需要preserve_mask")
+        warped_preserve = cv2.warpPerspective(
+            preserve_mask,
+            matrix,
+            (background_width, background_height),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+        )
+        detail_alpha = cv2.GaussianBlur(warped_preserve, (3, 3), 0).astype(np.float32) / 255.0
+        detail_alpha = np.clip(detail_alpha, 0.0, 1.0)[..., None]
+        blended = np.clip(
+            warped_patch.astype(np.float32) * detail_alpha
+            + background.astype(np.float32) * (1.0 - detail_alpha),
+            0,
+            255,
+        ).astype(np.uint8)
+        seam_mask = warped_preserve
+    elif blend_mode == "seamless":
+        mask_points = cv2.findNonZero((warped_mask > 8).astype(np.uint8))
+        if mask_points is None:
+            raise ValueError("合成掩膜为空")
+        mask_x, mask_y, mask_width, mask_height = cv2.boundingRect(mask_points)
+        center = (mask_x + mask_width // 2, mask_y + mask_height // 2)
+        blended = cv2.seamlessClone(
+            warped_patch,
+            background,
+            warped_mask,
+            center,
+            cv2.MIXED_CLONE,
+        )
+        seam_mask = warped_mask
+    elif blend_mode == "alpha":
+        alpha = cv2.GaussianBlur(warped_mask, (5, 5), 0).astype(np.float32) / 255.0
+        alpha = np.clip(alpha, 0.0, 1.0)[..., None]
+        blended = np.clip(
+            warped_patch.astype(np.float32) * alpha
+            + background.astype(np.float32) * (1.0 - alpha),
+            0,
+            255,
+        ).astype(np.uint8)
+        seam_mask = warped_mask
+    else:
+        raise ValueError(f"未知融合模式: {blend_mode}")
 
-    edge = cv2.morphologyEx((warped_mask > 8).astype(np.uint8), cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
+    if preserve_mask is not None and blend_mode != "mark_only":
+        warped_preserve = cv2.warpPerspective(
+            preserve_mask,
+            matrix,
+            (background_width, background_height),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+        )
+        detail_alpha = cv2.GaussianBlur(warped_preserve, (3, 3), 0).astype(np.float32) / 255.0
+        detail_alpha = np.clip(detail_alpha, 0.0, 1.0)[..., None]
+        blended = np.clip(
+            warped_patch.astype(np.float32) * detail_alpha
+            + blended.astype(np.float32) * (1.0 - detail_alpha),
+            0,
+            255,
+        ).astype(np.uint8)
+
+    edge = cv2.morphologyEx((seam_mask > 8).astype(np.uint8), cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
     difference = np.mean(np.abs(warped_patch.astype(np.float32) - background.astype(np.float32)), axis=2)
     seam_score = float(difference[edge > 0].mean()) if np.any(edge > 0) else 0.0
     transformed_segments = _transform_segments(segments, matrix)

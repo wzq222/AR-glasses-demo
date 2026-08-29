@@ -24,7 +24,10 @@ def main() -> int:
     )
     args = parser.parse_args()
     paths = sorted(
-        path for path in args.input.iterdir() if path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        path
+        for path in args.input.iterdir()
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        and not path.name.endswith(".mark-mask.png")
     )
     document = ingest_local_candidates(
         paths,
