@@ -13,7 +13,10 @@ import numpy as np
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "ml" / "src"))
 
-from crrc_vision.hard_sample_review import required_second_review_ids  # noqa: E402
+from crrc_vision.hard_sample_review import (  # noqa: E402
+    build_review_scales,
+    required_second_review_ids,
+)
 from crrc_vision.synthetic_contract import assert_external_output, sha256_file  # noqa: E402
 
 
@@ -91,10 +94,13 @@ def main() -> int:
         overlay = image.copy()
         overlay[mask > 0] = (0.35 * overlay[mask > 0] + 0.65 * np.array([0, 255, 255])).astype(np.uint8)
         original_path = samples_dir / f"{sample_id}-original.png"
-        detail_path = samples_dir / f"{sample_id}-detail-2x.png"
+        detail_2x_path = samples_dir / f"{sample_id}-detail-2x.png"
+        detail_4x_path = samples_dir / f"{sample_id}-detail-4x.png"
         overlay_path = samples_dir / f"{sample_id}-paint-overlay.png"
         shutil.copy2(source, original_path)
-        _write(detail_path, cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST))
+        details = build_review_scales(image)
+        _write(detail_2x_path, details["detail_2x"])
+        _write(detail_4x_path, details["detail_4x"])
         _write(overlay_path, overlay)
         left = _fit(image, 300, 260)
         right = _fit(overlay, 300, 260)
@@ -110,7 +116,8 @@ def main() -> int:
                 "topology": job["topology"],
                 "mark_role": job["mark_role"],
                 "original_path": original_path.relative_to(output).as_posix(),
-                "detail_path": detail_path.relative_to(output).as_posix(),
+                "detail_2x_path": detail_2x_path.relative_to(output).as_posix(),
+                "detail_4x_path": detail_4x_path.relative_to(output).as_posix(),
                 "overlay_path": overlay_path.relative_to(output).as_posix(),
                 "proposal_bbox_xyxy": preannotation["bbox_xyxy"],
                 "review_template": {"decision": "", "reason": ""},
@@ -126,7 +133,7 @@ def main() -> int:
         _write(path, sheet)
         contact_sheets.append({"path": path.name, "sha256": sha256_file(path)})
     manifest = {
-        "schema_version": f"h1-{args.mode}-review-pack-v1",
+        "schema_version": f"h1-{args.mode}-review-pack-v2",
         "blind_to_first_review": args.mode == "second",
         "count": len(records),
         "records": records,

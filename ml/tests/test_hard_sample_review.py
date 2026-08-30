@@ -1,7 +1,21 @@
+import numpy as np
+
 from crrc_vision.hard_sample_review import (
+    build_review_scales,
     build_review_result_document,
     validate_h1_reviews,
 )
+
+
+def test_review_scales_preserve_pixels_at_two_and_four_times() -> None:
+    image = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+
+    scales = build_review_scales(image)
+
+    assert set(scales) == {"detail_2x", "detail_4x"}
+    assert scales["detail_2x"].shape == (4, 6, 3)
+    assert scales["detail_4x"].shape == (8, 12, 3)
+    assert np.all(scales["detail_4x"][4:8, 8:12] == image[1, 2])
 
 
 def test_subtle_and_damaged_require_blind_second_review() -> None:

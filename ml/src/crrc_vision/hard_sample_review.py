@@ -2,9 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import numpy as np
+
 
 REVIEW_DECISIONS = frozenset({"APPROVED", "REJECTED", "UNCERTAIN"})
 BLIND_SECOND_INTENTS = frozenset({"SUBTLE_DISPLACED", "DAMAGED_MARK"})
+
+
+def build_review_scales(image: np.ndarray) -> dict[str, np.ndarray]:
+    """Create pixel-preserving evidence views without inventing image detail."""
+    if image.ndim not in (2, 3):
+        raise ValueError("review image must have two or three dimensions")
+    return {
+        "detail_2x": np.repeat(np.repeat(image, 2, axis=0), 2, axis=1),
+        "detail_4x": np.repeat(np.repeat(image, 4, axis=0), 4, axis=1),
+    }
 
 
 def _records_by_id(document: Mapping[str, object] | None) -> tuple[dict[str, dict], bool]:
