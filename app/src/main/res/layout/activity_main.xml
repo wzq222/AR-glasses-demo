@@ -82,6 +82,15 @@
                         <TextView android:id="@+id/tvDeviceName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="-" android:textSize="14sp" android:textColor="#333333"/>
                     </LinearLayout>
 
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="6dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="眼镜电量:" android:textSize="14sp" android:textColor="#666666"/>
+                        <TextView android:id="@+id/tvBatteryStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="-" android:textSize="14sp" android:textColor="#333333"/>
+                    </LinearLayout>
+
                     <Button
                         android:id="@+id/btnSelectDevice"
                         android:layout_width="match_parent"
@@ -130,6 +139,48 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="眼镜按键拍照后，点击上方按钮即可一键同步（WiFi会自动开启并连接，无需手动操作）"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="8dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 语音控制卡片 -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="语音控制"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <Button
+                        android:id="@+id/btnVoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🎤 按住说话"
+                        android:textSize="14sp"
+                        android:backgroundTint="#9C27B0"
+                        android:textColor="@android:color/white"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="按住按钮对着眼镜说话，松手后云端识别；说“拍照”即可触发拍照并自动识别二维码，结果通过眼镜播报"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="8dp"/>

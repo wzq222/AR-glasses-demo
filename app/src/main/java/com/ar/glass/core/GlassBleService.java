@@ -24,6 +24,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
@@ -45,6 +47,7 @@ import androidx.core.content.ContextCompat;
 import com.ar.glass.R;
 import com.ar.glass.ui.MainActivity;
 import com.ar.glass.util.EventMsg;
+import com.ar.glass.vision.Vision;
 
 import org.greenrobot.eventbus.EventBus;
 
@@ -63,6 +66,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.lang.reflect.Method;
 
 /**
  * 眼镜蓝牙服务 - CY01 原生 BLE 版本
@@ -108,6 +112,7 @@ public class GlassBleService extends Service {
     private static final int ACTION_GLASSES_BATTERY = 66;
     private static final int ACTION_DEVICE_INFO = 67;
     private static final int ACTION_DEVICE_HEART_BEAT = 69;
+    private static final int ACTION_CAMERA_STATUS = 74;
     private static final int ACTION_DEVICE_WEAR = 70;
     private static final int ACTION_DEVICE_WEAR_SUPPORT = 71;
     private static final int ACTION_DEVICE_DATA_REPORTING = 115;
@@ -136,6 +141,10 @@ public class GlassBleService extends Service {
     private static final long CONNECT_TIMEOUT_MS = 15000;
     private static final long INITIAL_RECONNECT_DELAY_MS = 3000;
     private static final long MAX_RECONNECT_DELAY_MS = 15000;
+    /** 自动同步结束后的冷却期，避免退出导入模式触发的 type=1 上报导致死循环 */
+    private static final long AUTO_SYNC_COOLDOWN_MS = 2000;
+    /** 单次 BLE 扫描持续时长，超时后自动重启，形成不停扫描的循环 */
+    private static final long SCAN_DURATION_MS = 8000;
 
     private final IBinder mBinder = new LocalBinder();
 
@@ -193,7 +202,21 @@ public class GlassBleService extends Service {
     // 眼镜上报的照片列表（用于选择性导入）
     private final List<String> mPhotoList = new ArrayList<>();
 
+    // 拍照自动识别：收到 type=1 拍照事件后自动同步并识别最新照片
+    private volatile boolean mAutoRecognize = false;
+    private long mAutoSyncCooldownUntil = 0;
+    private final Runnable mAutoSyncRunnable = () -> {
+        if (!AppState.getInstance().isBleConnected) {
+            postLog("⚠️ 蓝牙未连接，跳过自动识别");
+            return;
+        }
+        mAutoRecognize = true;
+        postLog("🔄 自动同步并识别最新照片...");
+        startPhotoSync();
+    };
+
     // 周期重扫 P2P（眼镜可能在首次扫描后才开启 P2P，这里持续扫描直到连上）
+    // 注意：此处不能用 lambda，因为 run() 内需要 postDelayed 调度自身，匿名类才能引用 this
     private final Runnable mRediscoverP2pRunnable = new Runnable() {
         @Override
         public void run() {
@@ -212,6 +235,9 @@ public class GlassBleService extends Service {
     private ScanCallback mNativeScanCallback;
     private boolean mNativeScanning = false;
 
+    /** 当前 BLE 连接的设备（用于连接后触发经典蓝牙配对，让眼镜音频通道 A2DP/SCO 可用） */
+    private BluetoothDevice mBleDevice;
+
     private final Handler mMainHandler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(@NonNull Message msg) {
@@ -223,13 +249,16 @@ public class GlassBleService extends Service {
                 case MSG_SEND_HEARTBEAT:
                     if (AppState.getInstance().isBleConnected) {
                         writeSerial(ACTION_DEVICE_HEART_BEAT, new byte[]{4, 1});
+                        writeSerial(ACTION_GLASSES_BATTERY, new byte[]{0, 0}); // 周期查询电量，实时刷新
                     }
                     mMainHandler.sendEmptyMessageDelayed(MSG_SEND_HEARTBEAT, HEARTBEAT_SEND_INTERVAL);
                     break;
                 case MSG_RESTART_SCAN:
                     if (!AppState.getInstance().isBleConnected && !mConnecting) {
                         Log.d(TAG, "Restarting BLE scan...");
-                        startNativeScan();
+                        boolean scanOk = startNativeScan();
+                        // 持续扫描：扫描成功则到点自动重启，失败（如蓝牙未开）则短延迟重试，直到连接成功
+                        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, scanOk ? SCAN_DURATION_MS : 2000);
                     }
                     break;
                 case MSG_CONNECT_TIMEOUT:
@@ -265,22 +294,18 @@ public class GlassBleService extends Service {
                 updateNotification("已连接: " + AppState.getInstance().bleName);
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_CONNECT_STATE, 1));
                 postLog("✅ BLE已连接，稍后开始发现服务...");
+                // 连接成功后自动触发经典蓝牙配对，让眼镜音频通道（A2DP 播报 / SCO 录音）可用
+                triggerClassicBond();
                 // 参照官方：连接成功后稍作延迟再发现服务，避免过早操作导致连接不稳
-                mMainHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mBluetoothGatt != null && AppState.getInstance().isBleConnected) {
-                            if (!mBluetoothGatt.discoverServices()) {
-                                postLog("⚠️ discoverServices 返回 false，重试一次");
-                                mMainHandler.postDelayed(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        if (mBluetoothGatt != null) {
-                                            mBluetoothGatt.discoverServices();
-                                        }
-                                    }
-                                }, 1000);
-                            }
+                mMainHandler.postDelayed(() -> {
+                    if (mBluetoothGatt != null && AppState.getInstance().isBleConnected) {
+                        if (!mBluetoothGatt.discoverServices()) {
+                            postLog("⚠️ discoverServices 返回 false，重试一次");
+                            mMainHandler.postDelayed(() -> {
+                                if (mBluetoothGatt != null) {
+                                    mBluetoothGatt.discoverServices();
+                                }
+                            }, 1000);
                         }
                     }
                 }, 500);
@@ -336,12 +361,7 @@ public class GlassBleService extends Service {
                     postLog("✅ 串口数据通道通知已开启");
                     if (!mInitCommandsSent) {
                         mInitCommandsSent = true;
-                        mMainHandler.postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
-                                sendInitCommands();
-                            }
-                        }, 300);
+                        mMainHandler.postDelayed(GlassBleService.this::sendInitCommands, 300);
                     }
                 } else {
                     postLog("⚠️ 串口通知订阅失败 status=" + status);
@@ -374,11 +394,12 @@ public class GlassBleService extends Service {
         AppState.getInstance().isBleConnected = false;
         AppState.getInstance().isSystemReady = false;
 
-        collectBondedDevices();
         logScanDiagnostics();
         boolean scanOk = startNativeScan();
         postLog(scanOk ? "🔍 开始扫描BLE设备..." : "⚠️ 扫描启动失败！");
         postLog("💡 发现眼镜后，请点击「选择眼镜」进行连接");
+        // 启动持续扫描循环：不管初始扫描成败，都周期性地重扫，直到连接成功
+        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, SCAN_DURATION_MS);
 
         mMainHandler.sendEmptyMessageDelayed(MSG_CHECK_HEARTBEAT, 10000);
     }
@@ -498,8 +519,13 @@ public class GlassBleService extends Service {
                     @Override
                     public void onScanFailed(int errorCode) {
                         Log.e(TAG, "Native scan failed: " + errorCode);
-                        postLog("⚠️ 原生扫描失败: errorCode=" + errorCode);
                         mNativeScanning = false;
+                        if (errorCode == ScanCallback.SCAN_FAILED_ALREADY_STARTED) {
+                            return; // 已在扫描中，忽略
+                        }
+                        postLog("⚠️ 原生扫描失败: errorCode=" + errorCode);
+                        // 扫描失败后持续重试，不停止扫描
+                        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, 2000);
                     }
                 };
             }
@@ -562,26 +588,34 @@ public class GlassBleService extends Service {
         }
     }
 
-    private void collectBondedDevices() {
+    /** 获取系统历史配对过的眼镜列表（已配对，含当前未开机的设备） */
+    public List<DeviceInfo> getPairedDevices() {
+        List<DeviceInfo> result = new ArrayList<>();
         try {
             BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
             BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
             if (adapter == null || !adapter.isEnabled()) {
-                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TOAST, "请先打开手机蓝牙"));
-                return;
+                return result;
             }
             for (BluetoothDevice device : adapter.getBondedDevices()) {
                 String name = device.getName();
                 String addr = device.getAddress();
-                Log.i(TAG, "Bonded device: " + name + " (" + addr + ")");
                 if (isTargetDevice(name)) {
-                    Log.i(TAG, ">>> Found bonded target: " + name);
-                    addDiscoveredDevice(name, addr, -127);
+                    result.add(new DeviceInfo(name, addr, -127));
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error checking bonded devices", e);
+            Log.e(TAG, "getPairedDevices error", e);
         }
+        return result;
+    }
+
+    /** 获取当前已连接的眼镜信息（未连接返回 null） */
+    public DeviceInfo getConnectedDevice() {
+        if (!AppState.getInstance().isBleConnected) return null;
+        String name = AppState.getInstance().bleName;
+        String addr = AppState.getInstance().bleAddress;
+        return new DeviceInfo(name != null ? name : "", addr != null ? addr : "", 0);
     }
 
     private boolean isTargetDevice(String deviceName) {
@@ -621,6 +655,7 @@ public class GlassBleService extends Service {
                 return;
             }
             BluetoothDevice device = adapter.getRemoteDevice(bleAddress);
+            mBleDevice = device;
             // 官方用 transport=TRANSPORT_LE 明确走 BLE，避免双模设备 TRANSPORT_AUTO 导致连接不稳
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 mBluetoothGatt = device.connectGatt(this, false, mGattCallback, BluetoothDevice.TRANSPORT_LE);
@@ -644,6 +679,32 @@ public class GlassBleService extends Service {
         }
     }
 
+    /**
+     * 触发经典蓝牙（BR/EDR）配对。
+     * 眼镜是双模设备：BLE 用于数据，经典蓝牙用于音频（A2DP 播报 / SCO 录音）。
+     * BLE 连接不会在系统蓝牙列表显示为已配对，需主动 createBond 弹配对框，
+     * 配对成功后音频通道才能路由到眼镜扬声器/麦克风。
+     */
+    private void triggerClassicBond() {
+        BluetoothDevice device = mBleDevice;
+        if (device == null) return;
+        try {
+            if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                postLog("✅ 经典蓝牙已配对，音频通道可用");
+                return;
+            }
+            // createBond 是 @hide API，用反射调用以兼容不同 SDK
+            Method createBond = device.getClass().getMethod("createBond");
+            createBond.setAccessible(true);
+            Object result = createBond.invoke(device);
+            String name = device.getName() != null ? device.getName() : device.getAddress();
+            postLog("🔗 请求经典蓝牙配对: " + name + " (result=" + result + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "triggerClassicBond error", e);
+            postLog("⚠️ 经典蓝牙配对请求失败: " + e.getMessage());
+        }
+    }
+
     private void onGattDisconnected() {
         if (!AppState.getInstance().isBleConnected && mBluetoothGatt == null) {
             return; // 已处理过
@@ -656,6 +717,7 @@ public class GlassBleService extends Service {
         mNusNotifyChar = null;
         mSerialWriteChar = null;
         mSerialNotifyChar = null;
+        mBleDevice = null;
 
         if (mBluetoothGatt != null) {
             try { mBluetoothGatt.close(); } catch (Exception ignored) {}
@@ -750,6 +812,7 @@ public class GlassBleService extends Service {
             if (mSerialWriteQueue.isEmpty()) return;
             frame = mSerialWriteQueue.poll();
         }
+        if (frame == null) return;
         if (mSerialWriteChar == null || mBluetoothGatt == null) {
             mSerialWriting = false;
             return;
@@ -844,15 +907,31 @@ public class GlassBleService extends Service {
                     + ") 长度=" + len + " 数据=" + toHex(data, 32));
             // 解析眼镜通过 BLE 上报的 IP（数据上报 action=115，首字节 0x08 表示 IP）
             parseDataReporting(action, data);
+            // 解析电量上报（action=66）
+            parseBattery(action, data);
         } else {
             postLog("📩 串口原始数据: " + toHex(data, 32));
         }
     }
 
-    /** 解析 action=115（数据上报）帧：type=0x08 时携带眼镜 IP（4 字节，如 192.168.49.115） */
+    /** 解析 action=66（电量）响应帧：payload[0]=电量，payload[1]=充电状态 */
+    private void parseBattery(int action, byte[] data) {
+        if (action != ACTION_GLASSES_BATTERY) return;
+        if (data.length < 8) return; // 6 字节帧头 + 至少 2 字节 payload
+        int battery = data[6] & 0xFF;
+        boolean charging = (data[7] & 0xFF) == 1;
+        AppState.getInstance().batteryLevel = battery;
+        AppState.getInstance().isCharging = charging;
+        postLog("🔋 眼镜电量: " + battery + "%" + (charging ? "（充电中）" : ""));
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_BATTERY_UPDATE, battery, charging ? 1 : 0));
+    }
+
+    /** 解析 action=115（数据上报）帧：type=0x08 时携带眼镜 IP；拍照等其它事件 type 不同 */
     private void parseDataReporting(int action, byte[] data) {
         if (action != ACTION_DEVICE_DATA_REPORTING) return;
-        if (data.length >= 11 && (data[6] & 0xFF) == 0x08) {
+        int type = data.length > 6 ? (data[6] & 0xFF) : -1;
+        postLog("📡 数据上报 type=" + type + " 完整=" + toHex(data, data.length));
+        if (data.length >= 11 && type == 0x08) {
             int a = data[7] & 0xFF;
             int b = data[8] & 0xFF;
             int c = data[9] & 0xFF;
@@ -860,6 +939,9 @@ public class GlassBleService extends Service {
             String ip = a + "." + b + "." + c + "." + d;
             postLog("🎯 眼镜上报IP: " + ip);
             onGlassesIpObtained(ip);
+        } else if (type == 0x01 && data.length >= 8) {
+            // 拍照事件：data[7] 为照片序号
+            onPhotoCaptured(data[7] & 0xFF);
         }
     }
 
@@ -921,6 +1003,25 @@ public class GlassBleService extends Service {
         startPhotoSync();
     }
 
+    /** 拍照命令：官方“耳机模式”下需先确保相机开启（action=74 {2,1,1}），再发拍照（action=65 {2,1,1}） */
+    public void takePhoto() {
+        if (!AppState.getInstance().isBleConnected) {
+            toast("请先等待蓝牙连接眼镜");
+            return;
+        }
+        postLog("📸 拍照：先开启相机...");
+        // 1. 开启相机（earphoneCameraStatusSetting(true,false) => action=74, payload={2,1,1}）
+        writeSerial(ACTION_CAMERA_STATUS, new byte[]{2, 1, 1});
+        // 2. 延时后发送拍照命令，给相机开启留出时间
+        mMainHandler.removeCallbacks(mTakePhotoRunnable);
+        mMainHandler.postDelayed(mTakePhotoRunnable, 600);
+    }
+
+    private final Runnable mTakePhotoRunnable = () -> {
+        postLog("📸 发送拍照命令...");
+        glassesControl(new byte[]{2, 1, 1});
+    };
+
     /**
      * 核心流程（CY01 照片同步走 WiFi Direct + HTTP，而非普通 WiFi 热点）：
      * 1. BLE 发送 glassesControl({2,1,4,1}) 让眼镜进入照片导入模式（开启 P2P 组网）
@@ -942,7 +1043,7 @@ public class GlassBleService extends Service {
         glassesControl(new byte[]{2, 1, 4, 1});
 
         // 等眼镜开启 P2P 后再扫描
-        mMainHandler.postDelayed(this::startWifiP2p, 2000);
+        mMainHandler.postDelayed(this::startWifiP2p, 1500);
     }
 
     /** 计算眼镜 WiFi/P2P 名称（设备名_MAC），用于 P2P 设备匹配 */
@@ -1023,16 +1124,13 @@ public class GlassBleService extends Service {
 
     private void onWifiP2pPeersChanged() {
         if (mWifiP2pManager == null || mWifiP2pChannel == null || mP2pConnecting) return;
-        mWifiP2pManager.requestPeers(mWifiP2pChannel, new WifiP2pManager.PeerListListener() {
-            @Override
-            public void onPeersAvailable(WifiP2pDeviceList peers) {
-                Collection<WifiP2pDevice> list = peers.getDeviceList();
-                for (WifiP2pDevice device : list) {
-                    if (matchesGlassesP2p(device)) {
-                        postLog("✅ 发现眼镜 P2P 设备: " + device.deviceName);
-                        connectToP2pDevice(device);
-                        return;
-                    }
+        mWifiP2pManager.requestPeers(mWifiP2pChannel, peers -> {
+            Collection<WifiP2pDevice> list = peers.getDeviceList();
+            for (WifiP2pDevice device : list) {
+                if (matchesGlassesP2p(device)) {
+                    postLog("✅ 发现眼镜 P2P 设备: " + device.deviceName);
+                    connectToP2pDevice(device);
+                    return;
                 }
             }
         });
@@ -1129,7 +1227,7 @@ public class GlassBleService extends Service {
         new Thread(() -> {
             try {
                 // 参照官方：拿到 IP 后稍作延迟，等眼镜 HTTP 服务就绪
-                Thread.sleep(1500);
+                Thread.sleep(1000);
 
                 String[] files = null;
                 String fileBaseUrl = "";
@@ -1139,7 +1237,7 @@ public class GlassBleService extends Service {
                     config = httpGet("http://" + ip + "/files/media.config");
                     if (config == null || config.trim().isEmpty()) {
                         postLog("⚠️ media.config 未获取到(第" + attempt + "次)");
-                        if (attempt < 3) Thread.sleep(1000);
+                        if (attempt < 3) Thread.sleep(500);
                     }
                 }
 
@@ -1198,11 +1296,18 @@ public class GlassBleService extends Service {
                 postLog("📥 下载缩略图 " + success + "/" + total + ": " + n);
             }
         }
-        postLog("📥 缩略图下载完成 " + success + "/" + total + "，请选择要导入的照片");
-        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, names));
+        if (mAutoRecognize) {
+            // 自动模式：下载完直接全部导入，不弹勾选框
+            postLog("📥 缩略图下载完成 " + success + "/" + total + "，自动导入全部照片");
+            finalizeImport(names);
+        } else {
+            postLog("📥 缩略图下载完成 " + success + "/" + total + "，请选择要导入的照片");
+            EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, names));
+        }
     }
 
     /** 清空目录内容 */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private void clearDir(File dir) {
         if (dir == null || !dir.exists()) return;
         File[] files = dir.listFiles();
@@ -1213,6 +1318,7 @@ public class GlassBleService extends Service {
         }
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private File getTmpDir() {
         File dir = new File(getExternalFilesDir(null), "glass_media/tmp");
         if (!dir.exists()) dir.mkdirs();
@@ -1220,6 +1326,7 @@ public class GlassBleService extends Service {
     }
 
     /** 保留用户勾选的照片（移动到正式目录），删除未勾选的临时文件 */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     public void finalizeImport(List<String> selected) {
         final List<String> sel = (selected == null) ? new ArrayList<>() : selected;
         postLog("📥 保留 " + sel.size() + " 张照片...");
@@ -1259,6 +1366,7 @@ public class GlassBleService extends Service {
     }
 
     /** 移动文件（跨目录），renameTo 失败时降级为复制 */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private boolean moveFile(File src, File dst) {
         try {
             if (dst.exists()) dst.delete();
@@ -1298,6 +1406,96 @@ public class GlassBleService extends Service {
             postLog("ℹ️ 已通知眼镜退出照片导入模式");
         });
         EventBus.getDefault().post(new EventMsg(EventMsg.MSG_SYNC_COMPLETE, count));
+        if (mAutoRecognize) {
+            mAutoRecognize = false;
+            mAutoSyncCooldownUntil = System.currentTimeMillis() + AUTO_SYNC_COOLDOWN_MS;
+            if (count > 0) {
+                recognizeLatestPhoto();
+            } else {
+                postLog("ℹ️ 本次无新照片，跳过识别");
+            }
+        }
+    }
+
+    /** 收到拍照事件（type=1）后自动触发同步识别，带防抖和冷却期避免同步流程触发的事件导致死循环 */
+    private void onPhotoCaptured(int seq) {
+        // 序号为 0 表示模式切换（进入/退出导入模式），并非真实拍照，直接忽略
+        if (seq == 0) {
+            postLog("ℹ️ 忽略模式切换事件（序号=0）");
+            return;
+        }
+        if (System.currentTimeMillis() < mAutoSyncCooldownUntil) {
+            postLog("ℹ️ 冷却期内忽略拍照事件（序号=" + seq + "）");
+            return;
+        }
+        postLog("📸 检测到拍照事件（照片序号=" + seq + "）");
+        if (mAutoRecognize) {
+            postLog("ℹ️ 正在自动同步中，忽略本次拍照事件");
+            return;
+        }
+        mMainHandler.removeCallbacks(mAutoSyncRunnable);
+        mMainHandler.postDelayed(mAutoSyncRunnable, 800);
+    }
+
+    /** 同步完成后，识别 photos 目录里最新一张照片中的二维码并发事件 */
+    private void recognizeLatestPhoto() {
+        new Thread(() -> {
+            try {
+                File latest = findLatestPhoto();
+                if (latest == null) {
+                    postLog("⚠️ 未找到照片，无法识别");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, ""));
+                    return;
+                }
+                postLog("🔍 正在识别最新照片: " + latest.getName());
+                Bitmap bitmap = decodeForRecognition(latest.getAbsolutePath());
+                final String result = Vision.get().decodeQrCode(bitmap);
+                if (bitmap != null) bitmap.recycle();
+                if (result == null || result.isEmpty()) {
+                    postLog("ℹ️ 最新照片中未识别到二维码");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, ""));
+                } else {
+                    postLog("✅ 识别到二维码: " + result);
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, result));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "recognizeLatestPhoto error", e);
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, ""));
+            }
+        }).start();
+    }
+
+    private File findLatestPhoto() {
+        File dir = getPhotoDir();
+        File[] files = dir.listFiles();
+        if (files == null) return null;
+        File latest = null;
+        long max = 0;
+        for (File f : files) {
+            if (f.isFile() && f.lastModified() > max) {
+                max = f.lastModified();
+                latest = f;
+            }
+        }
+        return latest;
+    }
+
+    private Bitmap decodeForRecognition(String path) {
+        try {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, opts);
+            int reqSize = 2500;
+            int sample = 1;
+            int max = Math.max(opts.outWidth, opts.outHeight);
+            while (max / sample > reqSize) sample *= 2;
+            opts.inSampleSize = sample;
+            opts.inJustDecodeBounds = false;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeFile(path, opts);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String[] splitLines(String s) {
@@ -1309,6 +1507,7 @@ public class GlassBleService extends Service {
         return list.toArray(new String[0]);
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private File getPhotoDir() {
         File dir = new File(getExternalFilesDir(null), "glass_media/photos");
         if (!dir.exists()) dir.mkdirs();

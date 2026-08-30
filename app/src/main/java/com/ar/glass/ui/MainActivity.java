@@ -2,6 +2,8 @@ package com.ar.glass.ui;
 
 import android.Manifest;
 import android.app.Dialog;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -10,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -19,13 +22,16 @@ import android.provider.Settings;
 import android.util.Log;
 import android.util.LruCache;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -39,6 +45,7 @@ import com.ar.glass.R;
 import com.ar.glass.core.AppState;
 import com.ar.glass.core.GlassBleService;
 import com.ar.glass.util.EventMsg;
+import com.ar.glass.voice.VoiceController;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -58,14 +65,18 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvBleStatus;
     private TextView tvSystemStatus;
     private TextView tvDeviceName;
+    private TextView tvBatteryStatus;
     private TextView tvLog;
 
     private Button btnSyncPhotos;
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
+    private Button btnVoice;
 
     private GlassBleService mBleService;
     private boolean mServiceBound = false;
+
+    private VoiceController mVoiceController;
 
     private StringBuilder logBuilder = new StringBuilder();
 
@@ -91,6 +102,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         initViews();
+        initVoiceController();
         checkPermissions();
         EventBus.getDefault().register(this);
 
@@ -101,17 +113,63 @@ public class MainActivity extends AppCompatActivity {
         tvBleStatus = findViewById(R.id.tvBleStatus);
         tvSystemStatus = findViewById(R.id.tvSystemStatus);
         tvDeviceName = findViewById(R.id.tvDeviceName);
+        tvBatteryStatus = findViewById(R.id.tvBatteryStatus);
         tvLog = findViewById(R.id.tvLog);
 
         btnSyncPhotos = findViewById(R.id.btnSyncFiles);
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
+        btnVoice = findViewById(R.id.btnVoice);
 
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+        btnVoice.setOnTouchListener((v, event) -> {
+            if (mVoiceController == null) return false;
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    appendLog("🎤 按住说话，松手识别...");
+                    mVoiceController.startCapture();
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    mVoiceController.stopCaptureAndRecognize();
+                    return true;
+            }
+            return false;
+        });
 
         setControlsEnabled(false);
+    }
+
+    private void initVoiceController() {
+        mVoiceController = new VoiceController(this, new VoiceController.Listener() {
+            @Override
+            public void onKeywordDetected(String keyword) {
+                appendLog("🎤 识别到关键词: " + keyword);
+                if (mBleService != null) {
+                    mBleService.takePhoto();
+                } else {
+                    appendLog("⚠️ BLE服务未就绪，无法拍照");
+                }
+            }
+
+            @Override
+            public void onSpeechText(String text) {
+                appendLog("🎤 语音: " + text);
+            }
+
+            @Override
+            public void onListeningChanged(boolean listening) {
+                btnVoice.setText(listening ? "🔴 松开识别..." : "🎤 按住说话");
+            }
+
+            @Override
+            public void onError(String message) {
+                appendLog("⚠️ " + message);
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void checkPermissions() {
@@ -123,6 +181,7 @@ public class MainActivity extends AppCompatActivity {
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.INTERNET,
                     Manifest.permission.ACCESS_WIFI_STATE,
                     Manifest.permission.CHANGE_WIFI_STATE,
@@ -137,6 +196,7 @@ public class MainActivity extends AppCompatActivity {
                         Manifest.permission.ACCESS_FINE_LOCATION,
                         Manifest.permission.ACCESS_COARSE_LOCATION,
                         Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.RECORD_AUDIO,
                         Manifest.permission.INTERNET,
                         Manifest.permission.ACCESS_WIFI_STATE,
                         Manifest.permission.CHANGE_WIFI_STATE,
@@ -154,6 +214,7 @@ public class MainActivity extends AppCompatActivity {
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.WRITE_EXTERNAL_STORAGE,
                     Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.INTERNET,
                     Manifest.permission.ACCESS_WIFI_STATE,
                     Manifest.permission.CHANGE_WIFI_STATE,
@@ -208,12 +269,42 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
+    private boolean isBluetoothEnabled() {
+        try {
+            BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+            return adapter != null && adapter.isEnabled();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void showBluetoothDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("⚠️ 需要开启蓝牙")
+                .setMessage("检测到手机蓝牙未开启，无法搜索到AR眼镜。\n\n请开启蓝牙，应用会自动继续搜索。")
+                .setPositiveButton("去开启蓝牙", (dialog, which) -> {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "请手动开启蓝牙", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("稍后", (dialog, which) -> {})
+                .show();
+    }
+
     private void checkLocationAndStartService() {
         if (!isLocationEnabled()) {
             appendLog("⚠️ 位置服务未开启，BLE扫描可能找不到设备");
             showLocationDialog();
         } else {
             appendLog("✅ 位置服务已开启");
+        }
+        // 检查蓝牙，未开启则弹窗提示（不阻塞服务启动，服务会持续扫描，开蓝牙后自动搜到）
+        if (!isBluetoothEnabled()) {
+            appendLog("⚠️ 手机蓝牙未开启");
+            showBluetoothDialog();
         }
         startAndBindBleService();
     }
@@ -267,6 +358,8 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     tvSystemStatus.setText("未就绪");
                     tvSystemStatus.setTextColor(getColor(android.R.color.holo_red_dark));
+                    tvBatteryStatus.setText("-");
+                    tvBatteryStatus.setTextColor(getColor(android.R.color.darker_gray));
                     appendLog("❌ BLE断开，正在重连...");
                     updateSyncButtonState(false);
                 }
@@ -326,6 +419,19 @@ public class MainActivity extends AppCompatActivity {
                     showPhotoSelectDialog((List<String>) listObj);
                 }
                 break;
+
+            case EventMsg.MSG_QR_RESULT:
+                String qrText = (String) msg.obj;
+                showQrResultDialog(qrText);
+                break;
+
+            case EventMsg.MSG_BATTERY_UPDATE:
+                int battery = msg.arg1;
+                boolean charging = msg.arg2 == 1;
+                tvBatteryStatus.setText(battery + "%" + (charging ? " ⚡充电中" : ""));
+                tvBatteryStatus.setTextColor(getColor(battery < 20
+                        ? android.R.color.holo_red_dark : android.R.color.holo_green_dark));
+                break;
         }
     }
 
@@ -366,39 +472,151 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** 弹窗显示二维码识别结果 */
+    private void showQrResultDialog(String qrText) {
+        if (qrText == null || qrText.isEmpty()) {
+            if (mVoiceController != null) {
+                mVoiceController.speak("未识别到二维码");
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("识别结果")
+                    .setMessage("未在最新照片中识别到二维码")
+                    .setPositiveButton("确定", null)
+                    .show();
+        } else {
+            if (mVoiceController != null) {
+                mVoiceController.speak("二维码内容 " + qrText);
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("二维码内容")
+                    .setMessage(qrText)
+                    .setPositiveButton("确定", null)
+                    .show();
+        }
+    }
+
     private void openGallery(String mode) {
         Intent intent = new Intent(this, GalleryActivity.class);
         intent.putExtra(GalleryActivity.EXTRA_MODE, mode);
         startActivity(intent);
     }
 
-    /** 显示已发现的眼镜设备列表，供用户手动选择连接 */
+    /** 显示眼镜设备列表，按「已连接 / 已配对 / 已发现」分区展示，供用户选择连接 */
     private void showDeviceDialog() {
         if (mBleService == null) {
             Toast.makeText(this, "BLE服务未就绪，请稍候", Toast.LENGTH_SHORT).show();
             return;
         }
-        final List<GlassBleService.DeviceInfo> devices = mBleService.getDiscoveredDevices();
-        if (devices.isEmpty()) {
+
+        // 已连接：仅当前正在连接的眼镜
+        final List<GlassBleService.DeviceInfo> connected = new ArrayList<>();
+        GlassBleService.DeviceInfo current = mBleService.getConnectedDevice();
+        if (current != null) connected.add(current);
+
+        // 已配对：系统历史配对过的所有眼镜
+        final List<GlassBleService.DeviceInfo> paired = mBleService.getPairedDevices();
+
+        // 已发现：扫描到但尚未配对的眼镜（用于首次连接）
+        final List<GlassBleService.DeviceInfo> discovered = mBleService.getDiscoveredDevices();
+        final List<GlassBleService.DeviceInfo> newDevices = new ArrayList<>();
+        for (GlassBleService.DeviceInfo d : discovered) {
+            boolean alreadyPaired = false;
+            for (GlassBleService.DeviceInfo p : paired) {
+                if (d.address.equals(p.address)) { alreadyPaired = true; break; }
+            }
+            if (!alreadyPaired) newDevices.add(d);
+        }
+
+        if (connected.isEmpty() && paired.isEmpty() && newDevices.isEmpty()) {
             Toast.makeText(this, "暂未发现眼镜，正在扫描中，请稍候再试", Toast.LENGTH_SHORT).show();
             appendLog("ℹ️ 暂未发现眼镜设备，继续扫描中...");
             return;
         }
-        final String[] names = new String[devices.size()];
-        for (int i = 0; i < devices.size(); i++) {
-            GlassBleService.DeviceInfo d = devices.get(i);
-            names[i] = d.name + "  (" + d.address + ")";
+
+        float density = getResources().getDisplayMetrics().density;
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding((int) (16 * density), (int) (16 * density),
+                (int) (16 * density), (int) (16 * density));
+        scroll.addView(container);
+
+        final AlertDialog[] dialogHolder = new AlertDialog[1];
+
+        // 已连接
+        addSectionHeader(container, "已连接");
+        if (connected.isEmpty()) {
+            addDeviceRow(container, "（当前未连接眼镜）", null, false);
+        } else {
+            for (GlassBleService.DeviceInfo d : connected) {
+                addDeviceRow(container, d.name + "  (" + d.address + ")", null, false);
+            }
         }
-        new AlertDialog.Builder(this)
-                .setTitle("选择要连接的眼镜")
-                .setItems(names, (dialog, which) -> {
-                    GlassBleService.DeviceInfo d = devices.get(which);
-                    appendLog("🔗 选择连接: " + d.name);
-                    mBleService.connectToDevice(d.address, d.name);
-                })
+
+        // 已配对（历史配对记录）
+        addSectionHeader(container, "已配对（历史配对记录）");
+        if (paired.isEmpty()) {
+            addDeviceRow(container, "（无历史配对记录）", null, false);
+        } else {
+            for (GlassBleService.DeviceInfo d : paired) {
+                addDeviceRow(container, d.name + "  (" + d.address + ")", () -> {
+                    if (dialogHolder[0] != null) dialogHolder[0].dismiss();
+                    connectSelectedDevice(d);
+                }, true);
+            }
+        }
+
+        // 已发现（未配对的新设备）
+        if (!newDevices.isEmpty()) {
+            addSectionHeader(container, "已发现（未配对）");
+            for (GlassBleService.DeviceInfo d : newDevices) {
+                addDeviceRow(container, d.name + "  (" + d.address + ")", () -> {
+                    if (dialogHolder[0] != null) dialogHolder[0].dismiss();
+                    connectSelectedDevice(d);
+                }, true);
+            }
+        }
+
+        dialogHolder[0] = new AlertDialog.Builder(this)
+                .setTitle("选择眼镜设备")
+                .setView(scroll)
                 .setNegativeButton("刷新", (dialog, which) -> showDeviceDialog())
-                .setNeutralButton("取消", null)
+                .setPositiveButton("关闭", null)
                 .show();
+    }
+
+    /** 向设备分区容器添加标题行 */
+    private void addSectionHeader(LinearLayout container, String title) {
+        TextView tv = new TextView(this);
+        tv.setText(title);
+        tv.setTextSize(14);
+        tv.setTypeface(Typeface.DEFAULT_BOLD);
+        tv.setTextColor(0xFF2196F3);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = (int) (12 * getResources().getDisplayMetrics().density);
+        container.addView(tv, lp);
+    }
+
+    /** 向设备分区容器添加一行设备信息 */
+    private void addDeviceRow(LinearLayout container, String text, final Runnable onClick, boolean clickable) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(14);
+        tv.setPadding(0, (int) (10 * getResources().getDisplayMetrics().density),
+                0, (int) (10 * getResources().getDisplayMetrics().density));
+        if (clickable) {
+            tv.setTextColor(0xFF1565C0);
+            tv.setOnClickListener(v -> onClick.run());
+        } else {
+            tv.setTextColor(0xFF333333);
+        }
+        container.addView(tv);
+    }
+
+    private void connectSelectedDevice(GlassBleService.DeviceInfo d) {
+        appendLog("🔗 选择连接: " + d.name);
+        if (mBleService != null) mBleService.connectToDevice(d.address, d.name);
     }
 
     /** 显示照片勾选列表（带缩略图），用户选择要导入的图片 */
@@ -506,6 +724,9 @@ public class MainActivity extends AppCompatActivity {
         if (mServiceBound) {
             unbindService(mServiceConnection);
             mServiceBound = false;
+        }
+        if (mVoiceController != null) {
+            mVoiceController.release();
         }
         EventBus.getDefault().unregister(this);
     }

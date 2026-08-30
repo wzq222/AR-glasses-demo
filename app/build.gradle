@@ -4,10 +4,11 @@ android {
     compileSdkVersion 33
     defaultConfig {
         applicationId "com.ar.glass"
-        minSdkVersion 21
+        minSdkVersion 22
         targetSdkVersion 33
         versionCode 1
         versionName "1.0.0"
+        multiDexEnabled true
         ndk{
             abiFilters 'armeabi-v7a','arm64-v8a'
         }
@@ -36,12 +37,19 @@ dependencies {
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'org.greenrobot:eventbus:3.3.1'
+    implementation 'com.squareup.okhttp3:okhttp:3.14.9'
 
     implementation 'org.slf4j:slf4j-api:1.7.25'
     implementation 'org.slf4j:slf4j-simple:1.7.25'
 
     implementation 'io.netty:netty-all:4.1.68.Final'
     implementation 'com.google.protobuf:protobuf-javalite:3.18.1'
+    implementation 'com.google.mlkit:barcode-scanning:17.2.0'
 
     implementation files('libs/ksdk-release.aar')
+
+    // 讯飞 SparkChain SDK（在线语音听写）
+    implementation files('libs/SparkChain.aar')
+    implementation files('libs/Codec.aar')
+    implementation 'com.google.code.gson:gson:2.8.8'
 }

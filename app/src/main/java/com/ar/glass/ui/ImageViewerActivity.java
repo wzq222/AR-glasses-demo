@@ -5,14 +5,15 @@ import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.ar.glass.R;
+import com.ar.glass.vision.Vision;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -30,6 +31,7 @@ public class ImageViewerActivity extends AppCompatActivity {
     private Button btnViewerBack;
     private Button btnPrev;
     private Button btnNext;
+    private Button btnRecognize;
 
     private ArrayList<String> imagePaths;
     private int currentIndex = 0;
@@ -47,6 +49,7 @@ public class ImageViewerActivity extends AppCompatActivity {
         btnViewerBack = findViewById(R.id.btnViewerBack);
         btnPrev = findViewById(R.id.btnPrev);
         btnNext = findViewById(R.id.btnNext);
+        btnRecognize = findViewById(R.id.btnRecognize);
 
         imagePaths = getIntent().getStringArrayListExtra("image_paths");
         currentIndex = getIntent().getIntExtra("start_index", 0);
@@ -61,6 +64,7 @@ public class ImageViewerActivity extends AppCompatActivity {
         btnViewerBack.setOnClickListener(v -> finish());
         btnPrev.setOnClickListener(v -> showImage(currentIndex - 1));
         btnNext.setOnClickListener(v -> showImage(currentIndex + 1));
+        btnRecognize.setOnClickListener(v -> recognizeQrCode());
 
         showImage(currentIndex);
     }
@@ -87,6 +91,58 @@ public class ImageViewerActivity extends AppCompatActivity {
                 }
             });
         });
+    }
+
+    private void recognizeQrCode() {
+        if (imagePaths == null || currentIndex < 0 || currentIndex >= imagePaths.size()) return;
+        final String path = imagePaths.get(currentIndex);
+        btnRecognize.setEnabled(false);
+        btnRecognize.setText("识别中...");
+
+        executor.execute(() -> {
+            Bitmap bitmap = decodeForRecognition(path);
+            final String result = Vision.get().decodeQrCode(bitmap);
+            if (bitmap != null) bitmap.recycle();
+
+            mainHandler.post(() -> {
+                if (isFinishing()) return;
+                btnRecognize.setEnabled(true);
+                btnRecognize.setText("识别二维码");
+                if (result == null || result.isEmpty()) {
+                    showResultDialog("未识别到二维码", "请尝试拍摄更清晰、对焦、正对二维码的图片。");
+                } else {
+                    showResultDialog("二维码内容", result);
+                }
+            });
+        });
+    }
+
+    private Bitmap decodeForRecognition(String path) {
+        try {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, opts);
+
+            int reqSize = 2500;
+            int sample = 1;
+            int max = Math.max(opts.outWidth, opts.outHeight);
+            while (max / sample > reqSize) sample *= 2;
+
+            opts.inSampleSize = sample;
+            opts.inJustDecodeBounds = false;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeFile(path, opts);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void showResultDialog(String title, String message) {
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("确定", null)
+                .show();
     }
 
     private Bitmap decodeBitmap(String path) {
