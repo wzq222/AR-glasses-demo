@@ -3,12 +3,12 @@ package com.ar.glass.vision;
 import android.graphics.Bitmap;
 
 /**
- * 图像识别接口（预留）。
+ * 图像识别接口。
  *
- * 定义三个识别能力，后续接入具体算法/模型实现：
- * 1. 二维码识别
- * 2. 防松线错位检测（螺母松动）
- * 3. 电压表屏幕数字识别
+ * 定义三个识别能力：
+ * 1. 二维码识别（已接入 ML Kit）
+ * 2. 防松线错位检测（螺母松动，未接入）
+ * 3. 电压表屏幕数字识别（未接入）
  */
 public interface ImageAnalyzer {
 

@@ -24,7 +24,7 @@ import java.util.Locale;
  * - 采集：按住说话时，通过蓝牙 SCO 采集眼镜麦克风（AudioRecord，16k/16bit/mono PCM）
  * - 识别：松开后调用讯飞 SparkChain 在线「语音听写」（ASR）做云端识别
  * - 控制：识别结果包含「拍照」时回调 {@link Listener#onKeywordDetected}
- * - 播报：通过 TTS 把文本播放到眼镜扬声器（STREAM_VOICE_CALL + SCO 路由）
+ * - 播报：通过 TTS 把文本播放到眼镜扬声器（STREAM_MUSIC 媒体流，经 A2DP 自动路由到眼镜）
  */
 public class VoiceController {
 
