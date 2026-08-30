@@ -148,6 +148,42 @@ def _save_context(
     return [left, top, right, bottom], _sha256(path)
 
 
+def _save_evidence_views(
+    image: Image.Image,
+    crop_xyxy: list[int],
+    root: Path,
+    candidate_id: str,
+) -> dict[str, dict[str, object]]:
+    original = image.crop(tuple(crop_xyxy))
+    views = {
+        "original_1x": (original, 1),
+        "detail_2x": (
+            original.resize(
+                (original.width * 2, original.height * 2), Image.Resampling.NEAREST
+            ),
+            2,
+        ),
+        "detail_4x": (
+            original.resize(
+                (original.width * 4, original.height * 4), Image.Resampling.NEAREST
+            ),
+            4,
+        ),
+    }
+    records: dict[str, dict[str, object]] = {}
+    for name, (view, scale) in views.items():
+        path = root / f"{candidate_id}-{name}.png"
+        view.save(path, format="PNG", optimize=True)
+        records[name] = {
+            "path": str(path.relative_to(root.parent)).replace("\\", "/"),
+            "sha256": _sha256(path),
+            "scale": scale,
+            "source": "decoded_original_pixels",
+            "interpolation": "none" if scale == 1 else "nearest",
+        }
+    return records
+
+
 def build_review_pack(
     selection: dict[str, object],
     candidates: dict[str, object],
@@ -215,8 +251,9 @@ def build_review_pack(
     full_root = output_root / "full-images"
     tile_root = output_root / "scan-tiles"
     context_root = output_root / "candidate-contexts"
+    evidence_root = output_root / "candidate-evidence"
     task_root = output_root / "first-pass"
-    for path in (full_root, tile_root, context_root, task_root):
+    for path in (full_root, tile_root, context_root, evidence_root, task_root):
         path.mkdir()
 
     tasks: list[dict[str, object]] = []
@@ -242,6 +279,9 @@ def build_review_pack(
             candidate_id = str(candidate["id"])
             context_path = context_root / f"{candidate_id}.jpg"
             crop_xyxy, context_hash = _save_context(image, candidate, context_path)
+            evidence_views = _save_evidence_views(
+                image, crop_xyxy, evidence_root, candidate_id
+            )
             task_candidates.append(
                 {
                     "candidate_id": candidate_id,
@@ -250,6 +290,7 @@ def build_review_pack(
                     "context": str(context_path.relative_to(output_root)).replace("\\", "/"),
                     "context_sha256": context_hash,
                     "context_source_xyxy": crop_xyxy,
+                    "evidence_views": evidence_views,
                 }
             )
         expected_ids = [str(value["id"]) for value in sorted(by_image[image_id], key=lambda value: str(value["id"]))]

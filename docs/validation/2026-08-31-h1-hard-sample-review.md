@@ -27,11 +27,15 @@ SHA-256 绑定审核，18 个任务至少有一张 `APPROVED`，6 个任务在�
   证据；人判为 `ALIGNED / POSSIBLE_DISPLACED / DISPLACED / DAMAGED_MARK / INSUFFICIENT`。
   放大图不使用生成式超分辨率，避免制造不存在的线段。
 
+真实 `marked-point` 候选复核包也已加入同一证据结构：每个候选在原有带框 JPEG 上下文之外，新增
+无标注 PNG 原像素裁剪、2× nearest 和 4× nearest 三个哈希绑定视图。该改动只增强人工观察，不改变
+候选集合、不自动产生状态标签，也不修改既有真值。
+
 ## 验证证据
 
 - 第三轮审核：`E:/crrc_vision_data/synthetic/marked-point-h1/h1a/reviews-attempt-03/reviewed-results.json`
 - 1×/2×/4×证据包：`E:/crrc_vision_data/synthetic/marked-point-h1/h1a/review-pack-attempt-03-evidence-v2/manifest.json`
-- Python：`271 passed in 10.60s`
+- Python：新增证据测试与全套测试均通过；最终运行结果见项目状态。
 - 正式真值 SHA-256：
   `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`
 

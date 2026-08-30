@@ -97,6 +97,24 @@ def test_pack_has_full_image_four_scans_and_every_candidate(tmp_path):
     assert all(len(row["scan_tiles"]) == 4 for row in tasks)
 
 
+def test_pack_preserves_original_candidate_pixels_and_two_zoom_levels(tmp_path):
+    selection, candidates, source = _sample(tmp_path)
+    output = tmp_path / "pack"
+
+    build_review_pack(selection, candidates, source, output)
+
+    candidate = _task_images(output)[0]["candidates"][0]
+    evidence = candidate["evidence_views"]
+    assert set(evidence) == {"original_1x", "detail_2x", "detail_4x"}
+    original = Image.open(output / evidence["original_1x"]["path"])
+    detail_2x = Image.open(output / evidence["detail_2x"]["path"])
+    detail_4x = Image.open(output / evidence["detail_4x"]["path"])
+    assert detail_2x.size == (original.width * 2, original.height * 2)
+    assert detail_4x.size == (original.width * 4, original.height * 4)
+    assert evidence["original_1x"]["source"] == "decoded_original_pixels"
+    assert evidence["detail_4x"]["interpolation"] == "nearest"
+
+
 def test_pack_refuses_old_sealed_hash(tmp_path):
     selection, candidates, source = _sample(tmp_path)
     selection["train"][0]["sha256"] = "f" * 64

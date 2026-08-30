@@ -133,9 +133,9 @@
 - 2026-08-31：H1真实困难状态任务完成三轮上限审核。24个固定job共41条ImageGen尝试，18个job
   至少有一个局部样本通过，6个job仍未通过；第三轮6张全部REJECTED。根因是生成结果不能可靠形成
   moving/fixed相对位移，以及`ref-12`多检查点裁剪造成拓扑标签歧义。H1a固定配比门保持关闭，失败图
-  未进入训练真值。审核包现提供像素保真的1×/2×/4×证据视图，不使用生成式超分辨率；271项Python
-  测试通过，正式真值SHA-256保持不变。后续将ImageGen限制为外观困难增强，真实松动阈值只用受控
-  ALIGNED/DISPLACED成对采集标定。
+  未进入训练真值。H1及真实marked-point候选复核包现均提供像素保真的1×/2×/4×证据视图，不使用
+  生成式超分辨率；正式真值SHA-256保持不变。后续将ImageGen限制为外观困难增强，真实松动阈值只用
+  受控ALIGNED/DISPLACED成对采集标定。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
