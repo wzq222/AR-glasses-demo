@@ -106,7 +106,7 @@ public class MainActivity extends AppCompatActivity {
         checkPermissions();
         EventBus.getDefault().register(this);
 
-        appendLog("AR眼镜照片同步应用启动...");
+        appendLog("AR眼镜控制应用启动...");
     }
 
     private void initViews() {

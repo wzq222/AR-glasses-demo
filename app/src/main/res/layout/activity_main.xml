@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="AR 眼镜照片同步"
+        android:text="AR 眼镜控制"
         android:textSize="22sp"
         android:textStyle="bold"
         android:textColor="#333333"
