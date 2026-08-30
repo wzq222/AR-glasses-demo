@@ -10,7 +10,10 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "ml" / "src"))
 
-from crrc_vision.hard_sample_generation import build_generation_manifest  # noqa: E402
+from crrc_vision.hard_sample_generation import (  # noqa: E402
+    build_generation_manifest,
+    build_retry_jobs,
+)
 from crrc_vision.synthetic_contract import (  # noqa: E402
     assert_external_output,
     assert_formal_truth_unchanged,
@@ -23,6 +26,8 @@ def main() -> int:
     parser.add_argument("--generated", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--attempt", type=int, default=1)
+    parser.add_argument("--previous-review", type=Path)
+    parser.add_argument("--retry-jobs-output", type=Path)
     parser.add_argument("--formal-truth", type=Path)
     args = parser.parse_args()
 
@@ -39,6 +44,18 @@ def main() -> int:
     jobs = json.loads(args.jobs.read_text(encoding="utf-8"))
     if jobs.get("formal_truth_sha256") != formal_hash:
         raise RuntimeError("jobs formal truth hash mismatch")
+    if (args.previous_review is None) != (args.retry_jobs_output is None):
+        raise RuntimeError("--previous-review and --retry-jobs-output must be used together")
+    if args.previous_review is not None:
+        retry_output = assert_external_output(args.retry_jobs_output, REPOSITORY_ROOT)
+        if retry_output.exists():
+            raise FileExistsError(f"refusing to overwrite retry jobs: {retry_output}")
+        reviewed = json.loads(args.previous_review.read_text(encoding="utf-8"))
+        jobs = build_retry_jobs(jobs, reviewed)
+        retry_output.parent.mkdir(parents=True, exist_ok=True)
+        retry_output.write_text(
+            json.dumps(jobs, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     manifest = build_generation_manifest(jobs, args.generated, args.attempt)
     if args.output.exists():
         raise FileExistsError(f"refusing to overwrite generation manifest: {args.output}")
