@@ -49,6 +49,11 @@ def main() -> int:
     parser.add_argument("--source", default="source/20240529-luosi")
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
     parser.add_argument("--output", default="review-packs/marked-point-v1")
+    parser.add_argument(
+        "--include-zoom-evidence",
+        action="store_true",
+        help="Generate lossless 1x/2x/4x views; use only for a bounded state-review pack.",
+    )
     args = parser.parse_args()
 
     root = asset_root()
@@ -71,6 +76,7 @@ def main() -> int:
         _load(candidates_path),
         source_root,
         output_root,
+        include_zoom_evidence=args.include_zoom_evidence,
     )
     truth_after = _sha256(truth_path)
     if truth_after != truth_before:

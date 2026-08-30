@@ -189,6 +189,8 @@ def build_review_pack(
     candidates: dict[str, object],
     source_root: Path,
     output_root: Path,
+    *,
+    include_zoom_evidence: bool = False,
 ) -> ReviewPackSummary:
     """Render unoccluded full scans and exactly one crop per union candidate."""
 
@@ -253,8 +255,10 @@ def build_review_pack(
     context_root = output_root / "candidate-contexts"
     evidence_root = output_root / "candidate-evidence"
     task_root = output_root / "first-pass"
-    for path in (full_root, tile_root, context_root, evidence_root, task_root):
+    for path in (full_root, tile_root, context_root, task_root):
         path.mkdir()
+    if include_zoom_evidence:
+        evidence_root.mkdir()
 
     tasks: list[dict[str, object]] = []
     for relative in sorted(selected, key=lambda value: str(selected[value]["scene_group"])):
@@ -279,20 +283,19 @@ def build_review_pack(
             candidate_id = str(candidate["id"])
             context_path = context_root / f"{candidate_id}.jpg"
             crop_xyxy, context_hash = _save_context(image, candidate, context_path)
-            evidence_views = _save_evidence_views(
-                image, crop_xyxy, evidence_root, candidate_id
-            )
-            task_candidates.append(
-                {
-                    "candidate_id": candidate_id,
-                    "xyxy": candidate["xyxy"],
-                    "sources": candidate.get("sources", []),
-                    "context": str(context_path.relative_to(output_root)).replace("\\", "/"),
-                    "context_sha256": context_hash,
-                    "context_source_xyxy": crop_xyxy,
-                    "evidence_views": evidence_views,
-                }
-            )
+            task_candidate = {
+                "candidate_id": candidate_id,
+                "xyxy": candidate["xyxy"],
+                "sources": candidate.get("sources", []),
+                "context": str(context_path.relative_to(output_root)).replace("\\", "/"),
+                "context_sha256": context_hash,
+                "context_source_xyxy": crop_xyxy,
+            }
+            if include_zoom_evidence:
+                task_candidate["evidence_views"] = _save_evidence_views(
+                    image, crop_xyxy, evidence_root, candidate_id
+                )
+            task_candidates.append(task_candidate)
         expected_ids = [str(value["id"]) for value in sorted(by_image[image_id], key=lambda value: str(value["id"]))]
         tasks.append(
             {

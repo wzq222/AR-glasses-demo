@@ -101,7 +101,13 @@ def test_pack_preserves_original_candidate_pixels_and_two_zoom_levels(tmp_path):
     selection, candidates, source = _sample(tmp_path)
     output = tmp_path / "pack"
 
-    build_review_pack(selection, candidates, source, output)
+    build_review_pack(
+        selection,
+        candidates,
+        source,
+        output,
+        include_zoom_evidence=True,
+    )
 
     candidate = _task_images(output)[0]["candidates"][0]
     evidence = candidate["evidence_views"]
@@ -113,6 +119,20 @@ def test_pack_preserves_original_candidate_pixels_and_two_zoom_levels(tmp_path):
     assert detail_4x.size == (original.width * 4, original.height * 4)
     assert evidence["original_1x"]["source"] == "decoded_original_pixels"
     assert evidence["detail_4x"]["interpolation"] == "nearest"
+
+
+def test_pack_does_not_expand_every_raw_candidate_by_default(tmp_path):
+    selection, candidates, source = _sample(tmp_path)
+    output = tmp_path / "pack"
+
+    build_review_pack(selection, candidates, source, output)
+
+    assert not (output / "candidate-evidence").exists()
+    assert all(
+        "evidence_views" not in candidate
+        for image in _task_images(output)
+        for candidate in image["candidates"]
+    )
 
 
 def test_pack_refuses_old_sealed_hash(tmp_path):
