@@ -211,3 +211,40 @@ def test_prepare_high_accuracy_single_class_with_relative_source_and_tiles(
         merge_target_categories=True,
     )
     assert capped["train_images"] == 3
+
+
+def test_prepare_marked_point_single_class_preserves_business_name(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    Image.new("RGB", (100, 80), "white").save(source_root / "train.jpg")
+    Image.new("RGB", (100, 80), "black").save(source_root / "val.jpg")
+    train = {
+        "images": [{"id": 1, "file_name": "train.jpg", "width": 100, "height": 80, "scene_group": "a"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 10, 10]}],
+        "categories": [{"id": 1, "name": "marked_point"}],
+    }
+    val = {
+        "images": [{"id": 2, "file_name": "val.jpg", "width": 100, "height": 80, "scene_group": "b"}],
+        "annotations": [{"id": 2, "image_id": 2, "category_id": 1, "bbox": [10, 10, 10, 10]}],
+        "categories": [{"id": 1, "name": "marked_point"}],
+    }
+    train_path = tmp_path / "train.json"
+    val_path = tmp_path / "val.json"
+    train_path.write_text(json.dumps(train), encoding="utf-8")
+    val_path.write_text(json.dumps(val), encoding="utf-8")
+
+    prepare_yolo_dataset(
+        train_coco=train_path,
+        val_coco=val_path,
+        output_root=tmp_path / "output",
+        source_root=source_root,
+        train_tiles=True,
+        train_tile_views=1,
+        merge_target_categories=True,
+    )
+
+    assert (tmp_path / "output/dataset.yaml").read_text(encoding="ascii").endswith(
+        "names:\n  0: marked_point\n"
+    )

@@ -92,9 +92,10 @@ def _materialize_split(
     if categories not in (
         [(1, "fastener"), (2, "pipe_joint")],
         [(1, "fastener_target")],
+        [(1, "marked_point")],
     ):
         raise ValueError("INVALID_CATEGORY")
-    if categories == [(1, "fastener_target")] and not merge_target_categories:
+    if len(categories) == 1 and not merge_target_categories:
         raise ValueError("SINGLE_TARGET_REQUIRES_MERGE_MODE")
     image_root = output_root / "images" / split
     label_root = output_root / "labels" / split
@@ -243,6 +244,10 @@ def prepare_yolo_dataset(
 
     train_document = json.loads(train_coco.read_text(encoding="utf-8"))
     val_document = json.loads(val_coco.read_text(encoding="utf-8"))
+    train_categories = _rows(train_document, "categories")
+    val_categories = _rows(val_document, "categories")
+    if train_categories != val_categories:
+        raise ValueError("YOLO_SPLIT_CATEGORY_MISMATCH")
     _validate_split_isolation(train_document, val_document, source_root)
     if output_root.exists() and any(output_root.iterdir()):
         raise FileExistsError("YOLO_OUTPUT_NOT_EMPTY")
@@ -266,7 +271,12 @@ def prepare_yolo_dataset(
         merge_target_categories=merge_target_categories,
         source_root=source_root,
     )
-    names = "  0: fastener_target\n" if merge_target_categories else (
+    target_name = (
+        "fastener_target"
+        if len(train_categories) > 1
+        else str(train_categories[0]["name"])
+    )
+    names = f"  0: {target_name}\n" if merge_target_categories else (
         "  0: fastener\n  1: pipe_joint\n"
     )
     yaml = f"""path: {runtime_root.as_posix()}
