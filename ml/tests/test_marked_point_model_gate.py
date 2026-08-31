@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import crrc_vision.marked_point_model_gate as gate_module
 from crrc_vision.marked_point_model_gate import (
     build_proposal_gate_document,
     select_proposal_threshold,
@@ -28,10 +29,10 @@ def test_gate_selects_highest_threshold_that_keeps_required_recall() -> None:
     report = select_proposal_threshold(predictions, _truth(), minimum_recall=1.0)
 
     assert report.threshold == 0.4
-    assert report.recall == 1.0
+    assert report.coverage_recall == 1.0
     assert report.candidates_per_image == 1.5
     assert report.complete_scenes == 2
-    assert (report.true_positives, report.false_positives, report.false_negatives) == (2, 1, 0)
+    assert (report.covered_truth, report.irrelevant_candidates, report.uncovered_truth) == (2, 1, 0)
 
 
 def test_gate_rejects_unreachable_recall() -> None:
@@ -51,7 +52,50 @@ def test_gate_counts_duplicate_predictions_as_candidate_burden() -> None:
     report = select_proposal_threshold(predictions, _truth(), minimum_recall=1.0)
     assert report.threshold == 0.7
     assert report.candidates_per_image == 1.5
-    assert report.precision == pytest.approx(2 / 3)
+    assert report.candidate_relevance == 1.0
+
+
+def test_gate_accepts_tight_proposal_centered_inside_loose_truth() -> None:
+    truth = {
+        "images": [{"id": 1}],
+        "annotations": [{"id": 1, "image_id": 1, "bbox": [0, 0, 180, 180]}],
+    }
+    predictions = [
+        {"image_id": 1, "bbox": [45, 45, 90, 90], "score": 0.8},
+    ]
+
+    report = select_proposal_threshold(predictions, truth, minimum_recall=1.0)
+
+    assert report.coverage_recall == 1.0
+    assert report.strict_iou_recall == 0.0
+    assert report.candidate_relevance == 1.0
+
+
+def test_gate_uses_logarithmic_threshold_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    predictions = [
+        {"image_id": 1, "bbox": [20 + index, 20, 1, 1], "score": 0.99 - index * 0.02}
+        for index in range(16)
+    ]
+    predictions.extend(
+        [
+            {"image_id": 1, "bbox": [0, 0, 10, 10], "score": 0.9},
+            {"image_id": 2, "bbox": [0, 0, 10, 10], "score": 0.4},
+        ]
+    )
+    real_evaluate = gate_module.evaluate_at_threshold
+    calls = 0
+
+    def counted_evaluate(*args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        return real_evaluate(*args, **kwargs)
+
+    monkeypatch.setattr(gate_module, "evaluate_at_threshold", counted_evaluate)
+
+    report = select_proposal_threshold(predictions, _truth(), minimum_recall=1.0)
+
+    assert report.threshold == 0.4
+    assert calls <= 6
 
 
 def test_gate_document_binds_model_truth_and_predictions() -> None:
@@ -67,7 +111,9 @@ def test_gate_document_binds_model_truth_and_predictions() -> None:
         prediction_sha256="C" * 64,
         minimum_recall=1.0,
     )
-    assert document["schema_version"] == "marked-point-model-gate-v1"
+    assert document["schema_version"] == "marked-point-model-gate-v2"
     assert document["model_sha256"] == "A" * 64
-    assert document["report"]["recall"] == 1.0
+    assert document["report"]["coverage_recall"] == 1.0
+    assert document["passed_recall"] is True
+    assert document["passed_burden"] is True
     assert document["sealed_test_opened"] is False
