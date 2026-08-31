@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+def crrcVisionModelDir = System.getenv('CRRC_VISION_MODEL_DIR')
+def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
+
+task prepareFilteredJniLibs(type: Sync) {
+    from('src/main/jniLibs') {
+        exclude '**/libonnxruntime.so'
+    }
+    into filteredJniLibsDir
+}
+
 android {
     compileSdkVersion 33
     defaultConfig {
@@ -25,6 +35,14 @@ android {
     lintOptions {
         abortOnError false
     }
+    sourceSets {
+        main {
+            if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
+                assets.srcDir crrcVisionModelDir
+            }
+            jniLibs.srcDirs = [filteredJniLibsDir]
+        }
+    }
     packagingOptions {
         exclude 'META-INF/DEPENDENCIES'
     }
@@ -42,7 +60,10 @@ dependencies {
 
     implementation 'io.netty:netty-all:4.1.68.Final'
     implementation 'com.google.protobuf:protobuf-javalite:3.18.1'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.3'
 
     implementation files('libs/ksdk-release.aar')
     testImplementation 'junit:junit:4.13.2'
 }
+
+preBuild.dependsOn prepareFilteredJniLibs
