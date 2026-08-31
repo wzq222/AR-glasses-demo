@@ -1,10 +1,19 @@
 package com.ar.glass.vision.realtime;
 
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 
 import org.junit.Test;
 
 import java.io.Closeable;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.nio.FloatBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,6 +40,35 @@ public class ModelAssetContractTest {
                 OnnxFastenerDetector.class.getMethod("getInitializationError").getReturnType());
         assertEquals(OnnxFastenerDetector.DetectionResult.class,
                 OnnxFastenerDetector.class.getMethod("detect", Bitmap.class).getReturnType());
+    }
+
+    @Test
+    public void retainsOneReusableInferenceWorkspace() throws Exception {
+        assertFinalInstanceField("inputBuffer", FloatBuffer.class);
+        assertFinalInstanceField("pixels", int[].class);
+        assertFinalInstanceField("letterboxBitmap", Bitmap.class);
+        assertFinalInstanceField("letterboxCanvas", Canvas.class);
+
+        Method fillInputBuffer = OnnxFastenerDetector.class.getDeclaredMethod(
+                "fillInputBuffer", Bitmap.class, LetterboxTransform.class);
+        assertEquals(void.class, fillInputBuffer.getReturnType());
+        assertTrue(!Modifier.isStatic(fillInputBuffer.getModifiers()));
+    }
+
+    @Test
+    public void pinsOnnxRuntimeToTheSherpaCompatibleVersion() throws Exception {
+        Path projectRoot = Paths.get(System.getProperty("user.dir"));
+        Path buildFile = projectRoot.resolve("app").resolve("build.gradle");
+        if (!Files.exists(buildFile)) {
+            buildFile = projectRoot.resolve("build.gradle");
+        }
+        String buildScript = new String(
+                Files.readAllBytes(buildFile), StandardCharsets.UTF_8);
+
+        assertTrue(buildScript.contains(
+                "com.microsoft.onnxruntime:onnxruntime-android:1.17.1"));
+        assertTrue(!buildScript.contains(
+                "com.microsoft.onnxruntime:onnxruntime-android:1.17.3"));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -124,5 +162,12 @@ public class ModelAssetContractTest {
         OnnxFastenerDetector.validateModelShapes(
                 new long[]{1, 3, 640, 640},
                 new long[]{1, 34_000, 6});
+    }
+
+    private static void assertFinalInstanceField(String name, Class<?> type) throws Exception {
+        Field field = OnnxFastenerDetector.class.getDeclaredField(name);
+        assertEquals(type, field.getType());
+        assertTrue(Modifier.isFinal(field.getModifiers()));
+        assertTrue(!Modifier.isStatic(field.getModifiers()));
     }
 }
