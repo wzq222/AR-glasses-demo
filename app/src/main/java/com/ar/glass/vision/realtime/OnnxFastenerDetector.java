@@ -51,6 +51,7 @@ public final class OnnxFastenerDetector implements FastenerDetector {
             environment = OrtEnvironment.getEnvironment();
             byte[] modelBytes = readAsset(context.getAssets(), MODEL_ASSET_NAME);
             try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
+                options.setIntraOpNumThreads(InferenceThreadPolicy.intraOpThreads());
                 candidateSession = environment.createSession(modelBytes, options);
             }
 
@@ -103,6 +104,7 @@ public final class OnnxFastenerDetector implements FastenerDetector {
                         Collections.singleton(outputName))) {
             prediction = extractPrediction(output, outputName);
         }
+        long inferredAtNanos = System.nanoTime();
 
         List<Detection> detections = YoloPostprocessor.process(
                 prediction,
@@ -111,12 +113,19 @@ public final class OnnxFastenerDetector implements FastenerDetector {
                 transform.getScale(),
                 transform.getPadX(),
                 transform.getPadY());
-        double latencyMillis = (System.nanoTime() - startedAtNanos) / 1_000_000.0;
+        long completedAtNanos = System.nanoTime();
+        double preprocessMillis = nanosToMillis(preprocessedAtNanos - startedAtNanos);
+        double inferenceMillis = nanosToMillis(inferredAtNanos - preprocessedAtNanos);
+        double postprocessMillis = nanosToMillis(completedAtNanos - inferredAtNanos);
+        double latencyMillis = nanosToMillis(completedAtNanos - startedAtNanos);
         return new DetectionResult(
                 detections,
                 bitmap.getWidth(),
                 bitmap.getHeight(),
                 latencyMillis,
+                preprocessMillis,
+                inferenceMillis,
+                postprocessMillis,
                 transform);
     }
 
@@ -216,11 +225,18 @@ public final class OnnxFastenerDetector implements FastenerDetector {
         }
     }
 
+    private static double nanosToMillis(long nanos) {
+        return nanos / 1_000_000.0;
+    }
+
     public static final class DetectionResult {
         private final List<Detection> detections;
         private final int originalWidth;
         private final int originalHeight;
         private final double latencyMillis;
+        private final double preprocessMillis;
+        private final double inferenceMillis;
+        private final double postprocessMillis;
         private final LetterboxTransform transform;
 
         DetectionResult(
@@ -228,11 +244,17 @@ public final class OnnxFastenerDetector implements FastenerDetector {
                 int originalWidth,
                 int originalHeight,
                 double latencyMillis,
+                double preprocessMillis,
+                double inferenceMillis,
+                double postprocessMillis,
                 LetterboxTransform transform) {
             this.detections = Collections.unmodifiableList(new ArrayList<>(detections));
             this.originalWidth = originalWidth;
             this.originalHeight = originalHeight;
             this.latencyMillis = latencyMillis;
+            this.preprocessMillis = preprocessMillis;
+            this.inferenceMillis = inferenceMillis;
+            this.postprocessMillis = postprocessMillis;
             this.transform = transform;
         }
 
@@ -240,6 +262,9 @@ public final class OnnxFastenerDetector implements FastenerDetector {
         public int getOriginalWidth() { return originalWidth; }
         public int getOriginalHeight() { return originalHeight; }
         public double getLatencyMillis() { return latencyMillis; }
+        public double getPreprocessMillis() { return preprocessMillis; }
+        public double getInferenceMillis() { return inferenceMillis; }
+        public double getPostprocessMillis() { return postprocessMillis; }
         public LetterboxTransform getTransform() { return transform; }
     }
 }
