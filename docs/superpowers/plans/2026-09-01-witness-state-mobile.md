@@ -22,7 +22,7 @@
 - [x] 新增 `AngleInterval`、`ProvisionalTriageThresholds` 和独立 `triage_witness_angle`；输出只使用 `LIKELY_ALIGNED / POSSIBLE_DISPLACED / LIKELY_DISPLACED` 提示，不扩展正式四态。
 - [x] 调整 `evaluate_witness_state`：在阈值未标定时仍计算可用几何并附带临时提示，但正式状态固定 `INSUFFICIENT`。
 - [x] 重跑目标测试和全量 Python 测试。
-- [ ] Commit: `feat(ml): add fail-closed witness angle triage`
+- [x] Commit: `feat(ml): add fail-closed witness angle triage`
 
 ## Task 2: 健康历史基准控制限
 
@@ -35,7 +35,7 @@
 - [x] 运行目标测试并确认缺少模块而失败。
 - [x] 实现不可变 `BaselineControlLimit` 与估计器；至少 5 次健康重复拍摄才产生阈值，保留样本数、中位数、MAD 和原因。
 - [x] 重跑目标测试和全量 Python 测试。
-- [ ] Commit: `feat(ml): add robust witness baseline limit`
+- [x] Commit: `feat(ml): add robust witness baseline limit`
 
 ## Task 3: ROI 状态数据合同与 Git 外清单
 
