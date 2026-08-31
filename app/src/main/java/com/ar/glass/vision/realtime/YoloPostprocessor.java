@@ -8,6 +8,8 @@ import java.util.List;
 public final class YoloPostprocessor {
     public static final float DEFAULT_CONFIDENCE_THRESHOLD = 0.20f;
     public static final float DEFAULT_NMS_IOU_THRESHOLD = 0.45f;
+    public static final int DEFAULT_PRE_NMS_TOP_K = 1_000;
+    public static final int DEFAULT_MAX_DETECTIONS = 100;
 
     private static final int OUTPUT_ROWS = 6;
 
@@ -90,7 +92,12 @@ public final class YoloPostprocessor {
         });
 
         List<Detection> selected = new ArrayList<>();
-        for (Detection candidate : candidates) {
+        int nmsCandidateCount = Math.min(candidates.size(), DEFAULT_PRE_NMS_TOP_K);
+        for (int candidateIndex = 0;
+                candidateIndex < nmsCandidateCount
+                        && selected.size() < DEFAULT_MAX_DETECTIONS;
+                candidateIndex++) {
+            Detection candidate = candidates.get(candidateIndex);
             boolean suppressed = false;
             for (Detection accepted : selected) {
                 if (intersectionOverUnion(candidate, accepted) > nmsIouThreshold) {
