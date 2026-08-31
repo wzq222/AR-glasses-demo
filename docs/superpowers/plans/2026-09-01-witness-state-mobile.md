@@ -79,12 +79,12 @@
 - Modify: `app/src/main/java/com/ar/glass/vision/fastener/AntiLooseGeometry.java`
 - Modify: `app/src/test/java/com/ar/glass/vision/fastener/AntiLooseGeometryTest.java`
 
-- [ ] 先写 Android 失败测试，复刻 Python 的 3°/15° 边界、跨界区间、第二帧和未标定拒判用例。
-- [ ] 运行 `./gradlew.bat testDebugUnitTest --tests com.ar.glass.vision.fastener.AntiLooseGeometryTest`，确认缺少合同而失败。
-- [ ] 实现 Java 值对象和分诊逻辑；`GeometryDecision.state` 在未标定时保持 `INSUFFICIENT`，新增 hint、点估计与上下界。
-- [ ] 增加 Python/Java 共享 JSON 向量，逐条核对路由一致。
-- [ ] 重跑 Android 目标测试和全量单测。
-- [ ] Commit: `feat(android): mirror fail-closed witness triage`
+- [x] 先写 Android 失败测试，复刻 Python 的 3°/15° 边界、跨界区间、第二帧和未标定拒判用例。
+- [x] 运行 `./gradlew.bat testDebugUnitTest --tests com.ar.glass.vision.fastener.AntiLooseGeometryTest`，确认缺少合同而失败。
+- [x] 实现 Java 值对象和分诊逻辑；`GeometryDecision.state` 在未标定时保持 `INSUFFICIENT`，新增 hint、点估计与上下界。
+- [x] 增加 Python/Java 共享 JSON 向量，逐条核对路由一致。
+- [x] 重跑 Android 目标测试和全量单测。
+- [x] Commit: `feat(android): mirror fail-closed witness triage`
 
 ## Task 6: Android ROI ONNX 推理与候选交互
 

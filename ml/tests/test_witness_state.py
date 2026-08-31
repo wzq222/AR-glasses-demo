@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from crrc_vision.witness_state import (
@@ -274,3 +277,22 @@ def test_uncalibrated_high_suspicion_requires_second_view_for_likely_hint() -> N
     assert unconfirmed.state == confirmed.state == "INSUFFICIENT"
     assert unconfirmed.review_hint == "POSSIBLE_DISPLACED"
     assert confirmed.review_hint == "LIKELY_DISPLACED"
+
+
+def test_shared_python_java_triage_vectors_match() -> None:
+    vector_path = Path(__file__).resolve().parents[2] / "test-vectors" / "witness-triage-v1.json"
+    document = json.loads(vector_path.read_text(encoding="utf-8"))
+    thresholds = ProvisionalTriageThresholds(
+        review_degrees=document["review_degrees"],
+        high_suspicion_degrees=document["high_suspicion_degrees"],
+    )
+
+    for item in document["cases"]:
+        result = triage_witness_angle(
+            AngleInterval(item["point"], item["lower"], item["upper"]),
+            thresholds,
+            second_view_confirms=item["second_view"],
+        )
+        assert result.state == "INSUFFICIENT", item["id"]
+        assert result.review_hint == item["hint"], item["id"]
+        assert result.reason == item["reason"], item["id"]

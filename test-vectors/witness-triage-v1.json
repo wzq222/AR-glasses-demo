@@ -1,0 +1,14 @@
+{
+  "schema_version": "witness-triage-v1",
+  "review_degrees": 3.0,
+  "high_suspicion_degrees": 15.0,
+  "cases": [
+    {"id": "upper_at_3", "point": 2.5, "lower": 2.0, "upper": 3.0, "second_view": false, "hint": "LIKELY_ALIGNED", "reason": "ANGLE_INTERVAL_BELOW_REVIEW_THRESHOLD"},
+    {"id": "point_at_3", "point": 3.0, "lower": 3.0, "upper": 3.0, "second_view": false, "hint": "LIKELY_ALIGNED", "reason": "ANGLE_INTERVAL_BELOW_REVIEW_THRESHOLD"},
+    {"id": "cross_3", "point": 3.0, "lower": 2.5, "upper": 3.5, "second_view": false, "hint": "POSSIBLE_DISPLACED", "reason": "ANGLE_INTERVAL_CROSSES_REVIEW_THRESHOLD"},
+    {"id": "between", "point": 8.0, "lower": 3.0, "upper": 14.9, "second_view": false, "hint": "POSSIBLE_DISPLACED", "reason": "ANGLE_INTERVAL_ABOVE_REVIEW_THRESHOLD"},
+    {"id": "upper_at_15", "point": 14.5, "lower": 14.0, "upper": 15.0, "second_view": false, "hint": "POSSIBLE_DISPLACED", "reason": "ANGLE_INTERVAL_CROSSES_HIGH_SUSPICION_THRESHOLD"},
+    {"id": "lower_at_15_unconfirmed", "point": 18.0, "lower": 15.0, "upper": 21.0, "second_view": false, "hint": "POSSIBLE_DISPLACED", "reason": "SECOND_VIEW_CONFIRMATION_REQUIRED"},
+    {"id": "lower_at_15_confirmed", "point": 18.0, "lower": 15.0, "upper": 21.0, "second_view": true, "hint": "LIKELY_DISPLACED", "reason": "ANGLE_INTERVAL_HIGH_SUSPICION_CONFIRMED"}
+  ]
+}

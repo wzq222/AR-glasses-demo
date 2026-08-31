@@ -30,7 +30,59 @@ public final class AntiLooseGeometry {
             VisionPoint secondStart,
             VisionPoint secondEnd,
             float referenceSize,
+            GeometryThresholds thresholds,
+            AngleInterval angleInterval,
+            boolean secondViewConfirms) {
+        return evaluateInternal(
+                topology,
+                markRole,
+                qualityPass,
+                firstStart,
+                firstEnd,
+                secondStart,
+                secondEnd,
+                referenceSize,
+                thresholds,
+                angleInterval,
+                secondViewConfirms);
+    }
+
+    public static GeometryDecision evaluate(
+            FastenerTopology topology,
+            WitnessMarkRole markRole,
+            boolean qualityPass,
+            VisionPoint firstStart,
+            VisionPoint firstEnd,
+            VisionPoint secondStart,
+            VisionPoint secondEnd,
+            float referenceSize,
             GeometryThresholds thresholds) {
+        return evaluate(
+                topology,
+                markRole,
+                qualityPass,
+                firstStart,
+                firstEnd,
+                secondStart,
+                secondEnd,
+                referenceSize,
+                thresholds,
+                null,
+                false);
+    }
+
+    private static GeometryDecision evaluateInternal(
+            FastenerTopology topology,
+            WitnessMarkRole markRole,
+            boolean qualityPass,
+            VisionPoint firstStart,
+            VisionPoint firstEnd,
+            VisionPoint secondStart,
+            VisionPoint secondEnd,
+            float referenceSize,
+            GeometryThresholds thresholds,
+            AngleInterval angleInterval,
+            boolean secondViewConfirms) {
         if (topology == null || topology == FastenerTopology.UNKNOWN) {
             return uncertain("TOPOLOGY_UNKNOWN");
         }
@@ -54,9 +106,6 @@ public final class AntiLooseGeometry {
                     || point.getConfidence() > 1f) {
                 return uncertain("KEYPOINT_CONFIDENCE_LOW");
             }
-        }
-        if (thresholds == null || !thresholds.isCalibrated()) {
-            return uncertain("THRESHOLDS_UNCALIBRATED");
         }
         if (!(referenceSize > 0f) || Float.isInfinite(referenceSize)) {
             return uncertain("REFERENCE_SIZE_INVALID");
@@ -85,9 +134,33 @@ public final class AntiLooseGeometry {
         float angle = (float) angleValue;
         float gapRatio = (float) gapValue;
         float residualRatio = (float) residualValue;
+        AngleInterval interval = angleInterval == null
+                ? new AngleInterval(angle, angle, angle)
+                : angleInterval;
+        GeometryDecision triage = triageAngle(
+                interval, ProvisionalTriageThresholds.defaults(), secondViewConfirms);
+        if (thresholds == null || !thresholds.isCalibrated()) {
+            return new GeometryDecision(
+                    FastenerState.INSUFFICIENT,
+                    "THRESHOLDS_UNCALIBRATED",
+                    angle,
+                    gapRatio,
+                    residualRatio,
+                    triage.getReviewHint(),
+                    interval.getLowerDegrees(),
+                    interval.getUpperDegrees());
+        }
 
         if (angle > thresholds.getMaximumAngleDegrees()) {
-            return new GeometryDecision(FastenerState.INSUFFICIENT, "POSSIBLE_DISPLACED_ANGLE_EXCEEDED", angle, gapRatio, residualRatio);
+            return new GeometryDecision(
+                    FastenerState.INSUFFICIENT,
+                    "POSSIBLE_DISPLACED_ANGLE_EXCEEDED",
+                    angle,
+                    gapRatio,
+                    residualRatio,
+                    WitnessReviewHint.POSSIBLE_DISPLACED,
+                    interval.getLowerDegrees(),
+                    interval.getUpperDegrees());
         }
         if (gapRatio > thresholds.getMaximumGapRatio()) {
             return new GeometryDecision(FastenerState.INSUFFICIENT, "POSSIBLE_DISPLACED_GAP_EXCEEDED", angle, gapRatio, residualRatio);
@@ -97,6 +170,48 @@ public final class AntiLooseGeometry {
         }
         return new GeometryDecision(
                 FastenerState.ALIGNED, "GEOMETRY_WITHIN_THRESHOLDS", angle, gapRatio, residualRatio);
+    }
+
+    public static GeometryDecision triageAngle(
+            AngleInterval interval,
+            ProvisionalTriageThresholds thresholds,
+            boolean secondViewConfirms) {
+        if (interval == null) {
+            return uncertain("ANGLE_INTERVAL_INVALID");
+        }
+        if (thresholds == null) {
+            return uncertain("PROVISIONAL_TRIAGE_THRESHOLDS_INVALID");
+        }
+        WitnessReviewHint hint;
+        String reason;
+        if (interval.getUpperDegrees() <= thresholds.getReviewDegrees()) {
+            hint = WitnessReviewHint.LIKELY_ALIGNED;
+            reason = "ANGLE_INTERVAL_BELOW_REVIEW_THRESHOLD";
+        } else if (interval.getLowerDegrees() < thresholds.getReviewDegrees()) {
+            hint = WitnessReviewHint.POSSIBLE_DISPLACED;
+            reason = "ANGLE_INTERVAL_CROSSES_REVIEW_THRESHOLD";
+        } else if (interval.getUpperDegrees() < thresholds.getHighSuspicionDegrees()) {
+            hint = WitnessReviewHint.POSSIBLE_DISPLACED;
+            reason = "ANGLE_INTERVAL_ABOVE_REVIEW_THRESHOLD";
+        } else if (interval.getLowerDegrees() < thresholds.getHighSuspicionDegrees()) {
+            hint = WitnessReviewHint.POSSIBLE_DISPLACED;
+            reason = "ANGLE_INTERVAL_CROSSES_HIGH_SUSPICION_THRESHOLD";
+        } else if (secondViewConfirms) {
+            hint = WitnessReviewHint.LIKELY_DISPLACED;
+            reason = "ANGLE_INTERVAL_HIGH_SUSPICION_CONFIRMED";
+        } else {
+            hint = WitnessReviewHint.POSSIBLE_DISPLACED;
+            reason = "SECOND_VIEW_CONFIRMATION_REQUIRED";
+        }
+        return new GeometryDecision(
+                FastenerState.INSUFFICIENT,
+                reason,
+                interval.getPointEstimateDegrees(),
+                Float.NaN,
+                Float.NaN,
+                hint,
+                interval.getLowerDegrees(),
+                interval.getUpperDegrees());
     }
 
     private static GeometryDecision uncertain(String reason) {
