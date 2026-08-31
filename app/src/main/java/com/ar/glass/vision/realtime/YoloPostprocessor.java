@@ -6,9 +6,30 @@ import java.util.Comparator;
 import java.util.List;
 
 public final class YoloPostprocessor {
+    public static final float DEFAULT_CONFIDENCE_THRESHOLD = 0.20f;
+    public static final float DEFAULT_NMS_IOU_THRESHOLD = 0.45f;
+
     private static final int OUTPUT_ROWS = 6;
 
     private YoloPostprocessor() {
+    }
+
+    public static List<Detection> process(
+            float[][] prediction,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY) {
+        return process(
+                prediction,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                DEFAULT_CONFIDENCE_THRESHOLD,
+                DEFAULT_NMS_IOU_THRESHOLD);
     }
 
     public static List<Detection> process(
