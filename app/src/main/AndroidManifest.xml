@@ -72,6 +72,11 @@
             android:name=".ui.ImageViewerActivity"
             android:screenOrientation="portrait" />
 
+        <!-- 手机后置相机实时候选检测 -->
+        <activity
+            android:name=".ui.LiveInspectionActivity"
+            android:exported="false" />
+
         <!-- BLE前台服务 -->
         <service
             android:name=".core.GlassBleService"
