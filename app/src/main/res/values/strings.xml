@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AR眼镜控制</string>
+    <string name="app_name">中车视觉手机测试</string>
 
     <string name="live_inspection_entry_section_title">手机检测</string>
     <string name="live_inspection_entry_title">手机实时检测</string>

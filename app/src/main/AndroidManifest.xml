@@ -55,12 +55,7 @@
             android:name=".ui.MainActivity"
             android:launchMode="singleTask"
             android:exported="true"
-            android:screenOrientation="portrait">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:screenOrientation="portrait" />
 
         <!-- 图库浏览 -->
         <activity
@@ -75,7 +70,13 @@
         <!-- 手机后置相机实时候选检测 -->
         <activity
             android:name=".ui.LiveInspectionActivity"
-            android:exported="false" />
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <!-- BLE前台服务 -->
         <service
