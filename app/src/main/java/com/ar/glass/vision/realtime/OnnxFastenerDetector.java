@@ -37,7 +37,14 @@ public final class OnnxFastenerDetector implements Closeable {
 
     private static final long[] INPUT_SHAPE = {1, 3, INPUT_SIZE, INPUT_SIZE};
     private static final int LETTERBOX_COLOR = 0xFF727272;
+    private static final int PIXEL_COUNT = INPUT_SIZE * INPUT_SIZE;
 
+    private final FloatBuffer inputBuffer;
+    private final int[] pixels;
+    private final Bitmap letterboxBitmap;
+    private final Canvas letterboxCanvas;
+    private final Paint bitmapPaint;
+    private final Rect destinationRect;
     private OrtEnvironment environment;
     private OrtSession session;
     private String inputName;
@@ -47,9 +54,26 @@ public final class OnnxFastenerDetector implements Closeable {
 
     public OnnxFastenerDetector(Context context) {
         if (context == null) {
+            inputBuffer = null;
+            pixels = null;
+            letterboxBitmap = null;
+            letterboxCanvas = null;
+            bitmapPaint = null;
+            destinationRect = null;
             initializationError = "模型初始化失败";
             return;
         }
+
+        inputBuffer = ByteBuffer
+                .allocateDirect(PIXEL_COUNT * 3 * Float.BYTES)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer();
+        pixels = new int[PIXEL_COUNT];
+        letterboxBitmap = Bitmap.createBitmap(
+                INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888);
+        letterboxCanvas = new Canvas(letterboxBitmap);
+        bitmapPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+        destinationRect = new Rect();
 
         OrtSession candidateSession = null;
         try {
@@ -97,7 +121,7 @@ public final class OnnxFastenerDetector implements Closeable {
         long startedAtNanos = System.nanoTime();
         LetterboxTransform transform = LetterboxTransform.forSquare(
                 bitmap.getWidth(), bitmap.getHeight(), INPUT_SIZE);
-        FloatBuffer inputBuffer = createInputBuffer(bitmap, transform);
+        fillInputBuffer(bitmap, transform);
 
         float[][] prediction;
         try (OnnxTensor inputTensor = OnnxTensor.createTensor(
@@ -132,6 +156,9 @@ public final class OnnxFastenerDetector implements Closeable {
         closed = true;
         closeQuietly(session);
         session = null;
+        if (letterboxBitmap != null && !letterboxBitmap.isRecycled()) {
+            letterboxBitmap.recycle();
+        }
     }
 
     public static void validateModelShapes(long[] inputShape, long[] outputShape) {
@@ -180,37 +207,26 @@ public final class OnnxFastenerDetector implements Closeable {
         }
     }
 
-    private static FloatBuffer createInputBuffer(
+    private void fillInputBuffer(
             Bitmap source, LetterboxTransform transform) {
-        Bitmap letterboxed = Bitmap.createBitmap(
-                INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(letterboxed);
-        canvas.drawColor(LETTERBOX_COLOR);
-        Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
-        Rect destination = new Rect(
+        letterboxCanvas.drawColor(LETTERBOX_COLOR);
+        destinationRect.set(
                 transform.getPadLeft(),
                 transform.getPadTop(),
                 transform.getPadLeft() + transform.getResizedWidth(),
                 transform.getPadTop() + transform.getResizedHeight());
-        canvas.drawBitmap(source, null, destination, paint);
+        letterboxCanvas.drawBitmap(source, null, destinationRect, bitmapPaint);
 
-        int pixelCount = INPUT_SIZE * INPUT_SIZE;
-        int[] pixels = new int[pixelCount];
-        letterboxed.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
-        letterboxed.recycle();
+        letterboxBitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
 
-        FloatBuffer buffer = ByteBuffer
-                .allocateDirect(pixelCount * 3 * Float.BYTES)
-                .order(ByteOrder.nativeOrder())
-                .asFloatBuffer();
-        for (int index = 0; index < pixelCount; index++) {
+        inputBuffer.clear();
+        for (int index = 0; index < PIXEL_COUNT; index++) {
             int pixel = pixels[index];
-            buffer.put(index, ((pixel >> 16) & 0xFF) / 255f);
-            buffer.put(pixelCount + index, ((pixel >> 8) & 0xFF) / 255f);
-            buffer.put(2 * pixelCount + index, (pixel & 0xFF) / 255f);
+            inputBuffer.put(index, ((pixel >> 16) & 0xFF) / 255f);
+            inputBuffer.put(PIXEL_COUNT + index, ((pixel >> 8) & 0xFF) / 255f);
+            inputBuffer.put(2 * PIXEL_COUNT + index, (pixel & 0xFF) / 255f);
         }
-        buffer.position(0);
-        return buffer;
+        inputBuffer.position(0);
     }
 
     private static float[][] extractPrediction(
