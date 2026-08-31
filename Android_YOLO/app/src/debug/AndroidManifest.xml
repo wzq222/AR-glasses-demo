@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅 debug 构建生效：提供 adb 可直达的测试入口，release 构建不包含 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name=".TestEntryActivity"
+            android:exported="true" />
+    </application>
+
+</manifest>

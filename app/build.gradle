@@ -1,7 +1,8 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 33
+    compileSdkVersion 34
+    buildToolsVersion "34.0.0"
     defaultConfig {
         applicationId "com.ar.glass"
         minSdkVersion 22
@@ -28,6 +29,10 @@ android {
     }
     packagingOptions {
         exclude 'META-INF/DEPENDENCIES'
+        // jniLibs 与 onnxruntime-android AAR 均提供 libonnxruntime.so /
+        // libc++_shared.so（内容已统一为官方 1.19.2 版本），重复时取其一
+        pickFirst 'lib/**/libonnxruntime.so'
+        pickFirst 'lib/**/libc++_shared.so'
     }
 }
 
@@ -45,6 +50,9 @@ dependencies {
     implementation 'io.netty:netty-all:4.1.68.Final'
     implementation 'com.google.protobuf:protobuf-javalite:3.18.1'
     implementation 'com.google.mlkit:barcode-scanning:17.2.0'
+
+    // YOLO 离线目标检测（ONNX Runtime，NNAPI 硬件加速）
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.2'
 
     implementation files('libs/ksdk-release.aar')
 

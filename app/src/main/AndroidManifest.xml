@@ -86,6 +86,15 @@
             android:name="com.xy.ota.view.ScanActivity"
             android:screenOrientation="portrait" />
 
+        <!-- YOLO 检测自测（无需眼镜：adb broadcast 触发本机照片检测） -->
+        <receiver
+            android:name=".util.DetectSelfTestReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ar.glass.DETECT_SELF_TEST" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

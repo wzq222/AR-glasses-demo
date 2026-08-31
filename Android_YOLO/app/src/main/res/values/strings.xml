@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Android YOLOv8</string>
+
+    <!-- 主界面 -->
+    <string name="status_initializing">初始化中…</string>
+    <string name="status_loading_model">模型加载中…</string>
+    <string name="status_ready">%1$s · %2$s · 输入 %3$dpx</string>
+    <string name="status_no_model">未找到内置模型，请通过菜单「选择模型」导入 .onnx/.pt 文件</string>
+    <string name="status_import_failed">模型导入失败：%1$s</string>
+    <string name="status_camera_denied">相机权限被拒绝，无法使用相机模式</string>
+    <string name="status_camera_failed">相机启动失败：%1$s</string>
+    <string name="status_no_test_images">没有测试图片：请 adb push 到应用 test_images 目录，或使用内置样本</string>
+    <string name="fps_label">%1$d 个目标 · %2$d ms/帧</string>
+    <string name="virtual_label">%1$s · %2$d 目标</string>
+    <string name="mode_camera">相机</string>
+    <string name="mode_virtual">虚拟相机</string>
+    <string name="gpu_label">GPU 加速</string>
+    <string name="gpu_dialog_success_title">GPU 加速已启用</string>
+    <string name="gpu_dialog_success_msg">硬件加速已通过 %1$s 生效，推理计算由 GPU/NPU 承担。</string>
+    <string name="gpu_dialog_fallback_title">GPU 加速不可用</string>
+    <string name="gpu_dialog_fallback_msg">当前设备 %1$s 初始化失败，已自动回退 CPU 推理。可尝试关闭后重新开启 GPU 开关，或更换模型格式（ONNX）。</string>
+    <string name="conf_label">置信度</string>
+    <string name="virtual_image_desc">虚拟相机测试图</string>
+
+    <!-- 菜单 -->
+    <string name="menu_pick_model">选择模型…</string>
+    <string name="menu_test_images">测试图片</string>
+    <string name="menu_logs">运行日志</string>
+
+    <!-- 测试模式 -->
+    <string name="test_title">测试图片 · 检测与标注</string>
+    <string name="test_thumb_desc">测试缩略图</string>
+    <string name="test_annotated_desc">标注结果图</string>
+    <string name="test_no_engine">引擎未就绪：请先返回主界面加载模型</string>
+    <string name="test_running">批量运行中（%1$d 张）…</string>
+    <string name="test_summary">批量完成：保存 %1$d/%2$d 张 · 共 %3$d 个目标 · 平均 %4$d ms/张</string>
+    <string name="test_single_result">%1$s · %2$d 个目标 · %3$d ms</string>
+    <string name="test_saved">已保存：%1$s</string>
+    <string name="test_save_failed">保存失败，请检查存储权限</string>
+    <string name="test_save">保存标注图</string>
+    <string name="test_batch">批量运行(前20)</string>
+
+    <!-- 日志 -->
+    <string name="log_title">运行日志</string>
+    <string name="log_clear">清空</string>
+    <string name="log_share">分享</string>
+    <string name="log_clear_title">清空日志？</string>
+
+    <!-- 权限 -->
+    <string name="perm_camera_title">需要相机权限</string>
+    <string name="perm_camera_rationale">相机模式需要使用摄像头进行实时目标检测。请在系统设置中授予相机权限。</string>
+    <string name="perm_go_settings">去设置</string>
+</resources>

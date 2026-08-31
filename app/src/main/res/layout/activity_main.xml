@@ -187,6 +187,112 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- 实时目标检测卡片 -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="实时目标检测（YOLO）"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <Button
+                        android:id="@+id/btnDetectLoop"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="📷 单张检测"
+                        android:textSize="14sp"
+                        android:backgroundTint="#FF5722"
+                        android:textColor="@android:color/white"/>
+
+                    <!-- 检测预览：照片 fitCenter 完整显示 + 检测框叠加（fitCenter 同步映射） -->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="240dp"
+                        android:layout_marginTop="10dp"
+                        android:background="#101010">
+
+                        <ImageView
+                            android:id="@+id/ivDetectPreview"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:scaleType="fitCenter"
+                            android:contentDescription="YOLO 检测预览"/>
+
+                        <com.ar.glass.vision.ui.BoxOverlay
+                            android:id="@+id/detectOverlay"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"/>
+
+                        <TextView
+                            android:id="@+id/tvDetectPlaceholder"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:text="检测预览将在此显示"
+                            android:textSize="12sp"
+                            android:textColor="#777777"/>
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="8dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="置信度"
+                            android:textSize="12sp"
+                            android:textColor="#666666"/>
+
+                        <SeekBar
+                            android:id="@+id/seekDetectConf"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:min="5"
+                            android:max="90"
+                            android:progress="25"/>
+
+                        <TextView
+                            android:id="@+id/tvDetectConf"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:minWidth="42dp"
+                            android:gravity="end"
+                            android:text="0.25"
+                            android:textSize="12sp"
+                            android:textColor="#333333"/>
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvDetectStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="点上方按钮：眼镜拍一张 → 照片传到手机 → YOLO 检测 → 显示预览框"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="6dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
             <!-- 图库卡片（2个按钮） -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"

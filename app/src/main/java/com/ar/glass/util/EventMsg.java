@@ -16,6 +16,7 @@ public class EventMsg {
     public static final int MSG_PHOTO_LIST = 105;          // 眼镜照片列表已获取（obj=List<String>）
     public static final int MSG_QR_RESULT = 106;           // 二维码识别结果（obj=String，空串表示未识别到）
     public static final int MSG_BATTERY_UPDATE = 107;       // 眼镜电量更新（arg1=电量0-100，arg2=1表示充电中）
+    public static final int MSG_DETECT_RESULT = 108;        // YOLO 检测结果（arg1=目标数，-1=失败；obj=List<YoloDetector.Detection>）
 
     public EventMsg(int what, int arg1, int arg2) {
         this.what = what;

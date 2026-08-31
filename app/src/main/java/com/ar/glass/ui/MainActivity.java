@@ -32,6 +32,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -72,6 +73,15 @@ public class MainActivity extends AppCompatActivity {
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
     private Button btnVoice;
+    private Button btnDetectLoop;
+    private TextView tvDetectStatus;
+    private TextView tvDetectConf;
+    private TextView tvDetectPlaceholder;
+    private ImageView ivDetectPreview;
+    private com.ar.glass.vision.ui.BoxOverlay detectOverlay;
+    private SeekBar seekDetectConf;
+    /** 当前显示的预览图（所有权在 Service/自测接收器 → UI，替换时回收旧图） */
+    private Bitmap mDetectPreview;
 
     private GlassBleService mBleService;
     private boolean mServiceBound = false;
@@ -120,10 +130,31 @@ public class MainActivity extends AppCompatActivity {
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
         btnVoice = findViewById(R.id.btnVoice);
+        btnDetectLoop = findViewById(R.id.btnDetectLoop);
+        tvDetectStatus = findViewById(R.id.tvDetectStatus);
+        tvDetectConf = findViewById(R.id.tvDetectConf);
+        tvDetectPlaceholder = findViewById(R.id.tvDetectPlaceholder);
+        ivDetectPreview = findViewById(R.id.ivDetectPreview);
+        detectOverlay = findViewById(R.id.detectOverlay);
+        seekDetectConf = findViewById(R.id.seekDetectConf);
+
+        seekDetectConf.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                float conf = progress / 100f;
+                tvDetectConf.setText(String.format(java.util.Locale.US, "%.2f", conf));
+                com.ar.glass.vision.YoloDetectorHolder.setConfThreshold(conf);
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
 
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+        btnDetectLoop.setOnClickListener(v -> startSingleDetect());
         btnVoice.setOnTouchListener((v, event) -> {
             if (mVoiceController == null) return false;
             switch (event.getAction()) {
@@ -362,6 +393,8 @@ public class MainActivity extends AppCompatActivity {
                     tvBatteryStatus.setTextColor(getColor(android.R.color.darker_gray));
                     appendLog("❌ BLE断开，正在重连...");
                     updateSyncButtonState(false);
+                    // 断连时终止检测循环并复位按钮
+                    resetDetectLoopUi();
                 }
                 break;
 
@@ -396,6 +429,7 @@ public class MainActivity extends AppCompatActivity {
                 appendLog("🎉 同步完成！共接收 " + count + " 个文件");
                 AppState.getInstance().isSocketConnected = false;
                 updateSyncButtonState(false);
+                resetSingleDetectButton(); // 任何同步结束都复位单张检测按钮
                 break;
 
             case EventMsg.MSG_TOAST:
@@ -422,8 +456,51 @@ public class MainActivity extends AppCompatActivity {
 
             case EventMsg.MSG_QR_RESULT:
                 String qrText = (String) msg.obj;
-                showQrResultDialog(qrText);
+                // 检测流程（单张/连拍）运行中不弹二维码对话框（避免打断），仅记日志
+                if (mBleService != null
+                        && (mBleService.isDetectionLoopActive() || mBleService.isSingleShotActive())) {
+                    if (qrText != null && !qrText.isEmpty()) {
+                        appendLog("🔍 二维码: " + qrText);
+                    }
+                } else {
+                    showQrResultDialog(qrText);
+                }
                 break;
+
+            case EventMsg.MSG_DETECT_RESULT: {
+                Object rObj = msg.obj;
+                resetSingleDetectButton();
+                if (!(rObj instanceof com.ar.glass.vision.DetectResult)) break;
+                com.ar.glass.vision.DetectResult r = (com.ar.glass.vision.DetectResult) rObj;
+                if (!r.isSuccess()) {
+                    tvDetectStatus.setText("本轮检测失败（" + r.error + "），将重试下一轮…");
+                    break;
+                }
+                String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                        .format(new java.util.Date());
+                int detections = r.detections != null ? r.detections.size() : 0;
+
+                // 预览图：所有权交接，替换时回收旧图
+                Bitmap old = mDetectPreview;
+                mDetectPreview = r.preview;
+                ivDetectPreview.setImageBitmap(r.preview);
+                tvDetectPlaceholder.setVisibility(View.GONE);
+                if (old != null && old != r.preview && !old.isRecycled()) old.recycle();
+
+                // 检测框叠加（fitCenter 精确映射）
+                detectOverlay.setResults(r.detections, r.frameW, r.frameH);
+
+                tvDetectStatus.setText("[" + time + "] " + r.fileName + " · 检测到 "
+                        + detections + " 个目标 · 推理 " + r.inferMs + "ms");
+                appendLog("🎯 [" + time + "] YOLO 检测到 " + detections + " 个目标");
+                // 结果通过眼镜扬声器语音播报（TTS 走 A2DP 媒体通道）
+                if (mVoiceController != null) {
+                    mVoiceController.speak(detections > 0
+                            ? ("检测到 " + detections + " 颗螺丝")
+                            : "未检测到螺丝");
+                }
+                break;
+            }
 
             case EventMsg.MSG_BATTERY_UPDATE:
                 int battery = msg.arg1;
@@ -433,6 +510,53 @@ public class MainActivity extends AppCompatActivity {
                         ? android.R.color.holo_red_dark : android.R.color.holo_green_dark));
                 break;
         }
+    }
+
+    /** 复位检测循环 UI（BLE 断开/销毁时调用） */
+    private void resetDetectLoopUi() {
+        if (mBleService != null) {
+            mBleService.stopDetectionLoop();
+        }
+        if (btnDetectLoop != null) {
+            btnDetectLoop.setText("🎯 开始连拍检测");
+        }
+        if (tvDetectStatus != null) {
+            tvDetectStatus.setText("连接已断开，检测循环已停止");
+        }
+    }
+
+    /** 单张检测：拍照 → 同步一张 → YOLO → 预览（连拍逻辑已停用） */
+    private void startSingleDetect() {
+        Log.i("GlassLog", "🔘 [UI] 用户点击单张检测: btnEnabled=" + btnDetectLoop.isEnabled()
+                + " bleConnected=" + AppState.getInstance().isBleConnected
+                + " service=" + (mBleService != null)
+                + " singleActive=" + (mBleService != null && mBleService.isSingleShotActive()));
+        if (mBleService == null) {
+            Log.i("GlassLog", "🔘 [UI] 拒绝: BLE服务未绑定");
+            Toast.makeText(this, "BLE服务未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!AppState.getInstance().isBleConnected) {
+            Log.i("GlassLog", "🔘 [UI] 拒绝: 蓝牙未连接眼镜");
+            Toast.makeText(this, "请等待蓝牙连接眼镜", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        btnDetectLoop.setEnabled(false);
+        btnDetectLoop.setText("⏳ 拍照同步检测中…");
+        tvDetectStatus.setText("流程：眼镜拍照 → 传输到手机 → YOLO 检测 → 显示预览");
+        mBleService.startSingleShotDetection();
+        Log.i("GlassLog", "🔘 [UI] 服务已接受单张检测: singleActive=" + mBleService.isSingleShotActive());
+        if (!mBleService.isSingleShotActive()) {
+            // 服务拒绝启动（如上一张同步中），立即复位按钮，避免永久禁用
+            Log.i("GlassLog", "🔘 [UI] 服务拒绝启动，复位按钮");
+            resetSingleDetectButton();
+        }
+    }
+
+    /** 单张检测完成后复位按钮 */
+    private void resetSingleDetectButton() {
+        btnDetectLoop.setEnabled(true);
+        btnDetectLoop.setText("📷 单张检测");
     }
 
     /**
@@ -689,6 +813,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void appendLog(String text) {
+        // 日志已由 GlassBleService.postLog 写入 logcat，此处仅 UI 展示（避免重复）
         logBuilder.append(text).append("\n");
         if (tvLog != null) {
             tvLog.setText(logBuilder.toString());
@@ -721,10 +846,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (mServiceBound && mBleService != null) {
+            mBleService.stopDetectionLoop();
+        }
         if (mServiceBound) {
             unbindService(mServiceConnection);
             mServiceBound = false;
         }
+        if (mDetectPreview != null && !mDetectPreview.isRecycled()) {
+            mDetectPreview.recycle();
+        }
+        mDetectPreview = null;
+        if (detectOverlay != null) detectOverlay.clear();
         if (mVoiceController != null) {
             mVoiceController.release();
         }
