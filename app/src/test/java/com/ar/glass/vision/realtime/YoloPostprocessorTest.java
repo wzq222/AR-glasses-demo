@@ -118,6 +118,38 @@ public class YoloPostprocessorTest {
         assertEquals(0.20f, detections.get(1).getConfidence(), EPSILON);
     }
 
+    @Test
+    public void capsAndDeterministicallyOrdersLargeCandidateOutput() {
+        int candidateCount = 34_000;
+        float[][] prediction = new float[6][candidateCount];
+        for (int index = 0; index < candidateCount; index++) {
+            prediction[0][index] = index * 3f + 1f;
+            prediction[1][index] = 1f;
+            prediction[2][index] = 1f;
+            prediction[3][index] = 1f;
+            prediction[4][index] = 0.90f;
+            prediction[5][index] = 0.10f;
+        }
+
+        List<Detection> firstRun = YoloPostprocessor.process(
+                prediction, 120_000, 10, 1f, 0f, 0f);
+        List<Detection> secondRun = YoloPostprocessor.process(
+                prediction, 120_000, 10, 1f, 0f, 0f);
+
+        assertEquals(1_000, YoloPostprocessor.DEFAULT_PRE_NMS_TOP_K);
+        assertEquals(100, YoloPostprocessor.DEFAULT_MAX_DETECTIONS);
+        assertEquals(YoloPostprocessor.DEFAULT_MAX_DETECTIONS, firstRun.size());
+        assertEquals(firstRun.size(), secondRun.size());
+        for (int index = 0; index < firstRun.size(); index++) {
+            assertEquals(firstRun.get(index).getLeft(), secondRun.get(index).getLeft(), EPSILON);
+            assertEquals(firstRun.get(index).getConfidence(),
+                    secondRun.get(index).getConfidence(), EPSILON);
+            assertEquals(firstRun.get(index).getClassId(), secondRun.get(index).getClassId());
+        }
+        assertEquals(0.5f, firstRun.get(0).getLeft(), EPSILON);
+        assertEquals(297.5f, firstRun.get(99).getLeft(), EPSILON);
+    }
+
     private static List<Detection> process(
             float[][] prediction, float confidenceThreshold, float nmsThreshold) {
         return YoloPostprocessor.process(
