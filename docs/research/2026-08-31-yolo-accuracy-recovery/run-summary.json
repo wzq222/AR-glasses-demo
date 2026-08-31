@@ -1,0 +1,16 @@
+{
+  "schema_version": "deep-research-run-summary-v1",
+  "date": "2026-08-31",
+  "mode": "brief",
+  "orchestration": "single-agent",
+  "sources": 8,
+  "optional_modules": [],
+  "evaluation": "self-check",
+  "output": "draft.md",
+  "result": "recommend_two_stage_marked_point_yolo_plus_mobile_verifier",
+  "limitations": [
+    "single_collection_domain",
+    "30_train_scenes",
+    "no_real_loose_state_pairs"
+  ]
+}

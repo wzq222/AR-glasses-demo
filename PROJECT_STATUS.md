@@ -137,6 +137,11 @@
   复核时可按需生成同样视图，不会为9,567个首轮原始候选默认扩张资产，也不使用生成式超分辨率。
   正式真值SHA-256保持不变。后续将ImageGen限制为外观困难增强，真实松动阈值只用受控
   ALIGNED/DISPLACED成对采集标定。
+- 2026-08-31：完成YOLO准确率恢复复盘。现有高准确率误差的主矛盾为tiny与lookalike，扩大到M模型
+  无效；marked-point开发集的fastener来源仅726个候选即覆盖248/248真值，而color-only产生8,841
+  候选。下一轮固定为两阶段：单类marked-point YOLOv8s-P2做低阈值proposal，原图+切片训练和定向
+  hard-negative mining；MobileNetV3在原图ROI内复核有效标记/无标记紧固件/lookalike/无法判断。
+  DINOv3只允许离线挑选多样困难负样本，不作为首版手机模型。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -192,11 +197,11 @@ git status --short
 
 ## Next Smallest Action
 
-保留每个batch不超过30%的合成占比，新增至少100–150个独立真实检测场景和真实困难负样本，优先
-覆盖tiny、lookalike、blur、
-dense pipes及不同车型、设备和光照；另采集同一紧固件受控NORMAL/LOOSE成对照片并标注两段防松线
-端点、可见性和状态。数据补齐后做三seed消融复验；状态头不得用合成val自证准确。建立全新独立测试
-集并通过precision/recall/完整场景门后，再接入Android runtime
+先用现有30个train/17个val场景启动单类marked-point YOLO-P2三seed研究训练，训练视图同时包含原图与
+2×2重叠切片；随后用scene隔离的真实候选裁剪训练MobileNetV3复核器，并按模型误差只补最高分FP和
+低分TP附近hard negatives。达到同源val门后，新增至少100–150个跨设备/光照真实场景再做封存验证；
+另采集同一检查点受控NORMAL/LOOSE成对照片并标注两段防松线端点、可见性和状态。状态头不得用合成
+val自证准确。建立全新独立测试集并通过precision/recall/完整场景门后，再接入Android runtime
 并在指定手机连续热机50次测端到端P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
@@ -222,4 +227,6 @@ dense pipes及不同车型、设备和光照；另采集同一紧固件受控NOR
   权重哈希、兼容恢复与能力边界。
 - `docs/validation/2026-08-31-h1-hard-sample-review.md`：H1三轮审核、失败根因、1×/2×/4×证据链与
   真实受控状态数据切换结论。
+- `docs/research/2026-08-31-yolo-accuracy-recovery/draft.md`：YOLO误差根因、两阶段准确率恢复路线、
+  DINOv3边界与固定实验门。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。

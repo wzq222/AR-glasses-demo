@@ -1,0 +1,9 @@
+[
+  {"url": "https://arxiv.org/abs/2202.06934", "type": "primary_paper"},
+  {"url": "https://arxiv.org/abs/1708.02002", "type": "primary_paper"},
+  {"url": "https://arxiv.org/abs/1604.03540", "type": "primary_paper"},
+  {"url": "https://arxiv.org/abs/1905.02244", "type": "primary_paper"},
+  {"url": "https://ai.meta.com/research/dinov3/", "type": "official"},
+  {"url": "https://github.com/facebookresearch/dinov3/blob/main/MODEL_CARD.md", "type": "official_repository"},
+  {"url": "https://docs.ultralytics.com/guides/sahi-tiled-inference", "type": "official_documentation"}
+]

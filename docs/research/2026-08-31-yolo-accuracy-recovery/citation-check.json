@@ -1,0 +1,32 @@
+{
+  "summary": {
+    "total_inline_citations": 7,
+    "unique_citation_numbers": 7,
+    "reference_entries": 7,
+    "critical_issues": 0,
+    "warnings": 0,
+    "verdict": "PASS"
+  },
+  "issues": [],
+  "warnings": [],
+  "citation_coverage": {
+    "inline_numbers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "reference_numbers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  }
+}
