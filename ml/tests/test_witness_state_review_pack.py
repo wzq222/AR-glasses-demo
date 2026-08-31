@@ -7,7 +7,10 @@ import numpy as np
 import pytest
 
 import crrc_vision.witness_state_review_pack as state_pack
-from crrc_vision.witness_state_review_pack import build_state_review_pack
+from crrc_vision.witness_state_review_pack import (
+    build_state_review_pack,
+    build_state_second_pass_pack,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -153,3 +156,39 @@ def test_final_formal_truth_failure_does_not_publish_pack(tmp_path: Path) -> Non
 
     assert not output.exists()
     assert not list(tmp_path.glob(".state-pack.staging-*"))
+
+
+def test_second_pass_is_blind_and_has_coordinate_evidence(tmp_path: Path) -> None:
+    references, source = _references(tmp_path)
+    first_pack = tmp_path / "first-pack"
+    build_state_review_pack(references, source, first_pack)
+    output = tmp_path / "second-pack"
+
+    summary = build_state_second_pass_pack(first_pack, ["ref-01"], output)
+
+    assert summary.references == 1
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    task = json.loads((output / "tasks" / "task-001.json").read_text(encoding="utf-8"))
+    record = task["records"][0]
+    assert manifest["blind_to_first_review"] is True
+    assert record["reference_id"] == "ref-01"
+    assert "automatic_state" not in record
+    assert "visual_state_hint" not in record
+    assert "reason" not in record
+    assert set(record["evidence_views"]) == {"original_1x", "detail_2x", "detail_4x"}
+    assert (output / record["coordinate_grid_path"]).is_file()
+    assert record["review_template"]["fixed_segment_xyxy"] is None
+
+
+def test_second_pass_rejects_tampered_source_task_without_partial_output(tmp_path: Path) -> None:
+    references, source = _references(tmp_path)
+    first_pack = tmp_path / "first-pack"
+    build_state_review_pack(references, source, first_pack)
+    task_path = first_pack / "tasks" / "task-001.json"
+    task_path.write_text("{}", encoding="utf-8")
+    output = tmp_path / "second-pack"
+
+    with pytest.raises(RuntimeError, match="SOURCE_TASK_HASH_MISMATCH"):
+        build_state_second_pass_pack(first_pack, ["ref-01"], output)
+
+    assert not output.exists()

@@ -79,6 +79,13 @@ class WitnessStateDecision:
     supporting_sources: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class WitnessGeometryMetrics:
+    angle_degrees: float
+    gap_ratio: float
+    residual_ratio: float
+
+
 def _insufficient(reason: str, *, hint: str | None = None) -> WitnessStateDecision:
     return WitnessStateDecision(
         state="INSUFFICIENT",
@@ -96,7 +103,20 @@ def _distance(first: Point, second: Point) -> float:
     return hypot(first[0] - second[0], first[1] - second[1])
 
 
-def _geometry(fixed: Segment, moving: Segment, reference_size: float) -> tuple[float, float, float]:
+def measure_witness_geometry(
+    fixed: Segment,
+    moving: Segment,
+    reference_size: float,
+) -> WitnessGeometryMetrics:
+    if not _valid_segment_coordinates(fixed) or not _valid_segment_coordinates(moving):
+        raise ValueError("SEGMENT_COORDINATE_INVALID")
+    if (
+        not isinstance(reference_size, (int, float))
+        or isinstance(reference_size, bool)
+        or not isfinite(reference_size)
+        or reference_size <= 0.0
+    ):
+        raise ValueError("REFERENCE_SIZE_INVALID")
     fixed_vector = (fixed[1][0] - fixed[0][0], fixed[1][1] - fixed[0][1])
     moving_vector = (moving[1][0] - moving[0][0], moving[1][1] - moving[0][1])
     fixed_length = hypot(*fixed_vector)
@@ -120,7 +140,17 @@ def _geometry(fixed: Segment, moving: Segment, reference_size: float) -> tuple[f
     trace = xx + yy
     discriminant = max(0.0, (xx - yy) ** 2 + 4.0 * xy * xy) ** 0.5
     residual = max(0.0, (trace - discriminant) / (2.0 * len(points))) ** 0.5
-    return angle, gap, residual / reference_size
+    metrics = WitnessGeometryMetrics(angle, gap, residual / reference_size)
+    if not all(
+        isfinite(value)
+        for value in (
+            metrics.angle_degrees,
+            metrics.gap_ratio,
+            metrics.residual_ratio,
+        )
+    ):
+        raise ValueError("GEOMETRY_VALUE_INVALID")
+    return metrics
 
 
 def _valid_score(value: float | None) -> bool:
@@ -208,15 +238,16 @@ def evaluate_witness_state(
         return _insufficient("THRESHOLDS_UNCALIBRATED")
 
     try:
-        angle, gap, residual = _geometry(
+        metrics = measure_witness_geometry(
             evidence.fixed_segment_xyxy,
             evidence.moving_segment_xyxy,
             evidence.reference_size,
         )
     except (ValueError, OverflowError):
         return _insufficient("GEOMETRY_VALUE_INVALID")
-    if not all(isfinite(value) for value in (angle, gap, residual)):
-        return _insufficient("GEOMETRY_VALUE_INVALID")
+    angle = metrics.angle_degrees
+    gap = metrics.gap_ratio
+    residual = metrics.residual_ratio
 
     geometry_abnormal = (
         angle > thresholds.maximum_angle_degrees

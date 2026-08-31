@@ -14,7 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from .synthetic_witness_mark import extract_witness_mark_mask
 from .witness_state_contract import MARK_ROLES, OUTPUT_STATES, TOPOLOGIES
@@ -283,6 +283,213 @@ def build_state_review_pack(
             assert formal_truth_path is not None
             if _sha256(formal_truth_path) != expected_formal_truth_sha256.upper():
                 raise RuntimeError("FORMAL_TRUTH_CHANGED")
+        staging_root.replace(output_root)
+        return summary
+    except Exception:
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
+        raise
+
+
+def _coordinate_grid(content: bytes, destination: Path) -> None:
+    with Image.open(BytesIO(content)) as opened:
+        image = opened.convert("RGB")
+    draw = ImageDraw.Draw(image)
+    width, height = image.size
+    line_width = max(1, min(width, height) // 300)
+    for index in range(1, 20):
+        x = round(width * index / 20)
+        y = round(height * index / 20)
+        major = index % 2 == 0
+        color = (255, 196, 0) if major else (0, 220, 255)
+        draw.line((x, 0, x, height), fill=color, width=line_width)
+        draw.line((0, y, width, y), fill=color, width=line_width)
+        if major:
+            draw.text((x + 2, 2), str(x), fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+            draw.text((2, y + 2), str(y), fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+    image.save(destination, format="PNG", optimize=True)
+
+
+def _load_verified_first_pass(source_pack: Path) -> tuple[dict[str, object], str, dict[str, dict[str, object]]]:
+    manifest_path = source_pack / "manifest.json"
+    manifest_content = manifest_path.read_bytes()
+    manifest_sha256 = hashlib.sha256(manifest_content).hexdigest().upper()
+    manifest = json.loads(manifest_content.decode("utf-8"))
+    if manifest.get("schema_version") != "real-witness-state-review-pack-v1":
+        raise ValueError("SOURCE_PACK_MANIFEST_INVALID")
+    task_files = manifest.get("task_files")
+    if not isinstance(task_files, dict):
+        raise ValueError("SOURCE_PACK_MANIFEST_INVALID")
+    rows: dict[str, dict[str, object]] = {}
+    for relative, expected_hash in task_files.items():
+        path = _safe_path(source_pack, str(relative))
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest().upper() != str(expected_hash).upper():
+            raise RuntimeError(f"SOURCE_TASK_HASH_MISMATCH:{relative}")
+        task = json.loads(content.decode("utf-8"))
+        records = task.get("records")
+        if (
+            task.get("schema_version") != "real-witness-state-review-task-v1"
+            or not isinstance(records, list)
+        ):
+            raise ValueError(f"SOURCE_TASK_INVALID:{relative}")
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError(f"SOURCE_RECORD_INVALID:{relative}")
+            reference_id = str(record.get("reference_id") or "")
+            if not reference_id or reference_id.casefold() in {value.casefold() for value in rows}:
+                raise ValueError(f"SOURCE_REFERENCE_ID_INVALID:{reference_id}")
+            rows[reference_id] = record
+    return manifest, manifest_sha256, rows
+
+
+def _write_second_pass_unpublished(
+    source_pack: Path,
+    reference_ids: list[str],
+    output_root: Path,
+    *,
+    batch_size: int,
+) -> StateReviewPackSummary:
+    manifest, source_manifest_sha256, source_rows = _load_verified_first_pass(source_pack)
+    selected: list[tuple[str, dict[str, object]]] = []
+    seen: set[str] = set()
+    for reference_id in reference_ids:
+        key = str(reference_id).casefold()
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", str(reference_id)) is None
+            or key in seen
+        ):
+            raise ValueError(f"REFERENCE_ID_INVALID:{reference_id}")
+        seen.add(key)
+        matches = [row for name, row in source_rows.items() if name.casefold() == key]
+        if len(matches) != 1:
+            raise ValueError(f"REFERENCE_ID_NOT_FOUND:{reference_id}")
+        selected.append((str(reference_id), matches[0]))
+
+    output_root.mkdir(parents=True, exist_ok=False)
+    evidence_root = output_root / "evidence"
+    grid_root = output_root / "coordinate-grids"
+    task_root = output_root / "tasks"
+    for path in (evidence_root, grid_root, task_root):
+        path.mkdir()
+
+    review_rows: list[dict[str, object]] = []
+    for reference_id, source_record in selected:
+        source_views = source_record.get("evidence_views")
+        if not isinstance(source_views, dict):
+            raise ValueError(f"SOURCE_EVIDENCE_INVALID:{reference_id}")
+        copied_views: dict[str, dict[str, object]] = {}
+        original_content: bytes | None = None
+        for view_name in ("original_1x", "detail_2x", "detail_4x"):
+            view = source_views.get(view_name)
+            if not isinstance(view, dict):
+                raise ValueError(f"SOURCE_EVIDENCE_INVALID:{reference_id}:{view_name}")
+            source_path = _safe_path(source_pack, str(view.get("path") or ""))
+            content = source_path.read_bytes()
+            if hashlib.sha256(content).hexdigest().upper() != str(view.get("sha256") or "").upper():
+                raise RuntimeError(f"SOURCE_EVIDENCE_HASH_MISMATCH:{reference_id}:{view_name}")
+            destination = evidence_root / f"{reference_id}-{view_name}.png"
+            destination.write_bytes(content)
+            copied_views[view_name] = {
+                "path": str(destination.relative_to(output_root)).replace("\\", "/"),
+                "sha256": _sha256(destination),
+                "scale": view.get("scale"),
+                "source": "verified_first_pass_pixels",
+                "interpolation": view.get("interpolation"),
+            }
+            if view_name == "original_1x":
+                original_content = content
+        assert original_content is not None
+        grid_path = grid_root / f"{reference_id}.png"
+        _coordinate_grid(original_content, grid_path)
+        review_rows.append(
+            {
+                "reference_id": reference_id,
+                "source_scene_id": source_record.get("source_scene_id"),
+                "source_image": source_record.get("source_image"),
+                "source_reference_sha256": source_record.get("source_reference_sha256"),
+                "evidence_views": copied_views,
+                "coordinate_grid_path": str(grid_path.relative_to(output_root)).replace("\\", "/"),
+                "coordinate_grid_sha256": _sha256(grid_path),
+                "review_template": {
+                    "review_status": "UNREVIEWED",
+                    "topology": None,
+                    "mark_role": None,
+                    "quality_pass": None,
+                    "fixed_segment_xyxy": None,
+                    "moving_segment_xyxy": None,
+                    "fixed_segment_confidence": None,
+                    "moving_segment_confidence": None,
+                    "damaged_mark": None,
+                    "output_state": None,
+                    "review_hint": None,
+                    "reason": None,
+                },
+            }
+        )
+
+    task_hashes: dict[str, str] = {}
+    for index in range(math.ceil(len(review_rows) / batch_size)):
+        path = task_root / f"task-{index + 1:03d}.json"
+        payload = {
+            "schema_version": "real-witness-state-second-pass-task-v1",
+            "blind_to_first_review": True,
+            "instructions": (
+                "Review only the original pixels and coordinate grid. Bind the fixed-side and "
+                "moving-side paint segments independently. Do not infer torque or use any prior "
+                "review conclusion. Broad paint, curved paint, damage, occlusion or non-unique "
+                "segment ownership remains INSUFFICIENT."
+            ),
+            "records": review_rows[index * batch_size : (index + 1) * batch_size],
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        task_hashes[str(path.relative_to(output_root)).replace("\\", "/")] = _sha256(path)
+
+    summary = StateReviewPackSummary(
+        references=len(review_rows),
+        geometry_proposals=0,
+        batches=math.ceil(len(review_rows) / batch_size),
+    )
+    second_manifest = {
+        "schema_version": "real-witness-state-second-pass-pack-v1",
+        **asdict(summary),
+        "formal_truth_sha256": manifest.get("formal_truth_sha256"),
+        "blind_to_first_review": True,
+        "first_review_fields_included": False,
+        "source_pack_manifest_sha256": source_manifest_sha256,
+        "selected_reference_ids_sha256": hashlib.sha256(
+            "\n".join(reference_ids).encode("utf-8")
+        ).hexdigest().upper(),
+        "task_files": task_hashes,
+    }
+    (output_root / "manifest.json").write_text(
+        json.dumps(second_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return summary
+
+
+def build_state_second_pass_pack(
+    source_pack: Path,
+    reference_ids: list[str],
+    output_root: Path,
+    *,
+    batch_size: int = 8,
+) -> StateReviewPackSummary:
+    if output_root.exists():
+        raise FileExistsError(output_root)
+    if not reference_ids:
+        raise ValueError("at least one reference_id is required")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = output_root.parent / f".{output_root.name}.staging-{uuid.uuid4().hex}"
+    try:
+        summary = _write_second_pass_unpublished(
+            source_pack,
+            reference_ids,
+            staging_root,
+            batch_size=batch_size,
+        )
         staging_root.replace(output_root)
         return summary
     except Exception:

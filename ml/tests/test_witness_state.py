@@ -4,6 +4,7 @@ from crrc_vision.witness_state import (
     StateEvidence,
     StateThresholds,
     evaluate_witness_state,
+    measure_witness_geometry,
 )
 
 
@@ -39,6 +40,18 @@ def test_aligned_requires_calibrated_geometry_and_valid_bridge() -> None:
     assert result.state == "ALIGNED"
     assert result.review_hint is None
     assert result.reason == "GEOMETRY_ALIGNED_NO_CONFLICT"
+
+
+def test_geometry_measurement_is_available_without_state_thresholds() -> None:
+    metrics = measure_witness_geometry(
+        ((0.0, 0.0), (10.0, 0.0)),
+        ((12.0, 0.0), (22.0, 0.0)),
+        100.0,
+    )
+
+    assert metrics.angle_degrees == pytest.approx(0.0)
+    assert metrics.gap_ratio == pytest.approx(0.02)
+    assert metrics.residual_ratio == pytest.approx(0.0)
 
 
 def test_one_abnormal_geometry_source_is_possible_not_proven_displaced() -> None:
