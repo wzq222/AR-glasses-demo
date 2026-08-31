@@ -4,7 +4,8 @@
 [`wzq222/AR-glasses-demo`](https://github.com/wzq222/AR-glasses-demo)，现阶段已实现的主体是
 CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片同步。防松线方向现已加入全图
 数据审计、候选预标注、质量门、多目标结果契约和几何判定核心，银标训练门已通过并有一个
-内部P2准确率基线，并已接入独立的手机相机测试页；它尚未达生产精度，也不能判断松动状态。二维码、
+内部P2准确率基线，并已接入独立的手机相机测试页；ROI状态实验模型和3°/15°安全分诊合同已实现，
+但实验质量门失败，尚未接入手机，也不能可靠判断真实松动状态。二维码、
 万用表识别仍只有接口，三类能力都还没有完成真机作业闭环。
 
 ## 项目入口
@@ -24,6 +25,7 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - [带防松标记检查点候选门](docs/validation/2026-08-29-marked-point-candidate-recall.md)
 - [ImageGen 防松线合成试点](docs/validation/2026-08-29-synthetic-marked-point-pilot.md)
 - [Android 手机相机候选测试验收](docs/validation/2026-09-01-android-phone-live-test.md)
+- [防松线手机状态基线验证](docs/validation/2026-09-01-witness-state-mobile-baseline.md)
 - [会议逐字稿](docs/sources/2026-08-24-AR眼镜开发周会-逐字稿.txt)
 
 > 当前边界：不要把下方“图像识别接口（预留）”理解为算法已经接入。硬件实机、固件版本、
@@ -44,6 +46,8 @@ CY01 眼镜与 Android 手机之间的 BLE 连接、WiFi Direct 组网和照片�
 - **严格验证结论**：S/M-P2 均未通过 `P>=0.90` 的召回与完整场景门；封存测试保持未打开。
 - **标记点候选闭环**：Git外开发真值为30 train/17 val场景、248框，候选覆盖248/248；
   仍因train场景少于64且缺正常/松动状态真值而禁止训练或声称可判断松动。
+- **状态实验基线**：24张合成train-only ROI可训练并导出约1.4M参数的MobileNetV3-Small多头ONNX，
+  但合成角度mean/P95为3.37°/6.27°、mask IoU为0.136，质量门FAIL，Android打包关闭。
 - **其他图像接口（预留）**：二维码识别和电压表数字识别待实现。
 
 ## 技术栈

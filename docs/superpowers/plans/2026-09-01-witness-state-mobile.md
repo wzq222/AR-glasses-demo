@@ -88,6 +88,9 @@
 
 ## Task 6: Android ROI ONNX 推理与候选交互
 
+> 2026-09-01阻塞：实验模型质量门FAIL，`android_packaging_allowed=false`。按安全设计不把失败模型
+> 接入候选点击或安装到手机；待独立物理点角度门通过后继续本任务。
+
 **Files:**
 
 - Create: `app/src/main/java/com/ar/glass/vision/realtime/OnnxWitnessStateEstimator.java`
@@ -114,11 +117,11 @@
 - Modify: `README.md`
 - Modify: `PROJECT_STATUS.md`
 
-- [ ] 运行全量 Python、Android 单测和 APK 构建。
-- [ ] 对 formal truth 重算 SHA-256，必须仍为 `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`。
-- [ ] 记录模型/APK 哈希、合成角度误差、Android 时延、拒判边界和仍缺的真实受控状态组。
-- [ ] 明确区分“链路可用”“合成几何可重建”“真实松动准确率已验证”；没有独立真实测试时不得宣称后者。
-- [ ] Commit: `docs: validate witness state mobile baseline`
+- [x] 运行全量 Python、Android 单测和 APK 构建。
+- [x] 对 formal truth 重算 SHA-256，必须仍为 `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`。
+- [x] 记录模型/APK 哈希、合成角度误差、Android 时延未测原因、拒判边界和仍缺的真实受控状态组。
+- [x] 明确区分“链路可用”“合成几何可重建”“真实松动准确率已验证”；没有独立真实测试时不得宣称后者。
+- [x] Commit: `docs: validate witness state mobile baseline`
 
 ## Separate Follow-up: 全图检测器轻量化
 

@@ -169,6 +169,12 @@
   提升为生产`DISPLACED`。现有测试夹具的8°不是标定阈值，且严格`>`会在24张构造样本中漏掉6/8个
   名义8°样本。推荐手机状态模型采用ROI轻量多头分割/关键点+确定性几何+可选历史基准，不采用直接
   松/不松分类。研究证据见`docs/research/2026-09-01-witness-state-threshold/draft.md`。
+- 2026-09-01：实现防松线ROI状态实验链。Python/Android使用同一JSON向量固定3°/15°区间分诊，
+  未标定时正式状态始终为`INSUFFICIENT`；新增每检查点median/MAD健康基准。Git外24张合成train-only
+  ROI完成MobileNetV3-Small多头训练和ONNX导出，PyTorch/ONNX数值一致性PASS，但最终合成mask IoU
+  0.136、关键点P95 3.61px、角度mean/P95 3.37°/6.27°，严格质量门FAIL，
+  `android_packaging_allowed=false`，没有把失败状态模型装进手机。基础/训练Python回归分别为
+  360 passed + 3 skipped / 372 passed，Android 56项测试和Debug APK构建通过，formal truth哈希未变。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -188,9 +194,10 @@ MobileNetV3-Small复核：在17个同源开发val场景、75个marked-point真�
 单模型权重平均挑战者为19.71个/图并保持75/75，可进入跨设备挑战但余量很小。阈值仍使用同一val选择，
 sealed test未打开、当前手机实测只验证运行与性能，尚无跨车辆现场准确率证据，因此不允许表述为
 生产准确率。松动状态已完成真实首审和
-2个疑似点的隐藏二审；两个疑似点均因宽涂层或低分辨率落为`INSUFFICIENT`。真实数据仍没有受控
-`ALIGNED/DISPLACED`成对真值，因此尚不能训练或宣称可靠状态模型。现有审计链已能阻止单张历史图
-被错误提升为松动真值。
+2个疑似点的隐藏二审；两个疑似点均因宽涂层或低分辨率落为`INSUFFICIENT`。当前ROI状态实验模型
+已经完成训练和ONNX技术验证，但严格质量门失败并禁止Android打包。真实数据仍没有受控
+`ALIGNED/DISPLACED`成对真值，因此不能宣称可靠状态模型。现有审计链已能阻止单张历史图被错误
+提升为松动真值。
 
 ## Run
 
@@ -230,9 +237,10 @@ git status --short
 
 ## Next Smallest Action
 
-先让现场人员用已安装的手机测试页拍摄清晰、近距离、多角度检查点，形成跨手机/光照的候选误差包；
-同时采集同一检查点受控`ALIGNED/DISPLACED`成对照片，标注固定侧/活动侧两段防松线端点、可见性和
-维护人员确认状态，并用真实成对数据标定阈值。
+停止继续在24张合成ROI上调参。先采集至少10个真实物理检查点的受控角度组，覆盖
+`0/2/3/5/8/10/15/20°`、正视/左右斜视、两种距离和明暗光照；优先完成至少200个高质量ROI的
+固定侧、活动侧、防松线、接缝与四关键点标注，并按物理点隔离分区。独立物理点角度门通过后再把
+状态ONNX接入手机候选点击和真机时延测试。
 状态头不得用ImageGen或单张历史图自证准确。检测分支另新增至少100–150个跨车辆、跨设备、跨光照
 真实完整场景，冻结模型与阈值后再打开一次独立sealed test。通过后导出移动端模型，在指定手机连续
 热机50次测端到端P50/P95和内存，并在指定手机与CY01眼镜上复验BLE连接和照片同步。
@@ -268,4 +276,6 @@ git status --short
   2个疑似位移点及受控成对数据门。
 - `docs/validation/2026-09-01-android-phone-live-test.md`：纯手机测试入口、APK/模型哈希、指定手机安装、
   真机性能与能力边界。
+- `docs/validation/2026-09-01-witness-state-mobile-baseline.md`：状态分诊合同、ROI训练实验、ONNX一致性、
+  质量门拒绝和真实受控采集门。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。
