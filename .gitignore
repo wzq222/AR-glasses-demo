@@ -10,6 +10,7 @@
 app/build
 local.properties
 .venv/
+.venv-ml/
 ml/.pytest_cache/
 ml/.cache/
 ml/**/*.egg-info/

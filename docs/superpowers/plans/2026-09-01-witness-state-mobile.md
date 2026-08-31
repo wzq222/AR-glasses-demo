@@ -61,12 +61,12 @@
 - Create: `ml/scripts/train_witness_roi_model.py`
 - Create: `ml/scripts/export_witness_roi_onnx.py`
 
-- [ ] 先写失败测试，固定输入 `N×3×320×320`，验证四类掩膜 logits、四个关键点热图、质量 logits 的形状和非有限数拒绝。
-- [ ] 实现 MobileNetV3-Small 共享骨干和轻量解码头；训练库只在脚本执行时导入，避免破坏基础包。
-- [ ] 使用轻度透视、缩放、模糊、亮度与颜色抖动；几何标签同步变换，禁止会改变松动角真值的独立随机旋转。
-- [ ] 在 24 张合成 train-only 样本上做过拟合冒烟，报告关键点/角度重建误差，不报告真实准确率。
-- [ ] 导出动态 batch 的 ONNX，验证输出名、形状、模型哈希及 Python ONNX 冒烟。
-- [ ] Commit: `feat(ml): train lightweight witness roi baseline`
+- [x] 先写失败测试，固定输入 `N×3×320×320`，验证四类掩膜 logits、四个关键点热图、质量 logits 的形状和非有限数拒绝。
+- [x] 实现 MobileNetV3-Small 共享骨干和轻量解码头；训练库只在脚本执行时导入，避免破坏基础包。
+- [x] 使用轻度透视、缩放、模糊、亮度与颜色抖动；几何标签同步变换，禁止会改变松动角真值的独立随机旋转。
+- [x] 在 24 张合成 train-only 样本上做过拟合冒烟，报告关键点/角度重建误差，不报告真实准确率。
+- [x] 导出动态 batch 的 ONNX，验证输出名、形状、模型哈希及 Python ONNX 冒烟；质量门未过，`android_packaging_allowed=false`。
+- [x] Commit: `feat(ml): train lightweight witness roi baseline`
 
 ## Task 5: Android 分诊合同与 Python 对齐
 
