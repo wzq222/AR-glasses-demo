@@ -24,6 +24,7 @@ from crrc_vision.p2_training import (
     validate_training_inputs,
     validate_synthetic_ablation_mode,
 )
+from crrc_vision.marked_point_training import training_contract_for_experiment
 from crrc_vision.reference_teacher import (
     validate_checkpoint_globals,
     validate_ultralytics_version,
@@ -142,6 +143,11 @@ def main() -> int:
     parser.add_argument("--transfer-pretrained", action="store_true")
     parser.add_argument("--expected-pretrained-sha256")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--experiment-kind",
+        choices=("physical_target", "marked_point_proposal"),
+        default="physical_target",
+    )
     parser.add_argument("--maximum-synthetic-fraction", type=float)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
@@ -184,6 +190,10 @@ def main() -> int:
     if _sha256(truth) != FORMAL_TRUTH_SHA256:
         raise RuntimeError("FORMAL_TRUTH_HASH_MISMATCH")
     train_document = json.loads(train_coco.read_text(encoding="utf-8"))
+    val_document = json.loads(val_coco.read_text(encoding="utf-8"))
+    experiment_contract = training_contract_for_experiment(
+        args.experiment_kind, train_document, val_document
+    )
     synthetic_policy = validate_synthetic_ablation_mode(
         train_document,
         maximum_synthetic_fraction=args.maximum_synthetic_fraction,
@@ -266,6 +276,7 @@ def main() -> int:
             **synthetic_policy,
             "maximum_synthetic_fraction": args.maximum_synthetic_fraction,
         },
+        **experiment_contract,
     }
     selected_seeds = (args.seed,) if args.seed is not None else P2_SEEDS
     for seed in selected_seeds:
