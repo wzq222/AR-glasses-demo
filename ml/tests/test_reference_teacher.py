@@ -3,6 +3,7 @@ from crrc_vision.reference_teacher import (
     build_proposal_document,
     build_run_manifest,
     ensure_complete_selection,
+    expand_checkpoint_globals,
     map_teacher_category,
     parse_teacher_selection,
     validate_checkpoint_globals,
@@ -31,6 +32,22 @@ def test_checkpoint_globals_reject_non_framework_types():
     ) == ()
     assert validate_checkpoint_globals(["os.system"]) == (
         "UNSAFE_CHECKPOINT_GLOBAL",
+    )
+
+
+def test_checkpoint_globals_allow_exact_numpy_scalar_metadata_only():
+    assert validate_checkpoint_globals(
+        ["numpy.core.multiarray.scalar", "numpy.dtype"]
+    ) == ()
+    assert validate_checkpoint_globals(["numpy.core.multiarray._reconstruct"]) == (
+        "UNSAFE_CHECKPOINT_GLOBAL",
+    )
+    assert expand_checkpoint_globals(
+        ["numpy.core.multiarray.scalar", "numpy.dtype"]
+    ) == (
+        "numpy.core.multiarray.scalar",
+        "numpy.dtype",
+        "numpy.dtypes.Float64DType",
     )
 
 

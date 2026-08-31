@@ -173,12 +173,13 @@ def build_train_kwargs(
     run_root: Path,
     epochs: int,
     batch_size: int,
+    fine_tune: bool = False,
 ) -> dict[str, object]:
     if seed not in P2_SEEDS:
         raise ValueError(f"INVALID_P2_SEED:{seed}")
     if epochs <= 0 or batch_size <= 0:
         raise ValueError("INVALID_TRAINING_DURATION")
-    return {
+    kwargs: dict[str, object] = {
         "data": str(dataset_yaml.resolve()),
         "epochs": epochs,
         "patience": 15,
@@ -219,3 +220,14 @@ def build_train_kwargs(
         "verbose": False,
         "plots": True,
     }
+    if fine_tune:
+        kwargs.update(
+            {
+                "patience": 8,
+                "lr0": 0.00005,
+                "lrf": 0.2,
+                "warmup_epochs": 0.0,
+                "warmup_bias_lr": 0.0,
+            }
+        )
+    return kwargs

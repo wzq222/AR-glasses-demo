@@ -18,6 +18,7 @@ from crrc_vision.detection_fusion import (
 )
 from crrc_vision.p2_training import checkpoint_model
 from crrc_vision.reference_teacher import (
+    expand_checkpoint_globals,
     validate_checkpoint_globals,
     validate_ultralytics_version,
 )
@@ -35,11 +36,12 @@ def _rows(result: object) -> np.ndarray:
 
 
 def _resolve_framework_globals(names: list[str]) -> list[object]:
-    errors = validate_checkpoint_globals(names)
+    expanded = expand_checkpoint_globals(names)
+    errors = validate_checkpoint_globals(expanded)
     if errors:
         raise RuntimeError(errors[0])
     resolved: list[object] = []
-    for name in names:
+    for name in expanded:
         module_name, attribute = name.rsplit(".", 1)
         resolved.append(getattr(importlib.import_module(module_name), attribute))
     return resolved

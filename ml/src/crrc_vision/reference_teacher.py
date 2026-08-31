@@ -8,6 +8,11 @@ from dataclasses import asdict, dataclass
 from typing import Iterable
 
 ALLOWED_GLOBAL_PREFIXES = ("torch.nn.modules.", "ultralytics.")
+ALLOWED_GLOBAL_NAMES = {
+    "numpy.core.multiarray.scalar",
+    "numpy.dtype",
+    "numpy.dtypes.Float64DType",
+}
 TEACHER_CATEGORY_MAP = {0: "fastener", 1: "pipe_joint", 2: "fastener"}
 MAPPING_STATUS = "inferred_unconfirmed"
 ULTRALYTICS_VERSION = "8.2.40"
@@ -146,9 +151,25 @@ def validate_checkpoint_globals(names: Iterable[str]) -> tuple[str, ...]:
     """Reject checkpoint globals outside the reviewed framework namespaces."""
     return (
         ()
-        if all(str(name).startswith(ALLOWED_GLOBAL_PREFIXES) for name in names)
+        if all(
+            str(name) in ALLOWED_GLOBAL_NAMES
+            or str(name).startswith(ALLOWED_GLOBAL_PREFIXES)
+            for name in names
+        )
         else ("UNSAFE_CHECKPOINT_GLOBAL",)
     )
+
+
+def expand_checkpoint_globals(names: Iterable[str]) -> tuple[str, ...]:
+    """Add the exact dtype class constructed by NumPy scalar metadata."""
+
+    expanded = list(dict.fromkeys(str(name) for name in names))
+    if "numpy.dtype" in expanded and "numpy.dtypes.Float64DType" not in expanded:
+        expanded.append("numpy.dtypes.Float64DType")
+    errors = validate_checkpoint_globals(expanded)
+    if errors:
+        raise ValueError(errors[0])
+    return tuple(expanded)
 
 
 def validate_ultralytics_version(actual: str) -> tuple[str, ...]:

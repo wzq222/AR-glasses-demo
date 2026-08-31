@@ -34,7 +34,7 @@ def _bbox(row: Mapping[str, object]) -> tuple[float, float, float, float]:
     return box
 
 
-def _is_proposal_match(
+def is_proposal_match(
     proposal: tuple[float, float, float, float],
     target: tuple[float, float, float, float],
 ) -> bool:
@@ -96,13 +96,13 @@ def _coverage_metrics(
         target_boxes = truth_by_image[image_id]
         proposal_boxes = predictions_by_image[image_id]
         hits = sum(
-            any(_is_proposal_match(proposal, target) for proposal in proposal_boxes)
+            any(is_proposal_match(proposal, target) for proposal in proposal_boxes)
             for target in target_boxes
         )
         covered_truth += hits
         complete_scenes += hits == len(target_boxes)
         relevant_candidates += sum(
-            any(_is_proposal_match(proposal, target) for target in target_boxes)
+            any(is_proposal_match(proposal, target) for target in target_boxes)
             for proposal in proposal_boxes
         )
     eligible_candidates = sum(len(rows) for rows in predictions_by_image.values())

@@ -37,6 +37,22 @@ def test_three_seeds_and_conservative_augmentation_contract(tmp_path: Path) -> N
     assert "sealed" not in str(kwargs).lower()
 
 
+def test_fine_tune_disables_warmup_and_uses_low_learning_rate(tmp_path: Path) -> None:
+    kwargs = build_train_kwargs(
+        seed=P2_SEEDS[1],
+        dataset_yaml=tmp_path / "dataset.yaml",
+        run_root=tmp_path / "run",
+        epochs=20,
+        batch_size=2,
+        fine_tune=True,
+    )
+
+    assert kwargs["lr0"] == 0.00005
+    assert kwargs["warmup_epochs"] == 0.0
+    assert kwargs["warmup_bias_lr"] == 0.0
+    assert kwargs["patience"] == 8
+
+
 def test_training_inputs_must_be_inside_assets_and_never_include_sealed(
     tmp_path: Path,
 ) -> None:

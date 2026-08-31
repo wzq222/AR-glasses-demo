@@ -26,6 +26,7 @@ from crrc_vision.p2_training import (
 )
 from crrc_vision.marked_point_training import training_contract_for_experiment
 from crrc_vision.reference_teacher import (
+    expand_checkpoint_globals,
     validate_checkpoint_globals,
     validate_ultralytics_version,
 )
@@ -82,9 +83,9 @@ def _safe_model(
     import torch
     from ultralytics import YOLO
 
-    unsafe_names = sorted(
+    unsafe_names = expand_checkpoint_globals(sorted(
         torch.serialization.get_unsafe_globals_in_checkpoint(str(weights))
-    )
+    ))
     errors = validate_checkpoint_globals(unsafe_names)
     if errors:
         raise RuntimeError(errors[0])
@@ -141,6 +142,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, choices=P2_SEEDS)
     parser.add_argument("--variant", choices=("s", "m"), default="s")
     parser.add_argument("--transfer-pretrained", action="store_true")
+    parser.add_argument("--fine-tune", action="store_true")
     parser.add_argument("--expected-pretrained-sha256")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
@@ -271,6 +273,7 @@ def main() -> int:
         "model_variant": args.variant,
         "model_yaml": model_yaml,
         "transfer_pretrained": args.transfer_pretrained,
+        "fine_tune": args.fine_tune,
         "expected_pretrained_sha256": args.expected_pretrained_sha256,
         "synthetic_batch_policy": {
             **synthetic_policy,
@@ -287,6 +290,7 @@ def main() -> int:
             run_root=seed_root,
             epochs=args.epochs,
             batch_size=args.batch_size,
+            fine_tune=args.fine_tune,
         )
         manifest = {**common, "seed": seed, "train_kwargs": kwargs, "status": "ready"}
         manifest_path = seed_root / "training-manifest.json"
