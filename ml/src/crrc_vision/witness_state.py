@@ -18,6 +18,59 @@ SUPPORTED_PLANAR_TOPOLOGIES = frozenset({"bolt_head_plate", "nut_plate"})
 
 
 @dataclass(frozen=True)
+class AngleInterval:
+    point_estimate_degrees: float
+    lower_degrees: float
+    upper_degrees: float
+
+    def __post_init__(self) -> None:
+        values = (
+            self.point_estimate_degrees,
+            self.lower_degrees,
+            self.upper_degrees,
+        )
+        if (
+            not all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and isfinite(value)
+                for value in values
+            )
+            or not 0.0 <= self.lower_degrees <= self.point_estimate_degrees
+            or not self.point_estimate_degrees <= self.upper_degrees <= 90.0
+        ):
+            raise ValueError("angle interval is outside valid ranges")
+
+
+@dataclass(frozen=True)
+class ProvisionalTriageThresholds:
+    review_degrees: float = 3.0
+    high_suspicion_degrees: float = 15.0
+
+    def __post_init__(self) -> None:
+        values = (self.review_degrees, self.high_suspicion_degrees)
+        if (
+            not all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and isfinite(value)
+                for value in values
+            )
+            or not 0.0 < self.review_degrees < self.high_suspicion_degrees <= 90.0
+        ):
+            raise ValueError("provisional triage thresholds are outside valid ranges")
+
+
+@dataclass(frozen=True)
+class ProvisionalTriageDecision:
+    state: str
+    reason: str
+    review_hint: str
+    angle_interval: AngleInterval
+    requires_human_confirmation: bool = True
+
+
+@dataclass(frozen=True)
 class StateThresholds:
     maximum_angle_degrees: float
     maximum_gap_ratio: float
@@ -62,6 +115,8 @@ class StateEvidence:
     fixed_segment_confidence: float
     moving_segment_confidence: float
     reference_size: float
+    angle_interval: AngleInterval | None = None
+    second_view_confirms: bool = False
     learned_displaced_score: float | None = None
     baseline_displaced_score: float | None = None
     damaged_mark_score: float | None = None
@@ -77,6 +132,8 @@ class WitnessStateDecision:
     residual_ratio: float | None
     geometry_abnormal: bool | None
     supporting_sources: tuple[str, ...]
+    angle_lower_degrees: float | None = None
+    angle_upper_degrees: float | None = None
 
 
 @dataclass(frozen=True)
@@ -86,16 +143,72 @@ class WitnessGeometryMetrics:
     residual_ratio: float
 
 
-def _insufficient(reason: str, *, hint: str | None = None) -> WitnessStateDecision:
+def _insufficient(
+    reason: str,
+    *,
+    hint: str | None = None,
+    angle_degrees: float | None = None,
+    angle_lower_degrees: float | None = None,
+    angle_upper_degrees: float | None = None,
+    gap_ratio: float | None = None,
+    residual_ratio: float | None = None,
+    geometry_abnormal: bool | None = None,
+) -> WitnessStateDecision:
     return WitnessStateDecision(
         state="INSUFFICIENT",
         reason=reason,
         review_hint=hint,
-        angle_degrees=None,
-        gap_ratio=None,
-        residual_ratio=None,
-        geometry_abnormal=None,
+        angle_degrees=angle_degrees,
+        gap_ratio=gap_ratio,
+        residual_ratio=residual_ratio,
+        geometry_abnormal=geometry_abnormal,
         supporting_sources=(),
+        angle_lower_degrees=angle_lower_degrees,
+        angle_upper_degrees=angle_upper_degrees,
+    )
+
+
+def triage_witness_angle(
+    interval: AngleInterval,
+    thresholds: ProvisionalTriageThresholds = ProvisionalTriageThresholds(),
+    *,
+    second_view_confirms: bool = False,
+) -> ProvisionalTriageDecision:
+    """Route an angle interval to a human-review hint without a formal state.
+
+    Rules are intentionally ordered and boundary-inclusive.  The result never
+    upgrades the production four-state contract while thresholds are provisional.
+    """
+    if not isinstance(interval, AngleInterval):
+        raise ValueError("angle interval is required")
+    if not isinstance(thresholds, ProvisionalTriageThresholds):
+        raise ValueError("provisional triage thresholds are required")
+    if not isinstance(second_view_confirms, bool):
+        raise ValueError("second_view_confirms must be boolean")
+
+    if interval.upper_degrees <= thresholds.review_degrees:
+        hint = "LIKELY_ALIGNED"
+        reason = "ANGLE_INTERVAL_BELOW_REVIEW_THRESHOLD"
+    elif interval.lower_degrees < thresholds.review_degrees:
+        hint = "POSSIBLE_DISPLACED"
+        reason = "ANGLE_INTERVAL_CROSSES_REVIEW_THRESHOLD"
+    elif interval.upper_degrees < thresholds.high_suspicion_degrees:
+        hint = "POSSIBLE_DISPLACED"
+        reason = "ANGLE_INTERVAL_ABOVE_REVIEW_THRESHOLD"
+    elif interval.lower_degrees < thresholds.high_suspicion_degrees:
+        hint = "POSSIBLE_DISPLACED"
+        reason = "ANGLE_INTERVAL_CROSSES_HIGH_SUSPICION_THRESHOLD"
+    elif second_view_confirms:
+        hint = "LIKELY_DISPLACED"
+        reason = "ANGLE_INTERVAL_HIGH_SUSPICION_CONFIRMED"
+    else:
+        hint = "POSSIBLE_DISPLACED"
+        reason = "SECOND_VIEW_CONFIRMATION_REQUIRED"
+    return ProvisionalTriageDecision(
+        state="INSUFFICIENT",
+        reason=reason,
+        review_hint=hint,
+        angle_interval=interval,
     )
 
 
@@ -234,8 +347,12 @@ def evaluate_witness_state(
         )
     ):
         return _insufficient("EVIDENCE_SCORE_INVALID")
-    if not thresholds.calibrated:
-        return _insufficient("THRESHOLDS_UNCALIBRATED")
+    if not isinstance(evidence.second_view_confirms, bool):
+        return _insufficient("SECOND_VIEW_CONFIRMATION_INVALID")
+    if evidence.angle_interval is not None and not isinstance(
+        evidence.angle_interval, AngleInterval
+    ):
+        return _insufficient("ANGLE_INTERVAL_INVALID")
 
     try:
         metrics = measure_witness_geometry(
@@ -248,6 +365,21 @@ def evaluate_witness_state(
     angle = metrics.angle_degrees
     gap = metrics.gap_ratio
     residual = metrics.residual_ratio
+    interval = evidence.angle_interval or AngleInterval(angle, angle, angle)
+    triage = triage_witness_angle(
+        interval,
+        second_view_confirms=evidence.second_view_confirms,
+    )
+    if not thresholds.calibrated:
+        return _insufficient(
+            "THRESHOLDS_UNCALIBRATED",
+            hint=triage.review_hint,
+            angle_degrees=angle,
+            angle_lower_degrees=interval.lower_degrees,
+            angle_upper_degrees=interval.upper_degrees,
+            gap_ratio=gap,
+            residual_ratio=residual,
+        )
 
     geometry_abnormal = (
         angle > thresholds.maximum_angle_degrees
@@ -274,6 +406,8 @@ def evaluate_witness_state(
         "residual_ratio": residual,
         "geometry_abnormal": geometry_abnormal,
         "supporting_sources": tuple(sources),
+        "angle_lower_degrees": interval.lower_degrees,
+        "angle_upper_degrees": interval.upper_degrees,
     }
     damage_active = evidence.damaged_mark_score is not None and (
         evidence.damaged_mark_score >= thresholds.damaged_mark_threshold

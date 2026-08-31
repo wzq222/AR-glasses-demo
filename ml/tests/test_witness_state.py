@@ -1,10 +1,13 @@
 import pytest
 
 from crrc_vision.witness_state import (
+    AngleInterval,
+    ProvisionalTriageThresholds,
     StateEvidence,
     StateThresholds,
     evaluate_witness_state,
     measure_witness_geometry,
+    triage_witness_angle,
 )
 
 
@@ -193,3 +196,81 @@ def test_uncalibrated_thresholds_never_emit_aligned_or_displaced() -> None:
 
     assert result.state == "INSUFFICIENT"
     assert result.reason == "THRESHOLDS_UNCALIBRATED"
+
+
+@pytest.mark.parametrize(
+    ("interval", "second_view_confirms", "expected_hint", "expected_reason"),
+    [
+        (AngleInterval(2.5, 2.0, 3.0), False, "LIKELY_ALIGNED", "ANGLE_INTERVAL_BELOW_REVIEW_THRESHOLD"),
+        (AngleInterval(3.0, 3.0, 3.0), False, "LIKELY_ALIGNED", "ANGLE_INTERVAL_BELOW_REVIEW_THRESHOLD"),
+        (AngleInterval(3.0, 2.5, 3.5), False, "POSSIBLE_DISPLACED", "ANGLE_INTERVAL_CROSSES_REVIEW_THRESHOLD"),
+        (AngleInterval(8.0, 3.0, 14.9), False, "POSSIBLE_DISPLACED", "ANGLE_INTERVAL_ABOVE_REVIEW_THRESHOLD"),
+        (AngleInterval(14.5, 14.0, 15.0), False, "POSSIBLE_DISPLACED", "ANGLE_INTERVAL_CROSSES_HIGH_SUSPICION_THRESHOLD"),
+        (AngleInterval(18.0, 15.0, 21.0), False, "POSSIBLE_DISPLACED", "SECOND_VIEW_CONFIRMATION_REQUIRED"),
+        (AngleInterval(18.0, 15.0, 21.0), True, "LIKELY_DISPLACED", "ANGLE_INTERVAL_HIGH_SUSPICION_CONFIRMED"),
+    ],
+)
+def test_provisional_triage_routes_exact_boundaries_without_formal_state(
+    interval: AngleInterval,
+    second_view_confirms: bool,
+    expected_hint: str,
+    expected_reason: str,
+) -> None:
+    result = triage_witness_angle(
+        interval,
+        ProvisionalTriageThresholds(),
+        second_view_confirms=second_view_confirms,
+    )
+
+    assert result.state == "INSUFFICIENT"
+    assert result.review_hint == expected_hint
+    assert result.reason == expected_reason
+    assert result.requires_human_confirmation is True
+
+
+def test_angle_interval_rejects_invalid_or_non_finite_bounds() -> None:
+    with pytest.raises(ValueError, match="angle interval"):
+        AngleInterval(4.0, 5.0, 3.0)
+    with pytest.raises(ValueError, match="angle interval"):
+        AngleInterval(float("nan"), 0.0, 3.0)
+    with pytest.raises(ValueError, match="angle interval"):
+        AngleInterval(4.0, 3.0, 91.0)
+
+
+def test_uncalibrated_evaluation_still_returns_measurement_and_review_hint() -> None:
+    result = evaluate_witness_state(
+        _evidence(
+            moving_segment_xyxy=((12.0, 0.0), (22.0, 0.0)),
+            angle_interval=AngleInterval(2.0, 1.0, 3.0),
+        ),
+        StateThresholds.uncalibrated(),
+    )
+
+    assert result.state == "INSUFFICIENT"
+    assert result.reason == "THRESHOLDS_UNCALIBRATED"
+    assert result.review_hint == "LIKELY_ALIGNED"
+    assert result.angle_degrees == pytest.approx(0.0)
+    assert result.angle_lower_degrees == pytest.approx(1.0)
+    assert result.angle_upper_degrees == pytest.approx(3.0)
+
+
+def test_uncalibrated_high_suspicion_requires_second_view_for_likely_hint() -> None:
+    unconfirmed = evaluate_witness_state(
+        _evidence(
+            moving_segment_xyxy=((12.0, 0.0), (12.0, 10.0)),
+            angle_interval=AngleInterval(20.0, 16.0, 24.0),
+        ),
+        StateThresholds.uncalibrated(),
+    )
+    confirmed = evaluate_witness_state(
+        _evidence(
+            moving_segment_xyxy=((12.0, 0.0), (12.0, 10.0)),
+            angle_interval=AngleInterval(20.0, 16.0, 24.0),
+            second_view_confirms=True,
+        ),
+        StateThresholds.uncalibrated(),
+    )
+
+    assert unconfirmed.state == confirmed.state == "INSUFFICIENT"
+    assert unconfirmed.review_hint == "POSSIBLE_DISPLACED"
+    assert confirmed.review_hint == "LIKELY_DISPLACED"
