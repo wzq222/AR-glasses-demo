@@ -350,6 +350,15 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private void postResult(
             OnnxFastenerDetector.DetectionResult result,
             double approximateFps) {
+        Log.i(TAG, String.format(
+                java.util.Locale.US,
+                "detections=%d total=%.1fms preprocess=%.1fms inference=%.1fms postprocess=%.1fms fps=%.2f",
+                result.getDetections().size(),
+                result.getLatencyMillis(),
+                result.getPreprocessMillis(),
+                result.getInferenceMillis(),
+                result.getPostprocessMillis(),
+                approximateFps));
         String metrics = getString(
                 R.string.live_metrics_format,
                 result.getDetections().size(),

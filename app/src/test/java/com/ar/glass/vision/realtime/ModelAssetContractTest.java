@@ -78,13 +78,16 @@ public class ModelAssetContractTest {
         detections.add(new Detection(1f, 2f, 3f, 4f, 0.9f, 0));
         OnnxFastenerDetector.DetectionResult result =
                 new OnnxFastenerDetector.DetectionResult(
-                        detections, 640, 480, 12.5, transform);
+                        detections, 640, 480, 12.5, 2.0, 9.5, 1.0, transform);
 
         detections.clear();
         assertEquals(1, result.getDetections().size());
         assertEquals(640, result.getOriginalWidth());
         assertEquals(480, result.getOriginalHeight());
         assertEquals(12.5, result.getLatencyMillis(), 0.0001);
+        assertEquals(2.0, result.getPreprocessMillis(), 0.0001);
+        assertEquals(9.5, result.getInferenceMillis(), 0.0001);
+        assertEquals(1.0, result.getPostprocessMillis(), 0.0001);
         assertEquals(transform, result.getTransform());
         result.getDetections().clear();
     }
