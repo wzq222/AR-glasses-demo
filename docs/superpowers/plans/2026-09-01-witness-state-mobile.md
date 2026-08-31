@@ -45,12 +45,12 @@
 - Create: `ml/tests/test_witness_roi_dataset.py`
 - Create: `ml/scripts/build_witness_roi_dataset.py`
 
-- [ ] 先写失败测试，覆盖 24 张合成样本的相对路径、图像/掩膜/端点哈希、`eligible_split=train`、场景隔离、重复 ID 和 formal truth 哈希门。
-- [ ] 运行目标测试并确认缺少实现而失败。
-- [ ] 实现只读导入 `repositioned-approved-v2/approved-locals.json` 的构建器；输出必须在 Git 外，原始 formal truth 只验哈希不修改。
-- [ ] 写出可复现 manifest，显式标记 `synthetic_geometry_only=true`、`real_state_truth=false` 和 `sealed_test_opened=false`。
-- [ ] 用 `E:/crrc_vision_data` 实跑一次，记录样本数、状态分布和 formal truth 哈希。
-- [ ] Commit: `feat(ml): build audited witness roi manifest`
+- [x] 先写失败测试，覆盖 24 张合成样本的相对路径、图像/掩膜/端点哈希、`eligible_split=train`、场景隔离、重复 ID 和 formal truth 哈希门。
+- [x] 运行目标测试并确认缺少实现而失败。
+- [x] 实现只读导入 `repositioned-approved-v2/approved-locals.json` 的构建器；输出必须在 Git 外，原始 formal truth 只验哈希不修改。
+- [x] 写出可复现 manifest，显式标记 `synthetic_geometry_only=true`、`real_state_truth=false` 和 `sealed_test_opened=false`。
+- [x] 用 `E:/crrc_vision_data` 实跑一次，记录样本数、状态分布和 formal truth 哈希。
+- [x] Commit: `feat(ml): build audited witness roi manifest`
 
 ## Task 4: 轻量 ROI 多头基线与合成几何验证
 
