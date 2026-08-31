@@ -31,7 +31,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -144,7 +143,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 startCamera();
             }
         } else {
-            metricsView.setText("相机权限未授予，请授权后返回重试");
+            metricsView.setText(R.string.live_camera_permission_denied);
         }
     }
 
@@ -156,12 +155,16 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 return;
             }
             detector = candidate;
-            String status = candidate.isReady()
-                    ? "模型状态：已加载"
-                    : "模型状态：" + candidate.getInitializationError();
+            int statusResource = candidate.isReady()
+                    ? R.string.live_model_ready
+                    : R.string.live_model_initialization_error;
+            if (!candidate.isReady()) {
+                Log.w(TAG, "Detector initialization failed: "
+                        + candidate.getInitializationError());
+            }
             runOnUiThread(() -> {
                 if (!destroyed) {
-                    modelStatusView.setText(status);
+                    modelStatusView.setText(statusResource);
                     if (!candidate.isReady()) {
                         overlayView.clearDetections();
                     }
@@ -187,7 +190,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 bindCameraUseCases();
             } catch (Exception exception) {
                 Log.e(TAG, "Unable to start camera", exception);
-                metricsView.setText("相机启动失败");
+                metricsView.setText(R.string.live_camera_start_failed);
             }
         }, ContextCompat.getMainExecutor(this));
     }
@@ -243,7 +246,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             Log.e(TAG, "Frame inference failed", exception);
             runOnUiThread(() -> {
                 if (!destroyed) {
-                    modelStatusView.setText("模型状态：已加载（上一帧推理失败）");
+                    modelStatusView.setText(R.string.live_frame_inference_failed);
                 }
             });
         } finally {
@@ -347,9 +350,8 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private void postResult(
             OnnxFastenerDetector.DetectionResult result,
             double approximateFps) {
-        String metrics = String.format(
-                Locale.CHINA,
-                "候选数：%d　推理：%.0f ms　近似FPS：%.1f",
+        String metrics = getString(
+                R.string.live_metrics_format,
                 result.getDetections().size(),
                 result.getLatencyMillis(),
                 approximateFps);
@@ -357,7 +359,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             if (destroyed) {
                 return;
             }
-            modelStatusView.setText("模型状态：已加载");
+            modelStatusView.setText(R.string.live_model_ready);
             metricsView.setText(metrics);
             overlayView.setDetections(
                     result.getDetections(),

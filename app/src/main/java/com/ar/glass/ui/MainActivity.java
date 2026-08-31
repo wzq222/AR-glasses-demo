@@ -63,6 +63,7 @@ public class MainActivity extends AppCompatActivity {
     private Button btnSyncPhotos;
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
+    private Button btnLiveInspection;
 
     private GlassBleService mBleService;
     private boolean mServiceBound = false;
@@ -106,10 +107,12 @@ public class MainActivity extends AppCompatActivity {
         btnSyncPhotos = findViewById(R.id.btnSyncFiles);
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
+        btnLiveInspection = findViewById(R.id.btnLiveInspection);
 
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+        btnLiveInspection.setOnClickListener(v -> openLiveInspection());
 
         setControlsEnabled(false);
     }
@@ -369,6 +372,11 @@ public class MainActivity extends AppCompatActivity {
     private void openGallery(String mode) {
         Intent intent = new Intent(this, GalleryActivity.class);
         intent.putExtra(GalleryActivity.EXTRA_MODE, mode);
+        startActivity(intent);
+    }
+
+    private void openLiveInspection() {
+        Intent intent = new Intent(this, LiveInspectionActivity.class);
         startActivity(intent);
     }
 
