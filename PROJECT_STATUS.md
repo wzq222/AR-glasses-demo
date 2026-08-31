@@ -154,10 +154,11 @@
 
 ## Active Work
 
-带防松标记检查点的候选和全图审计闭环已实现，开发集候选覆盖为248/248；ImageGen合成试点及
-synthetic-training ablation均已完成。24张合成图提高了真实val召回，但同时降低precision，当前仍只有
-30个真实train完整场景，且真实数据没有防松线端点和NORMAL/LOOSE状态真值。既有S/M-P2与本轮
-mixed P2均未通过高准确率门，因此不允许把结果表述为生产准确率、打开sealed-test或接入Android。
+带防松标记检查点的候选和全图审计闭环已实现。2026-08-31完成单类YOLO-P2候选与三分类
+MobileNetV3-Small复核：在17个同源开发val场景、75个marked-point真值上，经双分数保底和IoU 0.3
+去重后保持75/75覆盖，平均18.35候选/图，首次通过开发集召回/平均负担门。最密集单图仍有51个候选，
+且阈值使用同一val选择；sealed test未打开、尚无跨车辆或手机证据，因此不允许表述为生产准确率。
+真实数据仍没有防松线端点和NORMAL/LOOSE状态真值，松动状态判断尚未完成。
 
 ## Run
 
@@ -197,12 +198,11 @@ git status --short
 
 ## Next Smallest Action
 
-先用现有30个train/17个val场景启动单类marked-point YOLO-P2三seed研究训练，训练视图同时包含原图与
-2×2重叠切片；随后用scene隔离的真实候选裁剪训练MobileNetV3复核器，并按模型误差只补最高分FP和
-低分TP附近hard negatives。达到同源val门后，新增至少100–150个跨设备/光照真实场景再做封存验证；
-另采集同一检查点受控NORMAL/LOOSE成对照片并标注两段防松线端点、可见性和状态。状态头不得用合成
-val自证准确。建立全新独立测试集并通过precision/recall/完整场景门后，再接入Android runtime
-并在指定手机连续热机50次测端到端P50/P95；同时在指定手机与CY01眼镜上复验BLE连接和照片同步。
+冻结当前E1+E4开发基线与阈值，新增至少100–150个跨车辆、跨设备、跨光照真实完整场景，并在新数据上
+复核全图漏标与三类语义；模型、阈值和NMS冻结后再打开一次独立sealed test。另采集同一检查点受控
+NORMAL/LOOSE成对照片，标注固定侧/活动侧两段防松线端点、可见性和维护人员确认状态；状态头不得用
+ImageGen或单张历史图自证准确。独立测试通过后再导出移动端模型，在指定手机连续热机50次测端到端
+P50/P95和内存，并在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
 ## Evidence
 
@@ -229,4 +229,6 @@ val自证准确。建立全新独立测试集并通过precision/recall/完整场
   真实受控状态数据切换结论。
 - `docs/research/2026-08-31-yolo-accuracy-recovery/draft.md`：YOLO误差根因、两阶段准确率恢复路线、
   DINOv3边界与固定实验门。
+- `docs/validation/2026-08-31-marked-point-model-recovery.md`：E1/E2/E3/E4训练、失败实验、三分类复核、
+  双分数与去重后的75/75、18.35候选/图开发门及能力边界。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。
