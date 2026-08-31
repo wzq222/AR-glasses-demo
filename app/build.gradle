@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+def crrcVisionModelDir = System.getenv('CRRC_VISION_MODEL_DIR')
+def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
+
+task prepareFilteredJniLibs(type: Sync) {
+    from('src/main/jniLibs') {
+        exclude '**/libonnxruntime.so'
+    }
+    into filteredJniLibsDir
+}
+
 android {
     compileSdkVersion 34
     buildToolsVersion "34.0.0"
@@ -36,6 +46,14 @@ android {
     lintOptions {
         abortOnError false
     }
+    sourceSets {
+        main {
+            if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
+                assets.srcDir crrcVisionModelDir
+            }
+            jniLibs.srcDirs = [filteredJniLibsDir]
+        }
+    }
     packagingOptions {
         exclude 'META-INF/DEPENDENCIES'
         // jniLibs 与 onnxruntime-android AAR 均提供 libonnxruntime.so /
@@ -71,3 +89,5 @@ dependencies {
 
     testImplementation 'junit:junit:4.13.2'
 }
+
+preBuild.dependsOn prepareFilteredJniLibs
