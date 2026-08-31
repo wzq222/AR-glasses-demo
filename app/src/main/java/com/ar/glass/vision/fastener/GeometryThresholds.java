@@ -15,7 +15,10 @@ public final class GeometryThresholds {
             float maximumGapRatio,
             float maximumResidualRatio,
             boolean calibrated) {
-        if (calibrated && (maximumAngleDegrees < 0f || maximumAngleDegrees > 90f
+        if (calibrated && (!isFinite(maximumAngleDegrees)
+                || !isFinite(maximumGapRatio)
+                || !isFinite(maximumResidualRatio)
+                || maximumAngleDegrees < 0f || maximumAngleDegrees > 90f
                 || maximumGapRatio < 0f || maximumResidualRatio < 0f)) {
             throw new IllegalArgumentException("Geometry thresholds are outside valid ranges");
         }
@@ -33,4 +36,8 @@ public final class GeometryThresholds {
     public float getMaximumGapRatio() { return maximumGapRatio; }
     public float getMaximumResidualRatio() { return maximumResidualRatio; }
     public boolean isCalibrated() { return calibrated; }
+
+    private static boolean isFinite(float value) {
+        return !Float.isNaN(value) && !Float.isInfinite(value);
+    }
 }

@@ -2,6 +2,8 @@ package com.ar.glass.vision;
 
 import android.graphics.Bitmap;
 
+import com.ar.glass.vision.fastener.FastenerState;
+
 /**
  * 识别接口的占位实现（预留）。
  *
@@ -20,9 +22,15 @@ public class DefaultImageAnalyzer implements ImageAnalyzer {
     }
 
     @Override
+    @Deprecated
     public boolean isNutLoose(Bitmap bitmap) {
-        // TODO 接入防松线错位检测
-        return false;
+        return analyzeAntiLooseState(bitmap) == FastenerState.DISPLACED;
+    }
+
+    @Override
+    public FastenerState analyzeAntiLooseState(Bitmap bitmap) {
+        // 状态模型、拓扑、端点和真实标定阈值未齐备时必须拒判。
+        return FastenerState.INSUFFICIENT;
     }
 
     @Override

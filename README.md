@@ -131,7 +131,8 @@ CY01 使用两套 BLE 服务：
 位于 `com.ar.glass.vision` 包，定义三个能力：
 
 - `decodeQrCode(Bitmap)` —— 二维码识别，返回二维码内容
-- `isNutLoose(Bitmap)` —— 防松线错位检测（螺母松动）
+- `analyzeAntiLooseState(Bitmap)` —— 防松标记相对位移四态结果
+- `isNutLoose(Bitmap)` —— 仅供旧调用兼容；会丢失损坏/拒判语义，新代码禁用
 - `readMeterValue(Bitmap)` —— 电压表数字识别
 
 默认实现 `DefaultImageAnalyzer` 为占位实现，待接入 ZXing / ML Kit / OCR 等算法；UI 层统一通过 `Vision.get()` 调用。
@@ -154,7 +155,8 @@ $env:CRRC_VISION_DATA_ROOT='E:\Work\京新数智\识动hicool\中车眼镜数据
 
 最后一条命令是强制质量门：只要仍有未复核标注或抽检精确率低于80%，就拒绝训练。Android侧的
 `com.ar.glass.vision.fastener` 已定义全图多目标结果和几何判定；没有现场标定阈值时只返回
-`UNCERTAIN`，当前不代表检测模型已接入。
+`INSUFFICIENT`。正式状态为`ALIGNED / DISPLACED / DAMAGED_MARK / INSUFFICIENT`；当前不代表
+检测或状态模型已经接入默认Android分析器。
 
 ## 依赖
 

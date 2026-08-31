@@ -2,6 +2,8 @@ package com.ar.glass.vision;
 
 import android.graphics.Bitmap;
 
+import com.ar.glass.vision.fastener.FastenerState;
+
 /**
  * 图像识别接口（预留）。
  *
@@ -21,12 +23,19 @@ public interface ImageAnalyzer {
     String decodeQrCode(Bitmap bitmap);
 
     /**
-     * 检测图片中螺母防松线是否错位（即螺母是否松动）。
+     * 兼容旧调用；新代码必须使用 analyzeAntiLooseState 保留拒判语义。
      *
-     * @param bitmap 待检测的图片
-     * @return true 表示防松线错位（螺母松动）；false 表示未松动或未检测到
+     * @return 仅 DISPLACED 返回 true；ALIGNED、DAMAGED_MARK 和 INSUFFICIENT 均返回 false
      */
+    @Deprecated
     boolean isNutLoose(Bitmap bitmap);
+
+    /**
+     * 判断防松标记所指示的相对位移，不声称螺栓预紧力或剩余扭矩。
+     */
+    default FastenerState analyzeAntiLooseState(Bitmap bitmap) {
+        return FastenerState.INSUFFICIENT;
+    }
 
     /**
      * 识别电压表屏幕上的数字读数。
