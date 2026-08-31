@@ -12,12 +12,30 @@ public final class Rgba8888Converter {
             int height,
             int rowStride,
             int pixelStride) {
+        int[] pixels = new int[checkedPixelCount(width, height)];
+        toArgb(plane, width, height, rowStride, pixelStride, pixels);
+        return pixels;
+    }
+
+    public static void toArgb(
+            byte[] plane,
+            int width,
+            int height,
+            int rowStride,
+            int pixelStride,
+            int[] destination) {
         if (plane == null) {
             throw new IllegalArgumentException("plane must not be null");
         }
-        int minimumRowBytes = (width - 1) * pixelStride + RGBA_BYTES;
-        if (width <= 0 || height <= 0 || pixelStride < RGBA_BYTES
-                || rowStride < minimumRowBytes) {
+        int pixelCount = checkedPixelCount(width, height);
+        if (destination == null || destination.length < pixelCount) {
+            throw new IllegalArgumentException("destination is shorter than the frame");
+        }
+        if (pixelStride < RGBA_BYTES) {
+            throw new IllegalArgumentException("invalid RGBA pixel stride");
+        }
+        long minimumRowBytes = (long) (width - 1) * pixelStride + RGBA_BYTES;
+        if (rowStride < minimumRowBytes) {
             throw new IllegalArgumentException("invalid RGBA plane dimensions or strides");
         }
         long requiredBytes = (long) (height - 1) * rowStride
@@ -26,21 +44,26 @@ public final class Rgba8888Converter {
             throw new IllegalArgumentException("RGBA plane is shorter than its strides require");
         }
 
-        int[] pixels = new int[width * height];
         for (int y = 0; y < height; y++) {
             int rowOffset = y * rowStride;
             for (int x = 0; x < width; x++) {
                 int sourceOffset = rowOffset + x * pixelStride;
-                int red = plane[sourceOffset] & 0xFF;
-                int green = plane[sourceOffset + 1] & 0xFF;
-                int blue = plane[sourceOffset + 2] & 0xFF;
-                int alpha = plane[sourceOffset + 3] & 0xFF;
-                pixels[y * width + x] = (alpha << 24)
+                int alpha = plane[sourceOffset] & 0xFF;
+                int red = plane[sourceOffset + 1] & 0xFF;
+                int green = plane[sourceOffset + 2] & 0xFF;
+                int blue = plane[sourceOffset + 3] & 0xFF;
+                destination[y * width + x] = (alpha << 24)
                         | (red << 16)
                         | (green << 8)
                         | blue;
             }
         }
-        return pixels;
+    }
+
+    private static int checkedPixelCount(int width, int height) {
+        if (width <= 0 || height <= 0 || width > Integer.MAX_VALUE / height) {
+            throw new IllegalArgumentException("frame dimensions must be positive and bounded");
+        }
+        return width * height;
     }
 }

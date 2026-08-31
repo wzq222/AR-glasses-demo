@@ -43,4 +43,13 @@ public class FrameRotationTest {
         assertEquals(2, frame.getHeight());
         assertArrayEquals(new int[] {2, 4, 6, 1, 3, 5}, frame.copyPixels());
     }
+
+    @Test
+    public void rotateIntoWritesIntoReusableDestinationWithoutAllocatingAResultArray() {
+        int[] destination = {-1, -1, -1, -1, -1, -1, 12345};
+
+        FrameRotation.rotateInto(SOURCE, 2, 3, 90, destination);
+
+        assertArrayEquals(new int[] {5, 3, 1, 6, 4, 2, 12345}, destination);
+    }
 }

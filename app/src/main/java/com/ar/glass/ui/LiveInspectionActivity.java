@@ -29,6 +29,8 @@ import com.ar.glass.vision.realtime.Rgba8888Converter;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,6 +53,10 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private ProcessCameraProvider cameraProvider;
     private ImageAnalysis imageAnalysis;
     private byte[] planeBytes;
+    private int[] sourcePixels;
+    private int[] rotatedPixels;
+    private final List<Bitmap> frameBitmaps = new ArrayList<>();
+    private Bitmap frameBitmap;
     private long previousResultAtMillis;
 
     @Override
@@ -116,13 +122,10 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             cameraProvider.unbindAll();
             cameraProvider = null;
         }
-        if (inferenceExecutor != null) {
-            inferenceExecutor.shutdownNow();
-        }
-        OnnxFastenerDetector currentDetector = detector;
-        detector = null;
-        if (currentDetector != null) {
-            currentDetector.close();
+        ExecutorService executor = inferenceExecutor;
+        if (executor != null) {
+            executor.execute(this::closeInferenceResources);
+            executor.shutdown();
         }
         super.onDestroy();
     }
@@ -217,7 +220,6 @@ public final class LiveInspectionActivity extends AppCompatActivity {
 
     private void analyzeFrame(ImageProxy image) {
         boolean acquired = false;
-        Bitmap inferenceBitmap = null;
         try {
             OnnxFastenerDetector currentDetector = detector;
             if (destroyed || currentDetector == null || !currentDetector.isReady()) {
@@ -228,7 +230,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             }
             acquired = true;
 
-            inferenceBitmap = createRotatedBitmap(image);
+            Bitmap inferenceBitmap = createRotatedBitmap(image);
             OnnxFastenerDetector.DetectionResult result =
                     currentDetector.detect(inferenceBitmap);
             long completedAtMillis = SystemClock.elapsedRealtime();
@@ -245,9 +247,6 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 }
             });
         } finally {
-            if (inferenceBitmap != null && !inferenceBitmap.isRecycled()) {
-                inferenceBitmap.recycle();
-            }
             if (acquired) {
                 inferenceGate.release();
             }
@@ -269,28 +268,80 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         }
         buffer.get(planeBytes, 0, byteCount);
 
-        int[] argb = Rgba8888Converter.toArgb(
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int pixelCount = width * height;
+        if (sourcePixels == null || sourcePixels.length < pixelCount) {
+            sourcePixels = new int[pixelCount];
+        }
+        if (rotatedPixels == null || rotatedPixels.length < pixelCount) {
+            rotatedPixels = new int[pixelCount];
+        }
+
+        Rgba8888Converter.toArgb(
                 planeBytes,
-                image.getWidth(),
-                image.getHeight(),
+                width,
+                height,
                 plane.getRowStride(),
-                plane.getPixelStride());
-        FrameRotation.RotatedFrame rotated = FrameRotation.rotate(
-                argb,
-                image.getWidth(),
-                image.getHeight(),
-                image.getImageInfo().getRotationDegrees());
-        Bitmap bitmap = Bitmap.createBitmap(
-                rotated.getWidth(), rotated.getHeight(), Bitmap.Config.ARGB_8888);
-        bitmap.setPixels(
-                rotated.copyPixels(),
+                plane.getPixelStride(),
+                sourcePixels);
+        int rotationDegrees = image.getImageInfo().getRotationDegrees();
+        FrameRotation.rotateInto(
+                sourcePixels,
+                width,
+                height,
+                rotationDegrees,
+                rotatedPixels);
+
+        int rotatedWidth = rotationDegrees == 90 || rotationDegrees == 270
+                ? height : width;
+        int rotatedHeight = rotationDegrees == 90 || rotationDegrees == 270
+                ? width : height;
+        if (frameBitmap == null
+                || frameBitmap.getWidth() != rotatedWidth
+                || frameBitmap.getHeight() != rotatedHeight) {
+            frameBitmap = findOrCreateFrameBitmap(rotatedWidth, rotatedHeight);
+        }
+        frameBitmap.setPixels(
+                rotatedPixels,
                 0,
-                rotated.getWidth(),
+                rotatedWidth,
                 0,
                 0,
-                rotated.getWidth(),
-                rotated.getHeight());
+                rotatedWidth,
+                rotatedHeight);
+        return frameBitmap;
+    }
+
+    private Bitmap findOrCreateFrameBitmap(int width, int height) {
+        for (Bitmap bitmap : frameBitmaps) {
+            if (!bitmap.isRecycled()
+                    && bitmap.getWidth() == width
+                    && bitmap.getHeight() == height) {
+                return bitmap;
+            }
+        }
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        frameBitmaps.add(bitmap);
         return bitmap;
+    }
+
+    private void closeInferenceResources() {
+        OnnxFastenerDetector currentDetector = detector;
+        detector = null;
+        if (currentDetector != null) {
+            currentDetector.close();
+        }
+        for (Bitmap bitmap : frameBitmaps) {
+            if (!bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
+        }
+        frameBitmaps.clear();
+        frameBitmap = null;
+        planeBytes = null;
+        sourcePixels = null;
+        rotatedPixels = null;
     }
 
     private void postResult(

@@ -7,22 +7,38 @@ public final class FrameRotation {
     }
 
     public static RotatedFrame rotate(int[] source, int width, int height, int clockwiseDegrees) {
-        if (source == null || width <= 0 || height <= 0 || source.length != width * height) {
-            throw new IllegalArgumentException("pixels must match positive frame dimensions");
+        int outputWidth = clockwiseDegrees == 90 || clockwiseDegrees == 270
+                ? height : width;
+        int outputHeight = clockwiseDegrees == 90 || clockwiseDegrees == 270
+                ? width : height;
+        int[] output = new int[checkedPixelCount(width, height)];
+        rotateInto(source, width, height, clockwiseDegrees, output);
+        return new RotatedFrame(output, outputWidth, outputHeight);
+    }
+
+    public static void rotateInto(
+            int[] source,
+            int width,
+            int height,
+            int clockwiseDegrees,
+            int[] destination) {
+        int pixelCount = checkedPixelCount(width, height);
+        if (source == null || source.length < pixelCount
+                || destination == null || destination.length < pixelCount) {
+            throw new IllegalArgumentException("pixel buffers must contain the full frame");
         }
         if (clockwiseDegrees != 0 && clockwiseDegrees != 90
                 && clockwiseDegrees != 180 && clockwiseDegrees != 270) {
             throw new IllegalArgumentException("rotation must be 0, 90, 180, or 270 degrees");
         }
-
+        if (source == destination && clockwiseDegrees != 0) {
+            throw new IllegalArgumentException("rotated output requires a distinct destination");
+        }
         int outputWidth = clockwiseDegrees == 90 || clockwiseDegrees == 270
                 ? height : width;
-        int outputHeight = clockwiseDegrees == 90 || clockwiseDegrees == 270
-                ? width : height;
-        int[] output = new int[source.length];
 
         if (clockwiseDegrees == 0) {
-            System.arraycopy(source, 0, output, 0, source.length);
+            System.arraycopy(source, 0, destination, 0, pixelCount);
         } else {
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
@@ -38,11 +54,17 @@ public final class FrameRotation {
                         targetX = y;
                         targetY = width - 1 - x;
                     }
-                    output[targetY * outputWidth + targetX] = source[y * width + x];
+                    destination[targetY * outputWidth + targetX] = source[y * width + x];
                 }
             }
         }
-        return new RotatedFrame(output, outputWidth, outputHeight);
+    }
+
+    private static int checkedPixelCount(int width, int height) {
+        if (width <= 0 || height <= 0 || width > Integer.MAX_VALUE / height) {
+            throw new IllegalArgumentException("frame dimensions must be positive and bounded");
+        }
+        return width * height;
     }
 
     public static final class RotatedFrame {
