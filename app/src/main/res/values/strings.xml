@@ -12,7 +12,8 @@
     <string name="live_camera_permission_denied">相机权限未授予，请在系统设置中授权后重试</string>
     <string name="live_camera_start_failed">相机启动失败，请返回后重试</string>
     <string name="live_model_ready">模型状态：内部候选检测已就绪</string>
-    <string name="live_model_initialization_error">模型状态：未就绪，请安装包含内部检测模型的测试版本</string>
+    <string name="live_model_missing">模型状态：模型未打包，请安装包含内部检测模型的测试版本</string>
+    <string name="live_model_initialization_error">模型状态：初始化失败，请重启应用；仍失败请重新安装测试版本</string>
     <string name="live_frame_inference_failed">模型状态：已就绪（上一帧处理失败，正在继续）</string>
     <string name="live_metrics_format">候选数：%1$d　推理：%2$.0f ms　近似FPS：%3$.1f</string>
 </resources>

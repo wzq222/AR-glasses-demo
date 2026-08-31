@@ -48,10 +48,10 @@ public final class Rgba8888Converter {
             int rowOffset = y * rowStride;
             for (int x = 0; x < width; x++) {
                 int sourceOffset = rowOffset + x * pixelStride;
-                int alpha = plane[sourceOffset] & 0xFF;
-                int red = plane[sourceOffset + 1] & 0xFF;
-                int green = plane[sourceOffset + 2] & 0xFF;
-                int blue = plane[sourceOffset + 3] & 0xFF;
+                int red = plane[sourceOffset] & 0xFF;
+                int green = plane[sourceOffset + 1] & 0xFF;
+                int blue = plane[sourceOffset + 2] & 0xFF;
+                int alpha = plane[sourceOffset + 3] & 0xFF;
                 destination[y * width + x] = (alpha << 24)
                         | (red << 16)
                         | (green << 8)

@@ -3,7 +3,7 @@ package com.ar.glass.vision.realtime;
 public final class InferenceGate {
     private final long minimumIntervalMillis;
     private boolean inFlight;
-    private long lastStartedAtMillis = Long.MIN_VALUE;
+    private long lastCompletedAtMillis = Long.MIN_VALUE;
 
     public InferenceGate(long minimumIntervalMillis) {
         if (minimumIntervalMillis < 0L) {
@@ -16,16 +16,16 @@ public final class InferenceGate {
         if (inFlight) {
             return false;
         }
-        if (lastStartedAtMillis != Long.MIN_VALUE
-                && nowMillis - lastStartedAtMillis < minimumIntervalMillis) {
+        if (lastCompletedAtMillis != Long.MIN_VALUE
+                && nowMillis - lastCompletedAtMillis < minimumIntervalMillis) {
             return false;
         }
         inFlight = true;
-        lastStartedAtMillis = nowMillis;
         return true;
     }
 
-    public synchronized void release() {
+    public synchronized void release(long completedAtMillis) {
         inFlight = false;
+        lastCompletedAtMillis = completedAtMillis;
     }
 }

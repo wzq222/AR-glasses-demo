@@ -158,10 +158,12 @@
 - 2026-09-01：独立手机相机候选测试页已接入640输入YOLOv8s-P2 ONNX，并安装到华为P20 Pro
   `CLT-AL00`。唯一launcher直接进入手机后置相机，不经过眼镜/BLE/Wi-Fi流程；模型状态和候选框
   叠加显示，松动状态固定拒判。最终APK SHA-256为
-  `FEBAFA80751E8CA0D753CC517CB72AEA15EF306CC6AE7D37C2AF0FE9D9B11B95`，内嵌模型哈希与外部导出
-  一致。17次连续空场景推理端到端P50/P95为1915.2/2033.6ms，中位0.52 FPS，约329MB PSS；
-  NNAPI和XNNPACK在该麒麟970设备上更慢，最终采用CPU 4线程。47项Android测试、337项Python测试
-  通过，正式真值哈希保持不变。该结果验证手机端运行链，不代表现场准确率或松动状态能力。
+  `62CFAD971957D410C51FC58D7F938AEA4D276E881413184A75AA0C600FCF84F1`，内嵌模型哈希与外部导出
+  一致。推理后冷却1秒时，9次连续推理端到端P50/P95为1926.2/1951.1ms，中位0.33次/秒更新，
+  约330MB PSS；不节流持续满载会因CPU约66°C及大核降频恶化到3.6–5秒/次。NNAPI和XNNPACK在
+  该麒麟970设备上更慢，最终采用CPU 4线程。CameraX输入已按RGBA实际字节顺序修正，并让预览与
+  分析共享ViewPort和cropRect。50项Android测试、337项Python测试通过，正式真值哈希保持不变。
+  该结果验证手机端运行链，不代表现场准确率或松动状态能力。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为

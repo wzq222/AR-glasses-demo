@@ -32,6 +32,7 @@ public class MainActivityLiveInspectionContractTest {
         assertNotEquals(0, R.string.live_camera_permission_denied);
         assertNotEquals(0, R.string.live_camera_start_failed);
         assertNotEquals(0, R.string.live_model_ready);
+        assertNotEquals(0, R.string.live_model_missing);
         assertNotEquals(0, R.string.live_model_initialization_error);
         assertNotEquals(0, R.string.live_frame_inference_failed);
         assertNotEquals(0, R.string.live_metrics_format);

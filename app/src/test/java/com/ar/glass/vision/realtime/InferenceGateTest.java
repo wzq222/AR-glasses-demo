@@ -7,14 +7,14 @@ import static org.junit.Assert.assertTrue;
 
 public class InferenceGateTest {
     @Test
-    public void allowsOnlyOneInferenceAndThrottlesStartsForFiveHundredMilliseconds() {
-        InferenceGate gate = new InferenceGate(500L);
+    public void allowsOnlyOneInferenceAndCoolsDownAfterCompletion() {
+        InferenceGate gate = new InferenceGate(1_000L);
 
         assertTrue(gate.tryAcquire(1_000L));
         assertFalse(gate.tryAcquire(2_000L));
 
-        gate.release();
-        assertFalse(gate.tryAcquire(1_499L));
-        assertTrue(gate.tryAcquire(1_500L));
+        gate.release(3_000L);
+        assertFalse(gate.tryAcquire(3_999L));
+        assertTrue(gate.tryAcquire(4_000L));
     }
 }

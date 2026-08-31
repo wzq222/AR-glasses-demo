@@ -3,6 +3,7 @@ package com.ar.glass.ui;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
@@ -16,12 +17,15 @@ import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
+import androidx.camera.core.UseCaseGroup;
+import androidx.camera.core.ViewPort;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.ar.glass.R;
+import com.ar.glass.vision.realtime.FrameCropper;
 import com.ar.glass.vision.realtime.FrameRotation;
 import com.ar.glass.vision.realtime.InferenceGate;
 import com.ar.glass.vision.realtime.OnnxFastenerDetector;
@@ -37,9 +41,9 @@ import java.util.concurrent.Executors;
 public final class LiveInspectionActivity extends AppCompatActivity {
     private static final String TAG = "LiveInspection";
     private static final int CAMERA_PERMISSION_REQUEST = 41;
-    private static final long INFERENCE_INTERVAL_MILLIS = 500L;
+    private static final long INFERENCE_COOLDOWN_MILLIS = 1_000L;
 
-    private final InferenceGate inferenceGate = new InferenceGate(INFERENCE_INTERVAL_MILLIS);
+    private final InferenceGate inferenceGate = new InferenceGate(INFERENCE_COOLDOWN_MILLIS);
 
     private PreviewView previewView;
     private DetectionOverlayView overlayView;
@@ -53,6 +57,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private ImageAnalysis imageAnalysis;
     private byte[] planeBytes;
     private int[] sourcePixels;
+    private int[] croppedPixels;
     private int[] rotatedPixels;
     private final List<Bitmap> frameBitmaps = new ArrayList<>();
     private Bitmap frameBitmap;
@@ -155,9 +160,16 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 return;
             }
             detector = candidate;
-            int statusResource = candidate.isReady()
-                    ? R.string.live_model_ready
-                    : R.string.live_model_initialization_error;
+            String initializationError = candidate.getInitializationError();
+            int statusResource;
+            if (candidate.isReady()) {
+                statusResource = R.string.live_model_ready;
+            } else if (("模型未打包：" + OnnxFastenerDetector.MODEL_ASSET_NAME)
+                    .equals(initializationError)) {
+                statusResource = R.string.live_model_missing;
+            } else {
+                statusResource = R.string.live_model_initialization_error;
+            }
             if (!candidate.isReady()) {
                 Log.w(TAG, "Detector initialization failed: "
                         + candidate.getInitializationError());
@@ -181,22 +193,30 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> providerFuture =
                 ProcessCameraProvider.getInstance(this);
-        providerFuture.addListener(() -> {
-            if (destroyed || !cameraRequested) {
-                return;
-            }
-            try {
-                cameraProvider = providerFuture.get();
-                bindCameraUseCases();
-            } catch (Exception exception) {
-                Log.e(TAG, "Unable to start camera", exception);
-                metricsView.setText(R.string.live_camera_start_failed);
-            }
-        }, ContextCompat.getMainExecutor(this));
+        providerFuture.addListener(
+                () -> previewView.post(() -> {
+                    if (destroyed || !cameraRequested) {
+                        return;
+                    }
+                    try {
+                        cameraProvider = providerFuture.get();
+                        bindCameraUseCases();
+                    } catch (Exception exception) {
+                        Log.e(TAG, "Unable to start camera", exception);
+                        metricsView.setText(R.string.live_camera_start_failed);
+                    }
+                }),
+                ContextCompat.getMainExecutor(this));
     }
 
     private void bindCameraUseCases() {
         if (cameraProvider == null || destroyed || !cameraRequested) {
+            return;
+        }
+        ViewPort viewPort = previewView.getViewPort();
+        if (viewPort == null) {
+            Log.e(TAG, "Preview viewport is unavailable");
+            metricsView.setText(R.string.live_camera_start_failed);
             return;
         }
         cameraProvider.unbindAll();
@@ -214,11 +234,13 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         analysis.setAnalyzer(inferenceExecutor, this::analyzeFrame);
         imageAnalysis = analysis;
 
+        UseCaseGroup useCaseGroup = new UseCaseGroup.Builder()
+                .setViewPort(viewPort)
+                .addUseCase(preview)
+                .addUseCase(analysis)
+                .build();
         cameraProvider.bindToLifecycle(
-                this,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                analysis);
+                this, CameraSelector.DEFAULT_BACK_CAMERA, useCaseGroup);
     }
 
     private void analyzeFrame(ImageProxy image) {
@@ -251,7 +273,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             });
         } finally {
             if (acquired) {
-                inferenceGate.release();
+                inferenceGate.release(SystemClock.elapsedRealtime());
             }
             image.close();
         }
@@ -288,18 +310,34 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 plane.getRowStride(),
                 plane.getPixelStride(),
                 sourcePixels);
-        int rotationDegrees = image.getImageInfo().getRotationDegrees();
-        FrameRotation.rotateInto(
+        Rect cropRect = image.getCropRect();
+        int cropWidth = cropRect.width();
+        int cropHeight = cropRect.height();
+        int cropPixelCount = cropWidth * cropHeight;
+        if (croppedPixels == null || croppedPixels.length < cropPixelCount) {
+            croppedPixels = new int[cropPixelCount];
+        }
+        FrameCropper.cropInto(
                 sourcePixels,
                 width,
                 height,
+                cropRect.left,
+                cropRect.top,
+                cropRect.right,
+                cropRect.bottom,
+                croppedPixels);
+        int rotationDegrees = image.getImageInfo().getRotationDegrees();
+        FrameRotation.rotateInto(
+                croppedPixels,
+                cropWidth,
+                cropHeight,
                 rotationDegrees,
                 rotatedPixels);
 
         int rotatedWidth = rotationDegrees == 90 || rotationDegrees == 270
-                ? height : width;
+                ? cropHeight : cropWidth;
         int rotatedHeight = rotationDegrees == 90 || rotationDegrees == 270
-                ? width : height;
+                ? cropWidth : cropHeight;
         if (frameBitmap == null
                 || frameBitmap.getWidth() != rotatedWidth
                 || frameBitmap.getHeight() != rotatedHeight) {
@@ -344,6 +382,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         frameBitmap = null;
         planeBytes = null;
         sourcePixels = null;
+        croppedPixels = null;
         rotatedPixels = null;
     }
 
