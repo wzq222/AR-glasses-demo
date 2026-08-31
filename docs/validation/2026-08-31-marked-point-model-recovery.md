@@ -5,8 +5,9 @@
 ## 结论
 
 同源开发验证门首次通过：在17个场景、75个`marked_point`真值上，E1单类YOLO-P2候选、
-E4三分类MobileNetV3-Small复核、双分数保底和IoU 0.3去重的组合保持75/75覆盖，最终保留
-312个候选，平均18.35个/图，中位数18个/图，满足开发门的召回100%与平均不超过20个/图。
+E4三分类MobileNetV3-Small复核、双分数保底和IoU 0.3去重的组合保持75/75覆盖。后续三固定seed
+复核发现单模型负担不稳定；三个seed的等权几何均值为17.59个/图，单模型权重平均挑战者为
+19.71个/图，两者均保持75/75。当前推荐保留单模型权重平均版本进入跨设备挑战，不直接接入生产。
 
 这不是生产准确率。阈值在同一17场景开发验证集上选择，数据来自同一次采集；sealed test没有打开，
 没有跨车辆、跨设备或手机端时延证据。最密集单图仍有51个候选，禁止硬截断为Top-20，因为该策略
@@ -62,12 +63,34 @@ E4回灌全部E1验证候选后的逐级结果：
 最终312个候选中，106个候选与现有正真值相关，206个按现有正真值不相关。该candidate relevance不是
 业务precision：多个候选可覆盖同一真值，且验证真值只定义检查点框，不定义防松线端点与状态。
 
+### E4三seed稳定性与单模型权重平均
+
+按固定seed `20260828/20260829/20260830`、相同数据、6轮和相同门完成复训；最佳轮分别为3、3、2。
+回灌同一1070个E1候选后：
+
+| 模型 | 真值覆盖 | 候选/图 | ≤20门 |
+|---|---:|---:|---:|
+| seed 20260828 | 75/75 | 22.47 | 失败 |
+| seed 20260829 | 75/75 | 17.29 | 通过 |
+| seed 20260830 | 75/75 | 23.24 | 失败 |
+| 三seed等权算术均值 | 75/75 | 18.71 | 通过 |
+| 三seed等权几何均值 | 75/75 | 17.59 | 通过 |
+| 三seed权重平均单模型 | 75/75 | 19.71 | 通过 |
+
+因此高召回在三个seed均稳定，但单seed候选负担不稳定，`single_model_all_passed=false`。等权几何均值
+不拟合额外权重，能压制只有一个seed高分的干扰候选，但手机需三次ROI推理。权重平均只运行一个
+MobileNetV3-Small，浮点状态等权平均，BatchNorm计数取最大，其他非浮点状态不一致即拒绝；其权重
+SHA-256为`40E3BCF8114C0C3754E329B54775D02471C22307F9656FF47BEC56D9BA622AE5`。该版本距离20门
+仅余0.29个/图，不构成跨域稳健证据；仅作为下一批真实数据的单模型挑战者。
+
 ## 可复现资产
 
 - E1门：`E:/crrc_vision_data/runs/marked-point-p2-e1-pilot/gate-fused.json`
 - E4语义数据：`E:/crrc_vision_data/runs/marked-point-verifier-e4/semantic-dataset/manifest.json`
 - E4权重：`E:/crrc_vision_data/runs/marked-point-verifier-e4/mobilenetv3-small-semantic/best.pt`
 - 端到端报告：`E:/crrc_vision_data/runs/marked-point-verifier-e4/e1-candidate-predictions.json`
+- 三seed与等权集成报告：`E:/crrc_vision_data/runs/marked-point-verifier-e4/multiseed/ensemble-report.json`
+- 单模型权重平均挑战者：`E:/crrc_vision_data/runs/marked-point-verifier-e4/multiseed/model-soup-final/best.pt`
 - formal truth SHA-256：
   `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`，验证前后未变。
 - `python -m pytest ml/tests -q`：302 passed。

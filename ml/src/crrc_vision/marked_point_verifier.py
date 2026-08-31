@@ -40,6 +40,49 @@ class DualPipelineVerifierReport:
     total_truth: int
 
 
+def combine_verifier_predictions(
+    prediction_sets: Sequence[Sequence[Mapping[str, object]]],
+    *,
+    method: str,
+) -> list[dict[str, object]]:
+    """Combine candidate-aligned verifier scores without fitted ensemble weights."""
+    if len(prediction_sets) < 2:
+        raise ValueError("VERIFIER_ENSEMBLE_REQUIRES_MULTIPLE_MODELS")
+    if method not in {"mean", "geometric_mean"}:
+        raise ValueError(f"INVALID_VERIFIER_ENSEMBLE_METHOD:{method}")
+    lengths = {len(rows) for rows in prediction_sets}
+    if len(lengths) != 1:
+        raise ValueError("VERIFIER_ENSEMBLE_LENGTH_MISMATCH")
+    combined: list[dict[str, object]] = []
+    for aligned in zip(*prediction_sets, strict=True):
+        identities = {
+            (
+                row.get("prediction_index"),
+                row.get("image_id"),
+                tuple(row.get("candidate_bbox", [])),
+            )
+            for row in aligned
+        }
+        if len(identities) != 1:
+            raise ValueError("VERIFIER_ENSEMBLE_IDENTITY_MISMATCH")
+        scores = [float(row.get("score", float("nan"))) for row in aligned]
+        if any(not math.isfinite(score) or not 0.0 <= score <= 1.0 for score in scores):
+            raise ValueError("INVALID_VERIFIER_ENSEMBLE_SCORE")
+        if method == "mean":
+            score = sum(scores) / len(scores)
+        else:
+            score = math.prod(scores) ** (1.0 / len(scores))
+        combined.append(
+            {
+                **aligned[0],
+                "score": score,
+                "seed_scores": scores,
+                "ensemble_method": method,
+            }
+        )
+    return combined
+
+
 def _bbox(row: Mapping[str, object]) -> tuple[float, float, float, float]:
     value = row.get("bbox")
     if not isinstance(value, (list, tuple)) or len(value) != 4:

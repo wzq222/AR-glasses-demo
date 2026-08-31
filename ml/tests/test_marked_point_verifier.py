@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from crrc_vision.marked_point_verifier import (
+    combine_verifier_predictions,
     select_dual_pipeline_thresholds,
     select_semantic_review_examples,
     suppress_overlapping_candidates,
@@ -201,3 +204,28 @@ def test_semantic_nms_removes_duplicates_without_cross_image_suppression() -> No
         (1, 0.8),
         (2, 0.8),
     ]
+
+
+def test_verifier_ensemble_combines_only_identity_aligned_predictions() -> None:
+    first = [
+        {"prediction_index": 7, "image_id": 1, "score": 0.25},
+        {"prediction_index": 8, "image_id": 1, "score": 0.81},
+    ]
+    second = [
+        {"prediction_index": 7, "image_id": 1, "score": 1.0},
+        {"prediction_index": 8, "image_id": 1, "score": 0.01},
+    ]
+
+    mean = combine_verifier_predictions([first, second], method="mean")
+    geometric = combine_verifier_predictions([first, second], method="geometric_mean")
+
+    assert [row["score"] for row in mean] == [0.625, 0.41000000000000003]
+    assert [row["score"] for row in geometric] == pytest.approx([0.5, 0.09])
+
+
+def test_verifier_ensemble_rejects_misaligned_candidates() -> None:
+    first = [{"prediction_index": 7, "image_id": 1, "score": 0.5}]
+    second = [{"prediction_index": 8, "image_id": 1, "score": 0.5}]
+
+    with pytest.raises(ValueError, match="VERIFIER_ENSEMBLE_IDENTITY_MISMATCH"):
+        combine_verifier_predictions([first, second], method="mean")
