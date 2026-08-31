@@ -98,6 +98,26 @@ public class YoloPostprocessorTest {
         detections.add(detections.get(0));
     }
 
+    @Test
+    public void overloadUsesPublicDefaultThresholds() {
+        float[][] prediction = prediction(
+                new float[]{100f, 105f, 300f, 400f},
+                new float[]{100f, 105f, 300f, 400f},
+                new float[]{100f, 100f, 20f, 20f},
+                new float[]{100f, 100f, 20f, 20f},
+                new float[]{0.90f, 0.10f, 0.19f, 0.20f},
+                new float[]{0.10f, 0.80f, 0.10f, 0.05f});
+
+        List<Detection> detections = YoloPostprocessor.process(
+                prediction, 640, 640, 1f, 0f, 0f);
+
+        assertEquals(0.20f, YoloPostprocessor.DEFAULT_CONFIDENCE_THRESHOLD, EPSILON);
+        assertEquals(0.45f, YoloPostprocessor.DEFAULT_NMS_IOU_THRESHOLD, EPSILON);
+        assertEquals(2, detections.size());
+        assertEquals(0.90f, detections.get(0).getConfidence(), EPSILON);
+        assertEquals(0.20f, detections.get(1).getConfidence(), EPSILON);
+    }
+
     private static List<Detection> process(
             float[][] prediction, float confidenceThreshold, float nmsThreshold) {
         return YoloPostprocessor.process(
