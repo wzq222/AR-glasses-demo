@@ -174,7 +174,7 @@
   ROI完成MobileNetV3-Small多头训练和ONNX导出，PyTorch/ONNX数值一致性PASS，但最终合成mask IoU
   0.136、关键点P95 3.61px、角度mean/P95 3.37°/6.27°，严格质量门FAIL，
   `android_packaging_allowed=false`，没有把失败状态模型装进手机。基础/训练Python回归分别为
-  360 passed + 3 skipped / 372 passed，Android 56项测试和Debug APK构建通过，formal truth哈希未变。
+  361 passed + 3 skipped / 373 passed，Android 56项测试和Debug APK构建通过，formal truth哈希未变。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为

@@ -66,7 +66,7 @@
 
 ## 回归验证
 
-- 基础Python环境：`360 passed, 3 skipped`；训练环境补齐依赖后：`372 passed`。
+- 基础Python环境：`361 passed, 3 skipped`；训练环境补齐依赖后：`373 passed`。
 - Android：`56 tests, 0 failures, 0 skipped`。
 - Debug APK构建成功，65,125,685 bytes，SHA-256
   `B938BAB33B10FB7B95B6213C19D251437C476020FDDC875B0BD386F0FA129007`；该APK没有状态模型。
