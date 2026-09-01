@@ -22,5 +22,7 @@ public class LiveInspectionBackendContractTest {
         assertTrue(text.contains("private volatile FastenerDetector detector"));
         assertTrue(text.contains("DetectorFactory.create"));
         assertTrue(text.contains("BuildConfig.DETECTOR_BACKEND"));
+        assertTrue(text.contains("BuildConfig.NCNN_VULKAN"));
+        assertTrue(text.contains("BuildConfig.NCNN_VULKAN_FP16"));
     }
 }

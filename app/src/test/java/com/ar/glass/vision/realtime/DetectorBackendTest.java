@@ -1,6 +1,7 @@
 package com.ar.glass.vision.realtime;
 
 import android.graphics.Bitmap;
+import android.content.Context;
 
 import org.junit.Test;
 
@@ -45,6 +46,18 @@ public class DetectorBackendTest {
         assertEquals(640, NcnnFastenerDetector.INPUT_SIZE);
         assertEquals(6, NcnnFastenerDetector.OUTPUT_CHANNELS);
         assertEquals(34_000, NcnnFastenerDetector.OUTPUT_CANDIDATES);
+    }
+
+    @Test
+    public void ncnnExposesExplicitVulkanAndFp16Selections() throws Exception {
+        assertEquals(NcnnFastenerDetector.class,
+                NcnnFastenerDetector.class
+                        .getConstructor(
+                                Context.class,
+                                float.class,
+                                boolean.class,
+                                boolean.class)
+                        .getDeclaringClass());
     }
 
     @Test

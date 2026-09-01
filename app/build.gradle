@@ -7,6 +7,8 @@ def ncnnModelDir = System.getenv('CRRC_NCNN_MODEL_DIR')
 def ncnnJniBuildRoot = System.getenv('CRRC_NCNN_JNI_BUILD_ROOT')
 def ncnnConfidenceThreshold = (System.getenv('CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.20').toFloat()
 def ncnnExactMath = (System.getenv('CRRC_NCNN_EXACT_MATH') ?: '0') == '1'
+def ncnnVulkan = (System.getenv('CRRC_NCNN_VULKAN') ?: '0') == '1'
+def ncnnVulkanFp16 = (System.getenv('CRRC_NCNN_VULKAN_FP16') ?: '0') == '1'
 def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
 def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
 def filteredOnnxModelDir = file("$buildDir/generated/filteredOnnxModel")
@@ -55,7 +57,7 @@ android {
     buildToolsVersion "34.0.0"
     defaultConfig {
         applicationId "com.ar.glass"
-        minSdkVersion 22
+        minSdkVersion ncnnVulkan ? 24 : 22
         targetSdkVersion 33
         versionCode 1
         versionName "1.0.0"
@@ -63,6 +65,8 @@ android {
         buildConfigField 'String', 'DETECTOR_BACKEND', "\"${detectorBackend}\""
         buildConfigField 'float', 'NCNN_CONFIDENCE_THRESHOLD',
                 "${ncnnConfidenceThreshold}f"
+        buildConfigField 'boolean', 'NCNN_VULKAN', ncnnVulkan.toString()
+        buildConfigField 'boolean', 'NCNN_VULKAN_FP16', ncnnVulkanFp16.toString()
         ndk{
             abiFilters 'armeabi-v7a','arm64-v8a'
         }
@@ -167,6 +171,8 @@ if (detectorBackend == 'ncnn') {
             inputs.property 'ncnnAndroidRoot', normalizedNcnnRoot
             inputs.property 'androidAbi', abi
             inputs.property 'ncnnExactMath', ncnnExactMath
+            inputs.property 'ncnnVulkan', ncnnVulkan
+            inputs.property 'ncnnVulkanFp16', ncnnVulkanFp16
             outputs.file "${buildDirectory}/build.ninja"
             commandLine cmakeExecutable,
                     '-S', nativeSourceDir,
@@ -175,7 +181,7 @@ if (detectorBackend == 'ncnn') {
                     "-DCMAKE_MAKE_PROGRAM=${ninjaExecutable}",
                     "-DCMAKE_TOOLCHAIN_FILE=${toolchainFile}",
                     "-DANDROID_ABI=${abi}",
-                    '-DANDROID_PLATFORM=android-21',
+                    "-DANDROID_PLATFORM=${ncnnVulkan ? 'android-24' : 'android-21'}",
                     '-DANDROID_STL=c++_static',
                     '-DCMAKE_BUILD_TYPE=Release',
                     "-DCMAKE_INSTALL_PREFIX=${installDirectory}",

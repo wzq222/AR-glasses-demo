@@ -15,9 +15,27 @@ public final class DetectorFactory {
 
     public static FastenerDetector create(
             Context context, String buildValue, float ncnnConfidenceThreshold) {
+        return create(context, buildValue, ncnnConfidenceThreshold, false, false);
+    }
+
+    public static FastenerDetector create(
+            Context context,
+            String buildValue,
+            float ncnnConfidenceThreshold,
+            boolean ncnnVulkan) {
+        return create(context, buildValue, ncnnConfidenceThreshold, ncnnVulkan, false);
+    }
+
+    public static FastenerDetector create(
+            Context context,
+            String buildValue,
+            float ncnnConfidenceThreshold,
+            boolean ncnnVulkan,
+            boolean ncnnVulkanFp16) {
         DetectorBackend backend = DetectorBackend.fromBuildValue(buildValue);
         if (backend == DetectorBackend.NCNN) {
-            return new NcnnFastenerDetector(context, ncnnConfidenceThreshold);
+            return new NcnnFastenerDetector(
+                    context, ncnnConfidenceThreshold, ncnnVulkan, ncnnVulkanFp16);
         }
         return new OnnxFastenerDetector(context);
     }

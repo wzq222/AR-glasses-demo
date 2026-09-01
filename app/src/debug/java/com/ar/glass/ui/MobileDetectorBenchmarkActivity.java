@@ -41,7 +41,9 @@ public final class MobileDetectorBenchmarkActivity extends Activity {
         FastenerDetector detector = DetectorFactory.create(
                 getApplicationContext(),
                 BuildConfig.DETECTOR_BACKEND,
-                BuildConfig.NCNN_CONFIDENCE_THRESHOLD);
+                BuildConfig.NCNN_CONFIDENCE_THRESHOLD,
+                BuildConfig.NCNN_VULKAN,
+                BuildConfig.NCNN_VULKAN_FP16);
         try {
             if (!detector.isReady()) {
                 Log.e(TAG, "backend=" + BuildConfig.DETECTOR_BACKEND
@@ -61,7 +63,9 @@ public final class MobileDetectorBenchmarkActivity extends Activity {
         FastenerDetector detector = DetectorFactory.create(
                 getApplicationContext(),
                 BuildConfig.DETECTOR_BACKEND,
-                BuildConfig.NCNN_CONFIDENCE_THRESHOLD);
+                BuildConfig.NCNN_CONFIDENCE_THRESHOLD,
+                BuildConfig.NCNN_VULKAN,
+                BuildConfig.NCNN_VULKAN_FP16);
         try {
             File directory = new File(getFilesDir(), directoryName);
             File[] images = directory.listFiles(file -> {
