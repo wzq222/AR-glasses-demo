@@ -8,6 +8,7 @@ from crrc_vision.mobile_runtime_export import (
     build_cmake_configure_command,
     build_mnn_command,
     build_pnnx_command,
+    normalize_captured_output,
     validate_checkout,
 )
 
@@ -107,3 +108,8 @@ def test_checkout_must_match_pinned_revision(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="RUNTIME_REVISION_MISMATCH"):
         validate_checkout(checkout, "deadbeef")
+
+
+def test_captured_process_output_stays_binary_safe() -> None:
+    assert normalize_captured_output(None) == b""
+    assert normalize_captured_output(b"valid\xffbinary") == b"valid\xffbinary"

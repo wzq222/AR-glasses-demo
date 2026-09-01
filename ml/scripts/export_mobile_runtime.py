@@ -17,6 +17,7 @@ from crrc_vision.mobile_benchmark import (
 from crrc_vision.mobile_runtime_export import (
     build_mnn_command,
     build_pnnx_command,
+    normalize_captured_output,
     validate_checkout,
 )
 
@@ -92,9 +93,9 @@ def main() -> int:
     }
     if args.execute:
         started = time.perf_counter()
-        completed = subprocess.run(command, capture_output=True, text=True)
-        (run / "stdout.log").write_text(completed.stdout, encoding="utf-8")
-        (run / "stderr.log").write_text(completed.stderr, encoding="utf-8")
+        completed = subprocess.run(command, capture_output=True)
+        (run / "stdout.log").write_bytes(normalize_captured_output(completed.stdout))
+        (run / "stderr.log").write_bytes(normalize_captured_output(completed.stderr))
         artifacts = {
             str(path.relative_to(run)).replace("\\", "/"): sha256_file(path)
             for path in expected_outputs

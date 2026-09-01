@@ -6,6 +6,12 @@ import subprocess
 from pathlib import Path
 
 
+def normalize_captured_output(payload: bytes | None) -> bytes:
+    """Return captured subprocess output without applying a locale codec."""
+
+    return payload or b""
+
+
 def _required_file(path: Path) -> Path:
     resolved = path.resolve()
     if not resolved.is_file():
