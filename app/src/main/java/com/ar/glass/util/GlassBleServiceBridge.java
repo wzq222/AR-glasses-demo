@@ -1,0 +1,71 @@
+package com.ar.glass.util;
+
+import android.util.Log;
+
+import com.ar.glass.core.GlassBleService;
+
+/**
+ * ADB 调试命令 → GlassBleService 的静态桥（薄委托，服务未就绪时仅打日志）。
+ */
+public final class GlassBleServiceBridge {
+
+    private static final String TAG = "GlassDebug";
+
+    private GlassBleServiceBridge() {
+    }
+
+    public static void writeRaw(byte[] data) {
+        if (GlassBleService.debugInstance() != null) {
+            GlassBleService.debugWriteRaw(data);
+        } else {
+            Log.w(TAG, "writeRaw: 服务未就绪");
+        }
+    }
+
+    public static void takePhoto() {
+        if (GlassBleService.debugInstance() != null) {
+            GlassBleService.debugTakePhoto();
+        } else {
+            Log.w(TAG, "takePhoto: 服务未就绪");
+        }
+    }
+
+    public static void startSync() {
+        if (GlassBleService.debugInstance() != null) {
+            GlassBleService.debugStartSync();
+        } else {
+            Log.w(TAG, "startSync: 服务未就绪");
+        }
+    }
+
+    public static void stopHotspot() {
+        if (GlassBleService.debugInstance() != null) {
+            GlassBleService.debugStopHotspot();
+        } else {
+            Log.w(TAG, "stopHotspot: 服务未就绪");
+        }
+    }
+
+    /** 拍照后经 BLE 直传拉取照片 */
+    public static void bleGet() {
+        if (GlassBleService.debugInstance() != null) {
+            GlassBleService.debugBleGet();
+        } else {
+            Log.w(TAG, "bleGet: 服务未就绪");
+        }
+    }
+
+    /** 请求眼镜文件列表 */
+    public static void bleList() {
+        if (GlassBleService.debugInstance() != null) {
+            GlassBleService.debugBleList();
+        } else {
+            Log.w(TAG, "bleList: 服务未就绪");
+        }
+    }
+
+    /** BLE 文件接收进度 */
+    public static String bleProgress() {
+        return GlassBleService.debugBleProgress();
+    }
+}

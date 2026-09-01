@@ -342,7 +342,42 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- 运行日志卡片 -->
+            <!-- 回传进度卡片（默认隐藏，传输时显示） -->
+            <androidx.cardview.widget.CardView
+                android:id="@+id/cardTransfer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:visibility="gone"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:id="@+id/tvTransferStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="回传中..."
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="6dp"/>
+
+                    <ProgressBar
+                        android:id="@+id/pbTransfer"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 运行日志卡片（默认收起，点击标题展开/收起；日志仍全量记录在后台） -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -357,19 +392,21 @@
                     android:padding="14dp">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvLogToggle"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="运行日志"
+                        android:text="▶ 运行日志（点击展开）"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         android:textColor="#333333"
-                        android:layout_marginBottom="8dp"/>
+                        android:paddingBottom="8dp"/>
 
                     <TextView
                         android:id="@+id/tvLog"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:minHeight="150dp"
+                        android:visibility="gone"
                         android:text="等待连接眼镜...\n"
                         android:textSize="11sp"
                         android:textColor="#666666"

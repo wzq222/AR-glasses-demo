@@ -95,6 +95,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- ADB 调试控制接口（回传链路批量测试/验证） -->
+        <receiver
+            android:name=".util.GlassDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ar.glass.DEBUG" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

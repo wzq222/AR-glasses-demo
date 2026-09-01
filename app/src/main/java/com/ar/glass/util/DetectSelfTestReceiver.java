@@ -29,6 +29,11 @@ public class DetectSelfTestReceiver extends BroadcastReceiver {
 
     private static final String TAG = "DetectSelfTest";
 
+    /** 供 ADB 调试接口（GlassDebugReceiver）直接触发本机照片检测 */
+    public static void sendDetect(Context context) {
+        new DetectSelfTestReceiver().onReceive(context.getApplicationContext(), new Intent());
+    }
+
     @Override
     public void onReceive(Context context, Intent intent) {
         // 检索顺序：外部 glass_media/photos（真实同步路径）→ 内部 files/glass_media/photos（自测推入路径）

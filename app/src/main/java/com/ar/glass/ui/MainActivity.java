@@ -31,6 +31,7 @@ import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -68,6 +69,11 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvDeviceName;
     private TextView tvBatteryStatus;
     private TextView tvLog;
+    /** 日志区是否展开（默认收起：日志全量记录在后台，前台仅进度条） */
+    private boolean mLogExpanded = false;
+    private View cardTransfer;
+    private TextView tvTransferStatus;
+    private ProgressBar pbTransfer;
 
     private Button btnSyncPhotos;
     private Button btnGalleryOriginal;
@@ -125,6 +131,16 @@ public class MainActivity extends AppCompatActivity {
         tvDeviceName = findViewById(R.id.tvDeviceName);
         tvBatteryStatus = findViewById(R.id.tvBatteryStatus);
         tvLog = findViewById(R.id.tvLog);
+        cardTransfer = findViewById(R.id.cardTransfer);
+        tvTransferStatus = findViewById(R.id.tvTransferStatus);
+        pbTransfer = findViewById(R.id.pbTransfer);
+        // 日志区默认收起，点击标题展开/收起
+        TextView tvLogToggle = findViewById(R.id.tvLogToggle);
+        tvLogToggle.setOnClickListener(v -> {
+            mLogExpanded = !mLogExpanded;
+            tvLog.setVisibility(mLogExpanded ? View.VISIBLE : View.GONE);
+            tvLogToggle.setText(mLogExpanded ? "▼ 运行日志（点击收起）" : "▶ 运行日志（点击展开）");
+        });
 
         btnSyncPhotos = findViewById(R.id.btnSyncFiles);
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
@@ -446,6 +462,26 @@ public class MainActivity extends AppCompatActivity {
                     appendLog(logText);
                 }
                 break;
+
+            case EventMsg.MSG_TRANSFER_PROGRESS: {
+                int percent = msg.arg1;
+                String info = msg.obj != null ? (String) msg.obj : "";
+                if (percent == -1) {
+                    // 结束：隐藏进度卡片
+                    cardTransfer.setVisibility(View.GONE);
+                } else {
+                    cardTransfer.setVisibility(View.VISIBLE);
+                    tvTransferStatus.setText(info);
+                    if (percent == -2) {
+                        // 不确定进度（配网/等待中）：转圈
+                        pbTransfer.setIndeterminate(true);
+                    } else {
+                        pbTransfer.setIndeterminate(false);
+                        pbTransfer.setProgress(percent);
+                    }
+                }
+                break;
+            }
 
             case EventMsg.MSG_PHOTO_LIST:
                 Object listObj = msg.obj;
@@ -815,7 +851,16 @@ public class MainActivity extends AppCompatActivity {
     private void appendLog(String text) {
         // 日志已由 GlassBleService.postLog 写入 logcat，此处仅 UI 展示（避免重复）
         logBuilder.append(text).append("\n");
-        if (tvLog != null) {
+        // 限制内存中的日志量（保留最近 ~400 行，全量日志走 logcat）
+        int nl = 0, cut = 0;
+        String s = logBuilder.toString();
+        for (int i = s.length() - 1; i >= 0 && nl <= 400; i--) {
+            if (s.charAt(i) == '\n') nl++;
+            cut = i;
+        }
+        if (nl > 400) logBuilder.delete(0, cut + 1);
+        // 仅展开时刷新前台日志区（默认收起，避免刷屏）
+        if (mLogExpanded && tvLog != null) {
             tvLog.setText(logBuilder.toString());
             tvLog.post(() -> {
                 final int lineCount = tvLog.getLineCount();
