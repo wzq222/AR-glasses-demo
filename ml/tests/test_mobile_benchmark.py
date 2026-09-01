@@ -7,6 +7,8 @@ from crrc_vision.mobile_benchmark import (
     CandidateMetrics,
     PINNED_MNN_COMMIT,
     PINNED_NCNN_COMMIT,
+    build_parity_report,
+    compare_predictions,
     evaluate_candidate,
     prepare_benchmark_manifest,
 )
@@ -161,3 +163,63 @@ def test_manifest_rejects_unknown_or_unpinned_runtime(
             runtime_name=runtime_name,
             runtime_revision=runtime_revision,
         )
+
+
+def test_parity_rejects_missing_detection() -> None:
+    baseline = [{"image_id": 1, "bbox": [10, 10, 20, 20], "score": 0.8}]
+
+    result = compare_predictions(baseline, [], iou_threshold=0.95)
+
+    assert result.passed is False
+    assert result.missing == 1
+    assert result.reasons == ("MISSING_DETECTION",)
+
+
+def test_parity_accepts_small_numeric_drift() -> None:
+    baseline = [{"image_id": 1, "bbox": [10, 10, 20, 20], "score": 0.8}]
+    candidate = [{"image_id": 1, "bbox": [10.2, 9.9, 20, 20], "score": 0.795}]
+
+    result = compare_predictions(baseline, candidate, iou_threshold=0.95)
+
+    assert result.passed is True
+    assert result.max_coordinate_drift == pytest.approx(0.2)
+    assert result.max_score_drift == pytest.approx(0.005)
+
+
+def test_parity_rejects_unknown_image_and_large_numeric_drift() -> None:
+    baseline = [{"image_id": 1, "bbox": [10, 10, 20, 20], "score": 0.8}]
+    candidate = [
+        {"image_id": 1, "bbox": [11.1, 10, 20, 20], "score": 0.82},
+        {"image_id": 2, "bbox": [10, 10, 20, 20], "score": 0.8},
+    ]
+
+    result = compare_predictions(baseline, candidate, iou_threshold=0.85)
+
+    assert result.passed is False
+    assert result.unexpected == 1
+    assert result.reasons == (
+        "UNKNOWN_IMAGE",
+        "COORDINATE_DRIFT_TOO_HIGH",
+        "SCORE_DRIFT_TOO_HIGH",
+    )
+
+
+def test_parity_report_is_fail_closed_and_binds_prediction_hashes(tmp_path) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    candidate_path = tmp_path / "candidate.json"
+    baseline = [{"image_id": 1, "bbox": [10, 10, 20, 20], "score": 0.8}]
+    candidate = []
+    baseline_path.write_text("baseline", encoding="utf-8")
+    candidate_path.write_text("candidate", encoding="utf-8")
+
+    report = build_parity_report(
+        baseline,
+        candidate,
+        baseline_path=baseline_path,
+        candidate_path=candidate_path,
+        iou_threshold=0.95,
+    )
+
+    assert report["status"] == "parity_failed"
+    assert report["baseline_predictions_sha256"] == _sha256(baseline_path)
+    assert report["candidate_predictions_sha256"] == _sha256(candidate_path)
