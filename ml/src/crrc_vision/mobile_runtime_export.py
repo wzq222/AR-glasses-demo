@@ -54,6 +54,7 @@ def build_pnnx_command(
     output: Path,
     *,
     fp16: bool,
+    input_size: int = 640,
 ) -> list[str]:
     """Build a fixed-shape pnnx command with every artifact path explicit."""
 
@@ -63,7 +64,7 @@ def build_pnnx_command(
     return [
         str(executable),
         str(source),
-        "inputshape=[1,3,640,640]",
+        f"inputshape=[1,3,{input_size},{input_size}]",
         f"fp16={1 if fp16 else 0}",
         f"pnnxparam={root / 'model.pnnx.param'}",
         f"pnnxbin={root / 'model.pnnx.bin'}",

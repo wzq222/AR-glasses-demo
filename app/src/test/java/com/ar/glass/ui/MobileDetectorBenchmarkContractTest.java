@@ -23,8 +23,14 @@ public class MobileDetectorBenchmarkContractTest {
 
         assertTrue(text.contains("DetectorFactory.create"));
         assertTrue(text.contains("BuildConfig.DETECTOR_BACKEND"));
+        assertTrue(text.contains("BuildConfig.MARKED_POINT_VERIFIER_ENABLED"));
         assertTrue(text.contains("getFileStreamPath"));
         assertTrue(text.contains("getStringExtra(\"directory\")"));
+        assertTrue(text.contains("getBooleanExtra(\"detailed_boxes\", false)"));
+        assertTrue(text.contains("getStringExtra(\"run_token\")"));
+        assertTrue(text.contains("box image=%s index=%d class=%d"));
+        assertTrue(text.contains("run_token=%s"));
+        assertTrue(text.contains("complete images=%d run_token=%s"));
         assertTrue(text.contains("DetectorBenchmark"));
     }
 }

@@ -53,6 +53,14 @@ def main() -> int:
     parser.add_argument("--run", required=True)
     parser.add_argument("--max-images", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--input-size", type=int, default=640)
+    parser.add_argument("--output-channels", type=int, default=6)
+    parser.add_argument("--output-candidates", type=int, default=34_000)
+    parser.add_argument("--confidence-threshold", type=float, default=0.20)
+    parser.add_argument("--nms-iou-threshold", type=float, default=0.45)
+    parser.add_argument("--pre-nms-top-k", type=int, default=1_000)
+    parser.add_argument("--max-detections", type=int, default=100)
+    parser.add_argument("--category-id-offset", type=int, default=0)
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
     args = parser.parse_args()
 
@@ -108,7 +116,19 @@ def main() -> int:
             raise ValueError(f"IMAGE_HASH_MISMATCH:{item['id']}")
         image = _read_rgb(image_path)
         started = time.perf_counter()
-        detections = predict_image(infer, image, image_id=int(item["id"]))
+        detections = predict_image(
+            infer,
+            image,
+            image_id=int(item["id"]),
+            input_size=args.input_size,
+            output_channels=args.output_channels,
+            output_candidates=args.output_candidates,
+            confidence_threshold=args.confidence_threshold,
+            nms_iou_threshold=args.nms_iou_threshold,
+            pre_nms_top_k=args.pre_nms_top_k,
+            max_detections=args.max_detections,
+            category_id_offset=args.category_id_offset,
+        )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         predictions.extend(detections)
         timings.append(
@@ -130,6 +150,16 @@ def main() -> int:
         "runtime": args.runtime,
         "runtime_version": runtime_version,
         "threads": args.threads,
+        "model_contract": {
+            "input_size": args.input_size,
+            "output_channels": args.output_channels,
+            "output_candidates": args.output_candidates,
+            "confidence_threshold": args.confidence_threshold,
+            "nms_iou_threshold": args.nms_iou_threshold,
+            "pre_nms_top_k": args.pre_nms_top_k,
+            "max_detections": args.max_detections,
+            "category_id_offset": args.category_id_offset,
+        },
         "artifact_hashes": artifact_hashes,
         "dataset_sha256": sha256_file(dataset_path),
         "image_count": len(images),

@@ -43,9 +43,11 @@ public class DetectorBackendTest {
         assertEquals("model.ncnn.bin", NcnnFastenerDetector.BIN_ASSET_NAME);
         assertEquals("in0", NcnnFastenerDetector.INPUT_BLOB_NAME);
         assertEquals("out0", NcnnFastenerDetector.OUTPUT_BLOB_NAME);
-        assertEquals(640, NcnnFastenerDetector.INPUT_SIZE);
-        assertEquals(6, NcnnFastenerDetector.OUTPUT_CHANNELS);
-        assertEquals(34_000, NcnnFastenerDetector.OUTPUT_CANDIDATES);
+        assertEquals(512, NcnnFastenerDetector.INPUT_SIZE);
+        assertEquals(5, NcnnFastenerDetector.OUTPUT_CHANNELS);
+        assertEquals(21_760, NcnnFastenerDetector.OUTPUT_CANDIDATES);
+        assertEquals(0.70f, NcnnFastenerDetector.NMS_IOU_THRESHOLD, 0f);
+        assertEquals(300, NcnnFastenerDetector.MAX_DETECTIONS);
     }
 
     @Test
@@ -98,6 +100,94 @@ public class DetectorBackendTest {
                 prediction, 1, 640, 640, 1f, 0f, 0f).size());
         assertEquals(1, YoloPostprocessor.process(
                 prediction, 1, 640, 640, 1f, 0f, 0f, 0.19f, 0.45f).size());
+    }
+
+    @Test
+    public void flatNativeOutputSupportsTheSingleClassMarkedPointContract() {
+        FloatBuffer prediction = FloatBuffer.allocate(5);
+        prediction.put(0, 100f);
+        prediction.put(1, 100f);
+        prediction.put(2, 20f);
+        prediction.put(3, 20f);
+        prediction.put(4, 0.75f);
+
+        List<Detection> detections = YoloPostprocessor.process(
+                prediction,
+                5,
+                1,
+                512,
+                512,
+                1f,
+                0f,
+                0f,
+                0.001f,
+                0.70f,
+                1_000,
+                300);
+
+        assertEquals(1, detections.size());
+        assertEquals(0, detections.get(0).getClassId());
+        assertEquals(0.75f, detections.get(0).getConfidence(), 0f);
+    }
+
+    @Test
+    public void markedPointVerifierPinsTheValidatedBatchContract() {
+        assertEquals("marked-point-verifier.onnx", MarkedPointOnnxVerifier.MODEL_ASSET_NAME);
+        assertEquals(128, MarkedPointOnnxVerifier.INPUT_SIZE);
+        assertEquals(0.28198338f, MarkedPointOnnxVerifier.VERIFIER_THRESHOLD, 1.0e-7f);
+        assertEquals(0.96769285f, MarkedPointOnnxVerifier.PROPOSAL_BYPASS_THRESHOLD, 1.0e-7f);
+        assertEquals(0.30f, MarkedPointOnnxVerifier.NMS_IOU_THRESHOLD, 0f);
+    }
+
+    @Test
+    public void markedPointVerifierExposesAnExplicitNnapiExperiment() throws Exception {
+        assertEquals(
+                MarkedPointOnnxVerifier.class,
+                MarkedPointOnnxVerifier.class
+                        .getConstructor(Context.class, boolean.class)
+                        .getDeclaringClass());
+        assertEquals(
+                MarkedPointOnnxVerifier.class,
+                MarkedPointOnnxVerifier.class
+                        .getConstructor(Context.class, boolean.class, boolean.class)
+                        .getDeclaringClass());
+    }
+
+    @Test
+    public void markedPointVerifierKeepsVerifierOrProposalEvidenceAndSuppressesDuplicates() {
+        List<Detection> proposals = java.util.Arrays.asList(
+                new Detection(10f, 10f, 50f, 50f, 0.20f, 0),
+                new Detection(12f, 12f, 52f, 52f, 0.10f, 0),
+                new Detection(100f, 100f, 140f, 140f, 0.98f, 0),
+                new Detection(200f, 200f, 240f, 240f, 0.10f, 0));
+
+        List<Detection> selected = MarkedPointOnnxVerifier.filterDetections(
+                proposals, new float[]{0.90f, 0.80f, 0.10f, 0.20f});
+
+        assertEquals(2, selected.size());
+        assertEquals(10f, selected.get(0).getLeft(), 0f);
+        assertEquals(100f, selected.get(1).getLeft(), 0f);
+    }
+
+    @Test
+    public void markedPointVerifierCropMatchesTheTrainingContextRule() {
+        assertTrue(java.util.Arrays.equals(
+                new int[]{68, 28, 64},
+                MarkedPointOnnxVerifier.computeSquareCrop(
+                        new Detection(80f, 40f, 120f, 80f, 0.5f, 0), 300, 200)));
+    }
+
+    @Test
+    public void factoryWrapsNcnnWithTheMarkedPointVerifierOnlyWhenEnabled() {
+        FastenerDetector plain = DetectorFactory.create(
+                null, "ncnn", 0.0019424824f, false, false, false);
+        FastenerDetector verified = DetectorFactory.create(
+                null, "ncnn", 0.0019424824f, false, false, true);
+
+        assertEquals(NcnnFastenerDetector.class, plain.getClass());
+        assertEquals(VerifiedNcnnFastenerDetector.class, verified.getClass());
+        plain.close();
+        verified.close();
     }
 
     private static void putRow(

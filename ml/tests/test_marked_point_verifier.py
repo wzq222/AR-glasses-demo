@@ -10,7 +10,15 @@ from crrc_vision.marked_point_verifier import (
     select_pipeline_threshold,
     select_verifier_examples,
     select_verifier_threshold,
+    verifier_resize_size,
 )
+
+
+def test_verifier_resize_preserves_the_pretrained_crop_ratio() -> None:
+    assert verifier_resize_size(224) == 256
+    assert verifier_resize_size(128) == 146
+    with pytest.raises(ValueError, match="VERIFIER_INPUT_SIZE_MUST_BE_POSITIVE"):
+        verifier_resize_size(0)
 
 
 def _truth(partition: str = "train") -> dict[str, object]:
@@ -67,6 +75,26 @@ def test_verifier_examples_cover_every_truth_and_cap_negatives() -> None:
         (1, 0.7),
         (2, 0.65),
     ]
+
+
+def test_shared_proposal_can_cover_adjacent_truth_without_duplicate_crop() -> None:
+    truth = _truth()
+    truth["images"] = [truth["images"][0]]
+    truth["annotations"] = [
+        {"id": 11, "image_id": 1, "bbox": [100, 100, 80, 80]},
+        {"id": 12, "image_id": 1, "bbox": [180, 100, 80, 80]},
+    ]
+
+    examples = select_verifier_examples(
+        [{"image_id": 1, "bbox": [90, 90, 180, 100], "score": 0.9}],
+        truth,
+        score_threshold=0.01,
+        max_positive_per_truth=2,
+        max_negative_per_scene=1,
+    )
+
+    assert len(examples) == 1
+    assert examples[0]["truth_ids"] == [11, 12]
 
 
 def test_verifier_threshold_keeps_required_positive_recall() -> None:

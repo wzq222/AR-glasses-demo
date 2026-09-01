@@ -40,6 +40,14 @@ class DualPipelineVerifierReport:
     total_truth: int
 
 
+def verifier_resize_size(input_size: int) -> int:
+    """Keep torchvision's 256-to-224 evaluation resize/crop ratio."""
+
+    if input_size <= 0:
+        raise ValueError("VERIFIER_INPUT_SIZE_MUST_BE_POSITIVE")
+    return round(input_size * 256 / 224)
+
+
 def combine_verifier_predictions(
     prediction_sets: Sequence[Sequence[Mapping[str, object]]],
     *,
@@ -166,17 +174,17 @@ def select_verifier_examples(
                     -int(annotation.get("id", 0)),
                 ),
             )
-            positives_by_truth[assigned.get("id")].append(
-                {
-                    **common,
-                    "label": "marked_point",
-                    "truth_id": assigned.get("id"),
-                    "truth_ids": sorted(
-                        (annotation.get("id") for annotation in matching),
-                        key=int,
-                    ),
-                }
-            )
+            row = {
+                **common,
+                "label": "marked_point",
+                "truth_id": assigned.get("id"),
+                "truth_ids": sorted(
+                    (annotation.get("id") for annotation in matching),
+                    key=int,
+                ),
+            }
+            for annotation in matching:
+                positives_by_truth[annotation.get("id")].append(row)
         else:
             negatives_by_scene[common["scene_group"]].append(
                 {
@@ -188,6 +196,7 @@ def select_verifier_examples(
             )
 
     positives: list[dict[str, object]] = []
+    selected_positive_indices: set[int] = set()
     for annotation in sorted(annotations, key=lambda row: int(row["id"])):
         rows = sorted(
             positives_by_truth.get(annotation.get("id"), []),
@@ -195,7 +204,11 @@ def select_verifier_examples(
         )
         if not rows:
             raise ValueError(f"VERIFIER_TRUTH_UNCOVERED:{annotation.get('id')}")
-        positives.extend(rows[:max_positive_per_truth])
+        for row in rows[:max_positive_per_truth]:
+            prediction_index = int(row["prediction_index"])
+            if prediction_index not in selected_positive_indices:
+                positives.append(row)
+                selected_positive_indices.add(prediction_index)
     negatives: list[dict[str, object]] = []
     for scene_group in sorted(negatives_by_scene):
         rows = sorted(

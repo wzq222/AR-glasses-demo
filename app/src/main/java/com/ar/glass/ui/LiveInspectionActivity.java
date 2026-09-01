@@ -55,6 +55,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private ExecutorService inferenceExecutor;
     private volatile FastenerDetector detector;
     private volatile boolean destroyed;
+    private volatile boolean inferenceFailed;
     private boolean cameraRequested;
     private ProcessCameraProvider cameraProvider;
     private ImageAnalysis imageAnalysis;
@@ -98,6 +99,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
+        inferenceFailed = false;
         cameraRequested = true;
         if (hasCameraPermission()) {
             startCamera();
@@ -162,7 +164,10 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                     BuildConfig.DETECTOR_BACKEND,
                     BuildConfig.NCNN_CONFIDENCE_THRESHOLD,
                     BuildConfig.NCNN_VULKAN,
-                    BuildConfig.NCNN_VULKAN_FP16);
+                    BuildConfig.NCNN_VULKAN_FP16,
+                    BuildConfig.MARKED_POINT_VERIFIER_ENABLED,
+                    BuildConfig.MARKED_POINT_VERIFIER_NNAPI,
+                    BuildConfig.MARKED_POINT_VERIFIER_XNNPACK);
             if (destroyed) {
                 candidate.close();
                 return;
@@ -255,7 +260,8 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         boolean acquired = false;
         try {
             FastenerDetector currentDetector = detector;
-            if (destroyed || currentDetector == null || !currentDetector.isReady()) {
+            if (destroyed || inferenceFailed
+                    || currentDetector == null || !currentDetector.isReady()) {
                 return;
             }
             if (!inferenceGate.tryAcquire(SystemClock.elapsedRealtime())) {
@@ -273,9 +279,11 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             previousResultAtMillis = completedAtMillis;
             postResult(result, approximateFps);
         } catch (Exception | LinkageError exception) {
+            inferenceFailed = true;
             Log.e(TAG, "Frame inference failed", exception);
             runOnUiThread(() -> {
                 if (!destroyed) {
+                    overlayView.clearDetections();
                     modelStatusView.setText(R.string.live_frame_inference_failed);
                 }
             });

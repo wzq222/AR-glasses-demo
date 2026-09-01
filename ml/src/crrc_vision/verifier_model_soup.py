@@ -3,6 +3,26 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 
+def shared_verifier_contract(
+    checkpoints: Sequence[Mapping[str, object]],
+) -> tuple[object, tuple[object, ...], object, int]:
+    """Return the deployment contract shared by all soup checkpoints."""
+    if len(checkpoints) < 2:
+        raise ValueError("SOUP_REQUIRES_MULTIPLE_CHECKPOINTS")
+    contracts = {
+        (
+            checkpoint.get("architecture"),
+            tuple(checkpoint.get("classes", ())),
+            checkpoint.get("dataset_sha256"),
+            int(checkpoint.get("input_size", 224)),
+        )
+        for checkpoint in checkpoints
+    }
+    if len(contracts) != 1:
+        raise ValueError("SOUP_CHECKPOINT_CONTRACT_MISMATCH")
+    return contracts.pop()
+
+
 def average_state_dicts(
     state_dicts: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:

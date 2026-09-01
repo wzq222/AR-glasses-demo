@@ -108,19 +108,20 @@ def decode_yolo_predictions(
     nms_iou_threshold: float = 0.45,
     pre_nms_top_k: int = 1_000,
     max_detections: int = 100,
+    category_id_offset: int = 0,
 ) -> list[dict[str, object]]:
     """Mirror the Android YOLO decoder, including class-agnostic NMS."""
 
     values = np.asarray(prediction, dtype=np.float32)
     if values.ndim == 3 and values.shape[0] == 1:
         values = values[0]
-    if values.ndim != 2 or values.shape[0] != 6:
+    if values.ndim != 2 or values.shape[0] < 5:
         raise ValueError(f"YOLO_OUTPUT_SHAPE_MISMATCH:{values.shape}")
     if original_width <= 0 or original_height <= 0 or scale <= 0.0:
         raise ValueError("INVALID_IMAGE_GEOMETRY")
     candidates: list[dict[str, object]] = []
     for index in range(values.shape[1]):
-        class_id = 1 if values[5, index] > values[4, index] else 0
+        class_id = int(np.argmax(values[4:, index]))
         score = float(values[4 + class_id, index])
         if not np.isfinite(score) or score < confidence_threshold:
             continue
@@ -140,7 +141,7 @@ def decode_yolo_predictions(
         candidates.append(
             {
                 "image_id": image_id,
-                "category_id": class_id,
+                "category_id": class_id + category_id_offset,
                 "bbox": [left, top, right - left, bottom - top],
                 "score": score,
             }
@@ -165,14 +166,22 @@ def predict_image(
     image: np.ndarray,
     *,
     image_id: int,
+    input_size: int = 640,
+    output_channels: int = 6,
+    output_candidates: int = 34_000,
+    confidence_threshold: float = 0.20,
+    nms_iou_threshold: float = 0.45,
+    pre_nms_top_k: int = 1_000,
+    max_detections: int = 100,
+    category_id_offset: int = 0,
 ) -> list[dict[str, object]]:
     """Run one runtime adapter and enforce the frozen mobile tensor contract."""
 
-    tensor, transform = letterbox_rgb(image)
+    tensor, transform = letterbox_rgb(image, target_size=input_size)
     output = np.asarray(infer(tensor), dtype=np.float32)
-    if output.shape == (6, 34_000):
+    if output.shape == (output_channels, output_candidates):
         output = output[None]
-    if output.shape != (1, 6, 34_000):
+    if output.shape != (1, output_channels, output_candidates):
         raise ValueError(f"YOLO_OUTPUT_SHAPE_MISMATCH:{output.shape}")
     return decode_yolo_predictions(
         output,
@@ -182,6 +191,11 @@ def predict_image(
         scale=transform.scale,
         pad_x=float(transform.pad_left),
         pad_y=float(transform.pad_top),
+        confidence_threshold=confidence_threshold,
+        nms_iou_threshold=nms_iou_threshold,
+        pre_nms_top_k=pre_nms_top_k,
+        max_detections=max_detections,
+        category_id_offset=category_id_offset,
     )
 
 

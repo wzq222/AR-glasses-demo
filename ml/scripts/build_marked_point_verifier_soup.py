@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from crrc_vision.assets import asset_root
-from crrc_vision.verifier_model_soup import average_state_dicts
+from crrc_vision.verifier_model_soup import average_state_dicts, shared_verifier_contract
 
 
 FORMAL_TRUTH_SHA256 = "B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001"
@@ -65,17 +65,9 @@ def main() -> int:
     checkpoints = [
         torch.load(path, map_location="cpu", weights_only=True) for path in input_paths
     ]
-    contracts = {
-        (
-            checkpoint.get("architecture"),
-            tuple(checkpoint.get("classes", [])),
-            checkpoint.get("dataset_sha256"),
-        )
-        for checkpoint in checkpoints
-    }
-    if len(contracts) != 1:
-        raise RuntimeError("SOUP_CHECKPOINT_CONTRACT_MISMATCH")
-    architecture, classes, dataset_sha256 = contracts.pop()
+    architecture, classes, dataset_sha256, input_size = shared_verifier_contract(
+        checkpoints
+    )
     if architecture != "mobilenet_v3_small" or "marked_point" not in classes:
         raise RuntimeError("SOUP_CHECKPOINT_ARCHITECTURE_INVALID")
     averaged = average_state_dicts(
@@ -88,6 +80,7 @@ def main() -> int:
         "state_dict": averaged,
         "epoch": 0,
         "dataset_sha256": dataset_sha256,
+        "input_size": input_size,
         "input_checkpoint_sha256": [_sha256(path) for path in input_paths],
         "formal_truth_sha256": _sha256(formal_truth),
         "sealed_test_opened": False,

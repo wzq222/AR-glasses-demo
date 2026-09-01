@@ -11,9 +11,9 @@
 
 namespace {
 
-constexpr int kInputSize = 640;
-constexpr int kOutputChannels = 6;
-constexpr int kOutputCandidates = 34000;
+constexpr int kInputSize = 512;
+constexpr int kOutputChannels = 5;
+constexpr int kOutputCandidates = 21760;
 constexpr size_t kInputElements =
         static_cast<size_t>(3) * kInputSize * kInputSize;
 constexpr size_t kOutputElements =

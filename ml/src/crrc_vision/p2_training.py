@@ -9,7 +9,11 @@ from pathlib import Path
 
 
 P2_SEEDS = (20260828, 20260829, 20260830)
-P2_MODEL_YAMLS = {"s": "yolov8s-p2.yaml", "m": "yolov8m-p2.yaml"}
+P2_MODEL_YAMLS = {
+    "n": "yolov8n-p2.yaml",
+    "s": "yolov8s-p2.yaml",
+    "m": "yolov8m-p2.yaml",
+}
 
 
 def p2_model_yaml(variant: str) -> str:

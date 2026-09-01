@@ -140,7 +140,7 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, choices=P2_SEEDS)
-    parser.add_argument("--variant", choices=("s", "m"), default="s")
+    parser.add_argument("--variant", choices=("n", "s", "m"), default="s")
     parser.add_argument("--transfer-pretrained", action="store_true")
     parser.add_argument("--fine-tune", action="store_true")
     parser.add_argument("--expected-pretrained-sha256")

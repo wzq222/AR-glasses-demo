@@ -69,6 +69,25 @@ def test_pnnx_command_names_all_outputs_below_run(tmp_path: Path) -> None:
     assert f"ncnnbin={(output / 'model.ncnn.bin').resolve()}" in command
 
 
+def test_pnnx_command_accepts_a_512_square_input(tmp_path: Path) -> None:
+    converter = tmp_path / "pnnx.exe"
+    model = tmp_path / "model.onnx"
+    output = tmp_path / "ncnn"
+    converter.write_bytes(b"exe")
+    model.write_bytes(b"onnx")
+
+    command = build_pnnx_command(
+        converter,
+        model,
+        output,
+        fp16=False,
+        input_size=512,
+    )
+
+    assert command[2] == "inputshape=[1,3,512,512]"
+    assert command[3] == "fp16=0"
+
+
 def test_cmake_commands_use_explicit_source_build_and_target(tmp_path: Path) -> None:
     cmake = tmp_path / "cmake.exe"
     source = tmp_path / "source"

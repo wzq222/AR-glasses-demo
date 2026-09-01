@@ -153,8 +153,10 @@ def test_resume_kwargs_can_lower_batch_without_changing_the_run_contract() -> No
 
 
 def test_p2_challenger_uses_m_scale_and_requires_backbone_transfer() -> None:
+    assert p2_model_yaml("n") == "yolov8n-p2.yaml"
     assert p2_model_yaml("s") == "yolov8s-p2.yaml"
     assert p2_model_yaml("m") == "yolov8m-p2.yaml"
+    validate_pretraining_mode(variant="n", transfer_pretrained=True)
     validate_pretraining_mode(variant="s", transfer_pretrained=False)
     validate_pretraining_mode(variant="m", transfer_pretrained=True)
     with pytest.raises(ValueError, match="M_CHALLENGER_REQUIRES_TRANSFER"):

@@ -14,7 +14,10 @@ import numpy as np
 from PIL import Image
 
 from crrc_vision.assets import asset_root
-from crrc_vision.marked_point_verifier import select_pipeline_threshold
+from crrc_vision.marked_point_verifier import (
+    select_pipeline_threshold,
+    verifier_resize_size,
+)
 
 
 FORMAL_TRUTH_SHA256 = (
@@ -133,6 +136,7 @@ def main() -> int:
     parser.add_argument("--minimum-truth-recall", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=20260829)
     parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--input-size", type=int, default=224)
     args = parser.parse_args()
 
     import torch
@@ -171,7 +175,11 @@ def main() -> int:
     weights = MobileNet_V3_Small_Weights.DEFAULT
     train_transform = v2.Compose(
         [
-            v2.RandomResizedCrop((224, 224), scale=(0.78, 1.0), ratio=(0.85, 1.15)),
+            v2.RandomResizedCrop(
+                (args.input_size, args.input_size),
+                scale=(0.78, 1.0),
+                ratio=(0.85, 1.15),
+            ),
             v2.RandomHorizontalFlip(),
             v2.RandomRotation(7),
             v2.ColorJitter(brightness=0.22, contrast=0.22, saturation=0.15, hue=0.025),
@@ -180,7 +188,15 @@ def main() -> int:
             v2.Normalize(mean=weights.transforms().mean, std=weights.transforms().std),
         ]
     )
-    val_transform = weights.transforms()
+    val_transform = v2.Compose(
+        [
+            v2.Resize(verifier_resize_size(args.input_size)),
+            v2.CenterCrop(args.input_size),
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Normalize(mean=weights.transforms().mean, std=weights.transforms().std),
+        ]
+    )
     train_dataset = ProposalDataset(train_rows, train_transform, class_to_index)
     val_dataset = ProposalDataset(val_rows, val_transform, class_to_index)
     generator = torch.Generator().manual_seed(args.seed)
@@ -269,6 +285,7 @@ def main() -> int:
                 {
                     "schema_version": "marked-point-verifier-checkpoint-v1",
                     "architecture": "mobilenet_v3_small",
+                    "input_size": args.input_size,
                     "classes": classes,
                     "state_dict": model.state_dict(),
                     "epoch": epoch,
@@ -294,6 +311,7 @@ def main() -> int:
     result = {
         "schema_version": "marked-point-verifier-training-v1",
         "architecture": "mobilenet_v3_small",
+        "input_size": args.input_size,
         "classes": classes,
         "class_weights": class_weights.detach().cpu().tolist(),
         "seed": args.seed,

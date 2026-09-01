@@ -51,6 +51,7 @@ def main() -> int:
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
     parser.add_argument("--mnn-optimize-level", type=int, choices=(0, 1, 2), default=1)
     parser.add_argument("--ncnn-fp32", action="store_true")
+    parser.add_argument("--input-size", type=int, default=640)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
@@ -90,6 +91,7 @@ def main() -> int:
             model,
             output_root,
             fp16=not args.ncnn_fp32,
+            input_size=args.input_size,
         )
 
     report: dict[str, object] = {

@@ -75,6 +75,33 @@ def test_decode_reverses_letterbox_and_clips() -> None:
     assert detections[0]["bbox"] == [0.0, 0.0, 60.0, 60.0]
 
 
+def test_decode_supports_single_class_marked_point_output() -> None:
+    prediction = np.array(
+        [[100.0], [100.0], [40.0], [40.0], [0.75]],
+        dtype=np.float32,
+    )
+
+    detections = decode_yolo_predictions(
+        prediction,
+        image_id=9,
+        original_width=512,
+        original_height=512,
+        scale=1.0,
+        pad_x=0.0,
+        pad_y=0.0,
+        category_id_offset=1,
+    )
+
+    assert detections == [
+        {
+            "image_id": 9,
+            "category_id": 1,
+            "bbox": [80.0, 80.0, 40.0, 40.0],
+            "score": np.float32(0.75),
+        }
+    ]
+
+
 def test_predict_image_requires_frozen_output_contract() -> None:
     image = np.zeros((10, 20, 3), dtype=np.uint8)
 
@@ -88,6 +115,31 @@ def test_predict_image_requires_frozen_output_contract() -> None:
         assert str(error) == "YOLO_OUTPUT_SHAPE_MISMATCH:(1, 6, 100)"
     else:
         raise AssertionError("wrong runtime output shape was accepted")
+
+
+def test_predict_image_accepts_configured_512_single_class_contract() -> None:
+    image = np.zeros((240, 320, 3), dtype=np.uint8)
+
+    def infer(tensor: np.ndarray) -> np.ndarray:
+        assert tensor.shape == (1, 3, 512, 512)
+        output = np.zeros((5, 21_760), dtype=np.float32)
+        output[:4, 0] = [256.0, 256.0, 64.0, 64.0]
+        output[4, 0] = 0.75
+        return output
+
+    detections = predict_image(
+        infer,
+        image,
+        image_id=4,
+        input_size=512,
+        output_channels=5,
+        output_candidates=21_760,
+        confidence_threshold=0.5,
+        category_id_offset=1,
+    )
+
+    assert len(detections) == 1
+    assert detections[0]["category_id"] == 1
 
 
 def test_runtime_path_validation_preserves_lexical_root(tmp_path) -> None:
