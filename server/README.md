@@ -26,6 +26,7 @@ curl -fsS http://127.0.0.1:18081/healthz
 容器仅绑定主机回环地址 `127.0.0.1:18081`。公网访问应由主机现有 nginx/Caddy 反代并配置 HTTPS，
 不要直接暴露 SQLite 服务或容器端口。
 
-当前部署：`https://finbot.ifix.xin/crrc-sop/`，OpenAPI 文档位于
-`https://finbot.ifix.xin/crrc-sop/docs`。服务器代码和数据分别位于`/opt/crrc-sop`与Docker卷
+当前部署：`https://crrc-glasses.ifix.xin/`，OpenAPI 文档位于
+`https://crrc-glasses.ifix.xin/docs`。旧的`https://finbot.ifix.xin/crrc-sop/`暂保留兼容。
+服务器代码和数据分别位于`/opt/crrc-sop`与Docker卷
 `crrc-sop_crrc_sop_data`；管理员初始密码文件仅root可读，使用后应通过受控运维流程轮换。

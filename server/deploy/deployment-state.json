@@ -1,0 +1,38 @@
+{
+  "service": "crrc-sop",
+  "target_host": "101.200.152.104",
+  "public_url": "https://crrc-glasses.ifix.xin/",
+  "docs_url": "https://crrc-glasses.ifix.xin/docs",
+  "dns": {
+    "provider": "Aliyun DNS",
+    "record_id": "2094783067192912896",
+    "type": "A",
+    "value": "101.200.152.104",
+    "ttl": 600
+  },
+  "runtime": {
+    "deploy_path": "/opt/crrc-sop",
+    "container": "crrc-sop-api-1",
+    "bind": "127.0.0.1:18081",
+    "data_volume": "crrc-sop_crrc_sop_data"
+  },
+  "tls": {
+    "issuer": "Let's Encrypt",
+    "certificate_name": "crrc-glasses.ifix.xin",
+    "expires_at": "2026-11-30T12:46:20Z",
+    "automatic_renewal": true
+  },
+  "verified_at": "2026-09-01T21:47:00+08:00",
+  "verification": {
+    "health": "pass",
+    "docs": "pass",
+    "openapi": "pass",
+    "authenticated_login": "pass",
+    "seeded_sop": "pass",
+    "existing_finbot_site": "pass"
+  },
+  "rollback": {
+    "nginx_backup": "/root/finbot.ifix.xin.pre-crrc-sop",
+    "compatibility_url": "https://finbot.ifix.xin/crrc-sop/"
+  }
+}

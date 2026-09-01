@@ -1,10 +1,11 @@
 """Authenticated production smoke without printing credentials or tokens."""
 
 import json
+import os
 import urllib.request
 
 
-base = "http://127.0.0.1:18081"
+base = os.environ.get("CRRC_SMOKE_BASE", "http://127.0.0.1:18081").rstrip("/")
 password = open("/root/crrc-sop-admin-password.txt", encoding="utf-8").read().strip()
 
 

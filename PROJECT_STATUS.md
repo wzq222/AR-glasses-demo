@@ -301,8 +301,10 @@ git status --short
 - 默认初始化 `CRRC_THREE_STEP`：二维码打卡、防松标记检查、万用表读数；模板仍可按版本扩展。
 - 后台4个端到端API测试通过，覆盖登录失败、角色越权、任务隔离、弱网幂等重放、漏步骤/漏证据拒绝、
   图片类型门、完整提交与复核。
-- 已隔离部署到 `101.200.152.104`：容器仅绑定 `127.0.0.1:18081`，通过现有TLS站点
-  `https://finbot.ifix.xin/crrc-sop/` 反代；公开health/docs均为200，容器health为healthy，原站冒烟正常。
+- 已隔离部署到 `101.200.152.104`：容器仅绑定 `127.0.0.1:18081`。阿里云DNS新增
+  `crrc-glasses.ifix.xin → 101.200.152.104`（记录ID `2094783067192912896`），独立nginx vhost和
+  Let's Encrypt证书已生效，主入口为`https://crrc-glasses.ifix.xin/`；公开health/docs/openapi均为200，
+  容器health为healthy，certbot定时续期启用，原`finbot`站冒烟正常。旧`/crrc-sop/`路径暂保留兼容。
 - 生产管理员为`admin`，随机初始密码仅保存在服务器`/root/crrc-sop-admin-password.txt`（0600），
   secret和密码未进入Git或命令输出。生产鉴权冒烟已验证登录、当前用户和默认三步SOP。
 - Android尚未接入登录、任务列表和步骤/证据上传；当前后台可通过OpenAPI使用，但不能把服务上线等同于
