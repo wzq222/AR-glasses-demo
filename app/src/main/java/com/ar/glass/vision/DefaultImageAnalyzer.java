@@ -16,16 +16,21 @@ import com.google.mlkit.vision.common.InputImage;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import com.ar.glass.vision.cloud.MeterCloudOcr;
+
 /**
- * 识别接口的实现。
+ * 识别接口的默认实现。
  *
  * 二维码识别已接入 ML Kit Barcode Scanning（离线，对模糊/透视/旋转鲁棒）。
  * 针对「远距离小二维码」「模糊二维码」识别率低的问题，在单次识别的基础上
  * 增加多级策略：对比度增强 + 放大 2 倍，任一策略命中即返回。
  *
- * 防松线错位、电压表数字识别尚未接入真实算法：
+ * 「万用表读数识别」：
+ * - readMeterValue：接入通义千问视觉大模型 API（云端 OCR）
+ *   （需在 gradle.properties 配置 ARK_API_KEY，详见 MeterCloudOcr）
+ *
+ * 其余能力暂为占位（预留）：
  * - 防松线错位：自定义图像处理 / 目标检测模型
- * - 电压表数字：ML Kit Text Recognition 或 PaddleOCR
  */
 public class DefaultImageAnalyzer implements ImageAnalyzer {
 
@@ -144,7 +149,17 @@ public class DefaultImageAnalyzer implements ImageAnalyzer {
 
     @Override
     public String readMeterValue(Bitmap bitmap) {
-        // TODO 接入电压表数字 OCR
-        return null;
+        MeterReading r = readMeter(bitmap);
+        if (r == null) {
+            return null;
+        }
+        String text = r.getDisplayText();
+        return text.isEmpty() ? null : text;
+    }
+
+    @Override
+    public MeterReading readMeter(Bitmap bitmap) {
+        // 云端识别（读数 + 单位 + 挡位 + 异常），需后台线程调用
+        return MeterCloudOcr.recognizeMeter(bitmap);
     }
 }

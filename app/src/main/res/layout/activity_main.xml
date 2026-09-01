@@ -377,6 +377,106 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- 万用表巡检卡片 -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔧 万用表巡检"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btnMeterRecognize"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🔍 相册识别"
+                            android:textSize="14sp"
+                            android:backgroundTint="#FF9800"
+                            android:textColor="@android:color/white"/>
+
+                        <Button
+                            android:id="@+id/btnCameraRecognize"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:text="📸 拍照识别"
+                            android:textSize="14sp"
+                            android:backgroundTint="#009688"
+                            android:textColor="@android:color/white"/>
+                    </LinearLayout>
+
+                    <CheckBox
+                        android:id="@+id/cbVoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🔊 语音播报读数"
+                        android:textSize="14sp"
+                        android:textColor="#333333"
+                        android:checked="true"
+                        android:layout_marginTop="6dp"/>
+
+                    <CheckBox
+                        android:id="@+id/cbAlarm"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🚨 阈值报警"
+                        android:textSize="14sp"
+                        android:textColor="#333333"
+                        android:checked="true"
+                        android:layout_marginTop="2dp"/>
+
+                    <Button
+                        android:id="@+id/btnThreshold"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="⚙️ 阈值设置"
+                        android:textSize="14sp"
+                        android:backgroundTint="#795548"
+                        android:textColor="@android:color/white"
+                        android:layout_marginTop="6dp"/>
+
+                    <Button
+                        android:id="@+id/btnRecords"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="📋 巡检台账（查看/导出）"
+                        android:textSize="14sp"
+                        android:backgroundTint="#3F51B5"
+                        android:textColor="@android:color/white"
+                        android:layout_marginTop="6dp"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="识别结果自动保存到台账（时间/读数/单位/挡位/原照片），可导出 CSV/Excel；语音播报让巡检时不用低头看手机"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="8dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
             <!-- 运行日志卡片（默认收起，点击标题展开/收起；日志仍全量记录在后台） -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
