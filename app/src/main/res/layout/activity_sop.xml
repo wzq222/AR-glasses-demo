@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F3F6F8">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="14dp"
+        android:background="#153348">
+
+        <TextView
+            android:id="@+id/btnSopBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="‹ 返回"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:padding="5dp" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="中车巡检工作台"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:textSize="19sp" />
+
+        <TextView
+            android:id="@+id/tvSopNetwork"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="后台"
+            android:textColor="#A9DDE8"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <androidx.cardview.widget.CardView
+                android:id="@+id/panelSopLogin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:importantForAutofill="noExcludeDescendants"
+                    android:padding="20dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="登录巡检账号"
+                        android:textStyle="bold"
+                        android:textSize="20sp"
+                        android:textColor="#172733" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="巡检员只能查看分配给自己的任务"
+                        android:textColor="#71818D"
+                        android:textSize="12sp" />
+
+                    <EditText
+                        android:id="@+id/etSopUsername"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="18dp"
+                        android:hint="用户名"
+                        android:singleLine="true"
+                        android:inputType="text" />
+
+                    <EditText
+                        android:id="@+id/etSopPassword"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="密码"
+                        android:singleLine="true"
+                        android:inputType="textPassword" />
+
+                    <Button
+                        android:id="@+id/btnSopLogin"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="15dp"
+                        android:text="登录并获取任务"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#176FA8" />
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <LinearLayout
+                android:id="@+id/panelSopTasks"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.cardview.widget.CardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:padding="14dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tvSopUser"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="巡检员"
+                                android:textStyle="bold"
+                                android:textSize="16sp" />
+
+                            <TextView
+                                android:id="@+id/tvSopTaskCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="正在获取任务"
+                                android:textColor="#71818D"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <Button
+                            android:id="@+id/btnSopRefresh"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="刷新"
+                            android:textColor="#176FA8"
+                            android:backgroundTint="#E8F1F5" />
+
+                        <Button
+                            android:id="@+id/btnSopLogout"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:text="退出"
+                            android:textColor="#7A4B42"
+                            android:backgroundTint="#F8EBE8" />
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <LinearLayout
+                    android:id="@+id/taskList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="vertical" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/panelSopExecution"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tvExecutionAsset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="设备点位"
+                    android:textStyle="bold"
+                    android:textSize="20sp"
+                    android:textColor="#172733" />
+
+                <TextView
+                    android:id="@+id/tvExecutionSop"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="SOP"
+                    android:textColor="#71818D"
+                    android:layout_marginTop="2dp" />
+
+                <ProgressBar
+                    android:id="@+id/progressSop"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:max="100" />
+
+                <androidx.cardview.widget.CardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            android:id="@+id/tvStepNumber"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="步骤 1/3"
+                            android:textColor="#176FA8"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvStepTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="5dp"
+                            android:text="二维码点位确认"
+                            android:textColor="#172733"
+                            android:textStyle="bold"
+                            android:textSize="19sp" />
+
+                        <TextView
+                            android:id="@+id/tvStepInstruction"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="现场操作指引"
+                            android:textColor="#5E707D" />
+
+                        <TextView
+                            android:id="@+id/tvStepContract"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="9dp"
+                            android:padding="8dp"
+                            android:background="#EEF4F7"
+                            android:text="自动检测 · 照片证据"
+                            android:textColor="#315568"
+                            android:textSize="12sp" />
+
+                        <ImageView
+                            android:id="@+id/ivSopEvidence"
+                            android:layout_width="match_parent"
+                            android:layout_height="210dp"
+                            android:layout_marginTop="12dp"
+                            android:scaleType="centerCrop"
+                            android:background="#E7ECEF"
+                            android:contentDescription="本步骤现场证据" />
+
+                        <Button
+                            android:id="@+id/btnCaptureStep"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:text="拍摄本步骤证据"
+                            android:textColor="#FFFFFF"
+                            android:backgroundTint="#176FA8" />
+
+                        <TextView
+                            android:id="@+id/tvStepAnalysis"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="9dp"
+                            android:text="等待采集"
+                            android:textColor="#71818D" />
+
+                        <Spinner
+                            android:id="@+id/spinnerStepDecision"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp" />
+
+                        <EditText
+                            android:id="@+id/etStepNote"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="7dp"
+                            android:hint="现场备注（选填）"
+                            android:minLines="2"
+                            android:gravity="top" />
+
+                        <Button
+                            android:id="@+id/btnSaveStep"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:text="保存本步并上传证据"
+                            android:textColor="#FFFFFF"
+                            android:backgroundTint="#13835D" />
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <Button
+                    android:id="@+id/btnSubmitRun"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="提交整次巡检"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#B56D08"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/btnBackTasks"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="7dp"
+                    android:text="返回任务列表"
+                    android:textColor="#4B6070"
+                    android:backgroundTint="#E7EDF1" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvSopStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:text=""
+                android:textColor="#5E707D" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

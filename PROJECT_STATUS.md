@@ -201,7 +201,7 @@
   APK并复跑17图，仍为81框、P50/P95 1051.9/1082.8ms，APK SHA-256为
   `C9457D8CB72DC90A8F84F91C671C1D1F667F8EFBC2164459DC3D34DCBE90F76C`；实时页已重新打开，
   下一性能门转为单类marked-point轻量挑战者。
-- 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
+- 仓库仍没有眼镜端App、内窥镜接入或CI；后台、SOP引擎、移动登录和巡检记录已在后续迭代补齐。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
   `D9B54B8C9A2402FA3FFC83C32229397A08112610EAE4C28D522D122851263E20`。
@@ -307,8 +307,13 @@ git status --short
   容器health为healthy，certbot定时续期启用，原`finbot`站冒烟正常。旧`/crrc-sop/`路径暂保留兼容。
 - 生产管理员为`admin`，随机初始密码仅保存在服务器`/root/crrc-sop-admin-password.txt`（0600），
   secret和密码未进入Git或命令输出。生产鉴权冒烟已验证登录、当前用户和默认三步SOP。
-- Android尚未接入登录、任务列表和步骤/证据上传；当前后台可通过OpenAPI使用，但不能把服务上线等同于
-  手机端SOP闭环完成。
+- 2026-09-02：Android新增中车巡检工作台，接入生产HTTPS后台登录、本人任务列表、run会话、动态SOP
+  步骤、手机证据拍摄、二维码/防松标记/万用表分析、人工结论、幂等步骤保存、原图上传和最终提交。
+  服务端提交门改为以模板定义强制人工确认，客户端不能通过伪造`requires_human_review=false`绕过。
+  45项Android单测、7项Server测试和APK构建通过；APK SHA-256为
+  `1CF55BFD2AE6EAB16839C1D97B45B0FAFBDA475C0A795661D6DE83C4F0C1BB15`，仅安装到P20 Pro
+  `CLT-AL00`，真机确认主界面入口和登录页，未安装到眼镜。尚未用真实巡检员账号完成生产任务实单，
+  因此不能把接口与UI闭环表述为现场验收完成。
 - 2026-09-01：生产根入口已补齐中文 Web 管理后台，支持登录、仪表盘、用户、SOP版本、任务下发和
   巡检记录列表；巡检员被服务端权限门拒绝进入管理接口。`/`直接页面、`/admin`、鉴权冒烟、容器健康
   和原Finbot站点均已在线验证通过。服务端闭环已可管理，但Android登录与SOP执行上传仍待接入。

@@ -307,7 +307,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 result = results.get(step["key"])
                 if result and step.get("require_evidence", True) and not db.execute("SELECT id FROM evidence WHERE step_result_id=?", (result["id"],)).fetchone():
                     missing_evidence.append(step["key"])
-            unresolved = [key for key, result in results.items() if result["requires_human_review"] and not result["human_decision"]]
+            unresolved = [
+                step["key"] for step in definitions
+                if step.get("require_human_confirmation", False)
+                and step["key"] in results
+                and not results[step["key"]]["human_decision"]
+            ]
             if missing or missing_evidence or unresolved:
                 raise HTTPException(status_code=409, detail={"missing_steps": missing, "missing_evidence": missing_evidence, "unresolved_review": unresolved})
             submitted_at = now_iso()

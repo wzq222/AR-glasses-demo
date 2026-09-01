@@ -184,3 +184,31 @@ def test_role_and_evidence_guards(tmp_path):
         assert c.post("/api/v1/users", headers=worker, json={"username": "bad", "display_name": "x", "password": "long-password-123", "role": "admin"}).status_code == 403
         run = c.post("/api/v1/runs", headers=worker, json={"assignment_id": assignment["id"]}).json()
         assert c.post(f"/api/v1/runs/{run['id']}/steps/QR_CHECK/evidence", headers=worker, files={"file": ("x.txt", b"x", "text/plain")}).status_code == 415
+
+
+def test_template_human_confirmation_cannot_be_bypassed_by_client(tmp_path):
+    with client(tmp_path) as c:
+        _, _, assignment = seed(c)
+        worker = auth(c, "worker1", "worker-password-123")
+        run_id = c.post(
+            "/api/v1/runs", headers=worker, json={"assignment_id": assignment["id"]}
+        ).json()["id"]
+        for index, key in enumerate(("QR_CHECK", "FASTENER_CHECK", "METER_CHECK")):
+            payload = {
+                "idempotency_key": f"bypass-attempt-{index}",
+                "status": "succeeded",
+                "value": {},
+                "requires_human_review": False,
+                "human_decision": None,
+                "analyzer_version": "mobile-test",
+                "captured_at": "2026-09-02T00:00:00+08:00",
+            }
+            assert c.put(f"/api/v1/runs/{run_id}/steps/{key}", headers=worker, json=payload).status_code == 200
+            assert c.post(
+                f"/api/v1/runs/{run_id}/steps/{key}/evidence",
+                headers=worker,
+                files={"file": (f"{key}.jpg", b"evidence", "image/jpeg")},
+            ).status_code == 201
+        response = c.post(f"/api/v1/runs/{run_id}/submit", headers=worker)
+        assert response.status_code == 409
+        assert response.json()["detail"]["unresolved_review"] == ["FASTENER_CHECK"]
