@@ -189,18 +189,8 @@ public class MainActivity extends AppCompatActivity {
         detectOverlay = findViewById(R.id.detectOverlay);
         seekDetectConf = findViewById(R.id.seekDetectConf);
 
-        seekDetectConf.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                if (!fromUser) return;
-                float conf = progress / 100f;
-                tvDetectConf.setText(String.format(java.util.Locale.US, "%.2f", conf));
-                com.ar.glass.vision.YoloDetectorHolder.setConfThreshold(conf);
-            }
-
-            @Override public void onStartTrackingTouch(SeekBar bar) {}
-            @Override public void onStopTrackingTouch(SeekBar bar) {}
-        });
+        seekDetectConf.setEnabled(false);
+        tvDetectConf.setText("固定高召回阈值");
         btnMeterRecognize = findViewById(R.id.btnMeterRecognize);
         btnCameraRecognize = findViewById(R.id.btnCameraRecognize);
         btnRecords = findViewById(R.id.btnRecords);
@@ -597,13 +587,13 @@ public class MainActivity extends AppCompatActivity {
                 detectOverlay.setResults(r.detections, r.frameW, r.frameH);
 
                 tvDetectStatus.setText("[" + time + "] " + r.fileName + " · 检测到 "
-                        + detections + " 个目标 · 推理 " + r.inferMs + "ms");
-                appendLog("🎯 [" + time + "] YOLO 检测到 " + detections + " 个目标");
+                        + detections + " 个防松标记检查点 · 推理 " + r.inferMs + "ms");
+                appendLog("🎯 [" + time + "] 检测到 " + detections + " 个防松标记检查点");
                 // 结果通过眼镜扬声器语音播报（TTS 走 A2DP 媒体通道）
                 if (mVoiceController != null) {
                     mVoiceController.speak(detections > 0
-                            ? ("检测到 " + detections + " 颗螺丝")
-                            : "未检测到螺丝");
+                            ? ("检测到 " + detections + " 个防松标记检查点")
+                            : "未检测到防松标记检查点");
                 }
                 break;
             }
@@ -649,7 +639,7 @@ public class MainActivity extends AppCompatActivity {
         }
         btnDetectLoop.setEnabled(false);
         btnDetectLoop.setText("⏳ 拍照同步检测中…");
-        tvDetectStatus.setText("流程：眼镜拍照 → 传输到手机 → YOLO 检测 → 显示预览");
+        tvDetectStatus.setText("流程：眼镜拍照 → 传输到手机 → 防松标记检测 → 显示预览");
         mBleService.startSingleShotDetection();
         Log.i("GlassLog", "🔘 [UI] 服务已接受单张检测: singleActive=" + mBleService.isSingleShotActive());
         if (!mBleService.isSingleShotActive()) {

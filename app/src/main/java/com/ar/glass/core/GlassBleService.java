@@ -50,9 +50,9 @@ import com.ar.glass.R;
 import com.ar.glass.ui.MainActivity;
 import com.ar.glass.util.EventMsg;
 import com.ar.glass.vision.DetectResult;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.Vision;
 import com.ar.glass.vision.YoloDetector;
-import com.ar.glass.vision.YoloDetectorHolder;
 
 import org.greenrobot.eventbus.EventBus;
 
@@ -2180,13 +2180,15 @@ public class GlassBleService extends Service {
         mMainHandler.postDelayed(mDetectNextRoundRunnable, DETECT_LOOP_INTERVAL_MS);
     }
 
-    /** 对最新同步照片跑 YOLO 检测，结果（含预览图）通过 MSG_DETECT_RESULT 事件发往 UI */
+    /** 对最新同步照片跑防松标记检测，结果（含预览图）通过 MSG_DETECT_RESULT 发往 UI。 */
     private void detectLatestPhotoWithYolo() {
         new Thread(() -> {
             try {
-                if (!YoloDetectorHolder.isReady()) {
-                    postLog("⚠️ YOLO 引擎未就绪（模型加载失败）");
-                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("模型加载失败")));
+                if (!MarkedPointDetectorHolder.isReady(getApplicationContext())) {
+                    String error = MarkedPointDetectorHolder.getInitializationError();
+                    postLog("⚠️ 防松标记模型未就绪: " + error);
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
+                            new DetectResult(error == null ? "防松标记模型加载失败" : error)));
                     return;
                 }
                 File latest = findLatestPhoto();
@@ -2200,10 +2202,12 @@ public class GlassBleService extends Service {
                     EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("照片解码失败")));
                     return;
                 }
-                long t0 = System.currentTimeMillis();
-                List<YoloDetector.Detection> dets = YoloDetectorHolder.get(getApplicationContext()).detect(bitmap);
-                long ms = System.currentTimeMillis() - t0;
-                postLog("🎯 YOLO 检测: " + dets.size() + " 个目标, 推理 " + ms + "ms (" + latest.getName() + ")");
+                MarkedPointDetectorHolder.Result marked = MarkedPointDetectorHolder.detect(
+                        getApplicationContext(), bitmap);
+                List<YoloDetector.Detection> dets = marked.detections;
+                long ms = Math.round(marked.latencyMillis);
+                postLog("🎯 防松标记检测: " + dets.size() + " 个检查点, 推理 " + ms
+                        + "ms (" + latest.getName() + ")");
                 // bitmap 所有权交给 UI 作为预览图（UI 显示下一帧时回收）
                 DetectResult result = new DetectResult(bitmap, dets, bitmap.getWidth(), bitmap.getHeight(), ms, latest.getName());
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, dets.size(), result));

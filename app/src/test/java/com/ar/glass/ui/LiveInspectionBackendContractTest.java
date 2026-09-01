@@ -11,21 +11,20 @@ import static org.junit.Assert.assertTrue;
 
 public class LiveInspectionBackendContractTest {
     @Test
-    public void liveInspectionUsesTheBuildSelectedSharedDetector() throws Exception {
+    public void productPhotoFlowUsesTheBuildSelectedSharedDetector() throws Exception {
         Path projectRoot = Paths.get(System.getProperty("user.dir"));
-        Path source = projectRoot.resolve("app/src/main/java/com/ar/glass/ui/LiveInspectionActivity.java");
+        Path source = projectRoot.resolve("app/src/main/java/com/ar/glass/vision/MarkedPointDetectorHolder.java");
         if (!Files.exists(source)) {
-            source = projectRoot.resolve("src/main/java/com/ar/glass/ui/LiveInspectionActivity.java");
+            source = projectRoot.resolve("src/main/java/com/ar/glass/vision/MarkedPointDetectorHolder.java");
         }
         String text = new String(Files.readAllBytes(source), StandardCharsets.UTF_8);
 
-        assertTrue(text.contains("private volatile FastenerDetector detector"));
+        assertTrue(text.contains("private static volatile FastenerDetector detector"));
         assertTrue(text.contains("DetectorFactory.create"));
         assertTrue(text.contains("BuildConfig.DETECTOR_BACKEND"));
         assertTrue(text.contains("BuildConfig.NCNN_VULKAN"));
         assertTrue(text.contains("BuildConfig.NCNN_VULKAN_FP16"));
-        assertTrue(text.contains("private volatile boolean inferenceFailed"));
-        assertTrue(text.contains("overlayView.clearDetections()"));
-        assertTrue(text.contains("inferenceFailed = true"));
+        assertTrue(text.contains("BuildConfig.MARKED_POINT_VERIFIER_ENABLED"));
+        assertTrue(text.contains("throw new IllegalStateException"));
     }
 }

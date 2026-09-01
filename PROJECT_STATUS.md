@@ -274,6 +274,23 @@ git status --short
 真实完整场景，冻结模型与阈值后再打开一次独立sealed test。通过后导出移动端模型，在指定手机连续
 热机50次测端到端P50/P95和内存，并在指定手机与CY01眼镜上复验BLE连接和照片同步。
 
+## YOLO Product Branch Integration
+
+- 2026-09-01：从 `origin/Feature_Android_YOLO@ffc99a7` 建立
+  `integration/yolo-fastener`，未直接修改两个来源分支。
+- 眼镜单张拍照同步和 ADB 自测入口已从普通 `YoloDetector` 切换到共享
+  `FastenerDetector`/`DetectorFactory`，结果继续沿用产品分支的
+  `MSG_DETECT_RESULT`、预览框和语音链。
+- 产品 UI 现在显示“防松标记检查点”，普通螺丝置信度滑条已禁用，避免覆盖已验证的固定高召回阈值。
+- ONNX 集成构建保持产品分支的 ONNX Runtime 1.19.2，并打包
+  `fastener-target-p2-640.onnx`（SHA-256
+  `C50F9105FF75885BE3BA02464E6A994FA7A45FDE0B0634AEA12FAA04A6CC5B7A`）。
+- 42项 Android JVM 测试通过；Debug APK 构建通过，SHA-256
+  `7CE5FB8941DE500EB0CDF5DBF6DE8FB652E519C8CF5567EB873D17FCE01429BC`。
+- 该 APK 已只安装到 P20 Pro `CLT-AL00`，没有安装到眼镜。ADB 全图自测成功：同一张现场图输出
+  5个“防松标记”检查点，端到端推理1774ms，未发生初始化或运行异常。
+- 本轮只完成候选检测产品链集成。实验松动状态 ROI 模型质量门仍失败，未进入产品流；正式状态仍须人工确认。
+
 ## Evidence
 
 - `app/src/main/java/com/ar/glass/core/GlassBleService.java`：当前连接与照片同步实现。

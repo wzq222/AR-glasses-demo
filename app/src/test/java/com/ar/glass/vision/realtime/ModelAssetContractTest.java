@@ -56,7 +56,7 @@ public class ModelAssetContractTest {
                 Files.readAllBytes(buildFile), StandardCharsets.UTF_8);
 
         assertTrue(buildScript.contains(
-                "com.microsoft.onnxruntime:onnxruntime-android:1.17.1"));
+                "com.microsoft.onnxruntime:onnxruntime-android:1.19.2"));
         assertTrue(!buildScript.contains(
                 "com.microsoft.onnxruntime:onnxruntime-android:1.17.3"));
     }
