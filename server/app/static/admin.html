@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>中车眼镜 · 巡检后台</title>
+  <style>
+    :root{--nav:#15283b;--blue:#1769aa;--bg:#f3f6f9;--line:#dce4eb;--muted:#667788;--ok:#16855b}
+    *{box-sizing:border-box}body{margin:0;font:14px/1.55 system-ui,"Microsoft YaHei",sans-serif;background:var(--bg);color:#17212b}
+    button,input,select,textarea{font:inherit}.hidden{display:none!important}.login{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#12283d,#1b5272)}
+    .login-card{width:min(400px,92vw);background:#fff;padding:34px;border-radius:16px;box-shadow:0 20px 60px #0018}.brand{font-size:24px;font-weight:750}.sub{color:var(--muted);margin:4px 0 24px}
+    input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;margin:5px 0 12px}textarea{min-height:130px;font-family:ui-monospace,monospace;font-size:12px}
+    button{border:0;border-radius:8px;padding:10px 15px;cursor:pointer;background:var(--blue);color:#fff}.wide{width:100%}.error{color:#b42318;min-height:22px}
+    header{height:64px;background:var(--nav);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:2}.header-title{font-size:18px;font-weight:700}.user{display:flex;gap:14px;align-items:center}.ghost{background:#ffffff18}
+    main{max-width:1500px;margin:auto;padding:24px}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}.card,.panel{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 8px #1830440a}.card{padding:18px}.metric{font-size:28px;font-weight:750;margin-top:8px}.label{color:var(--muted)}
+    nav{display:flex;gap:6px;margin:22px 0 14px}.tab{background:#e4ebf1;color:#34485a}.tab.active{background:var(--blue);color:#fff}.panel{padding:18px;overflow:auto}.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.panel h2{margin:0;font-size:17px}
+    table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:11px;border-bottom:1px solid #edf1f4}th{color:#526473;font-weight:650;background:#fafcfd}.badge{display:inline-block;padding:3px 8px;border-radius:99px;background:#e8eef3}.badge.completed,.badge.reviewed{background:#dff5eb;color:#08744b}.badge.submitted{background:#fff0cb;color:#8a5a00}
+    dialog{border:0;border-radius:14px;padding:0;width:min(620px,94vw);box-shadow:0 24px 80px #0017}dialog::backdrop{background:#14263888}.modal{padding:24px}.modal-head{display:flex;justify-content:space-between}.close{background:#edf1f4;color:#334;padding:6px 10px}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.secondary{background:#647789}
+    @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}header{padding:0 14px}main{padding:14px}}
+  </style>
+</head>
+<body>
+<section id="login" class="login"><form id="loginForm" class="login-card"><div class="brand">中车眼镜巡检后台</div><div class="sub">用户、SOP、任务与巡检证据管理</div><label>用户名</label><input id="username" autocomplete="username" value="admin" required><label>密码</label><input id="password" type="password" autocomplete="current-password" required><div id="loginError" class="error"></div><button class="wide">登录</button></form></section>
+<div id="app" class="hidden"><header><div class="header-title">中车眼镜 · SOP 管理中心</div><div class="user"><span id="who"></span><button id="logout" class="ghost">退出</button></div></header><main>
+  <section id="cards" class="cards"></section>
+  <nav><button class="tab active" data-tab="assignments">巡检任务</button><button class="tab" data-tab="runs">巡检记录</button><button class="tab" data-tab="templates">SOP 模板</button><button class="tab" data-tab="users">用户</button></nav>
+  <section id="assignments" class="panel tabpage"><div class="panel-head"><h2>巡检任务</h2><button onclick="openDialog('assignmentDialog')">新建任务</button></div><div id="assignmentsTable"></div></section>
+  <section id="runs" class="panel tabpage hidden"><div class="panel-head"><h2>巡检记录</h2><button onclick="refresh()">刷新</button></div><div id="runsTable"></div></section>
+  <section id="templates" class="panel tabpage hidden"><div class="panel-head"><h2>SOP 模板</h2><button onclick="openDialog('templateDialog')">新建版本</button></div><div id="templatesTable"></div></section>
+  <section id="users" class="panel tabpage hidden"><div class="panel-head"><h2>用户</h2><button onclick="openDialog('userDialog')">新建用户</button></div><div id="usersTable"></div></section>
+</main></div>
+
+<dialog id="userDialog"><form id="userForm" class="modal"><div class="modal-head"><h2>新建用户</h2><button type="button" class="close" onclick="this.closest('dialog').close()">关闭</button></div><label>用户名</label><input name="username" required><label>姓名</label><input name="display_name" required><label>角色</label><select name="role"><option value="inspector">巡检员</option><option value="reviewer">复核员</option><option value="admin">管理员</option></select><label>初始密码（至少12位）</label><input name="password" type="password" minlength="12" required><div class="actions"><button>创建</button></div></form></dialog>
+<dialog id="assignmentDialog"><form id="assignmentForm" class="modal"><div class="modal-head"><h2>下发巡检任务</h2><button type="button" class="close" onclick="this.closest('dialog').close()">关闭</button></div><label>SOP</label><select name="template_id" id="assignmentTemplate"></select><label>巡检员</label><select name="assignee_id" id="assignmentUser"></select><label>设备/点位编号</label><input name="asset_code" required><label>截止时间</label><input name="due_at" type="datetime-local"><div class="actions"><button>下发任务</button></div></form></dialog>
+<dialog id="templateDialog"><form id="templateForm" class="modal"><div class="modal-head"><h2>新建 SOP 版本</h2><button type="button" class="close" onclick="this.closest('dialog').close()">关闭</button></div><label>编码</label><input name="code" value="CRRC_THREE_STEP" required><label>名称</label><input name="title" value="中车三步巡检" required><label>说明</label><input name="description"><label>步骤 JSON</label><textarea name="steps" required>[
+  {"key":"QR_CHECK","type":"QR","title":"二维码打卡","instruction":"拍摄设备二维码并确认点位"},
+  {"key":"FASTENER_CHECK","type":"FASTENER_MARK","title":"防松标记检查","instruction":"拍摄防松标记并人工确认状态","require_human_confirmation":true},
+  {"key":"METER_CHECK","type":"METER","title":"万用表读数","instruction":"拍摄屏幕并确认数值与单位","require_human_confirmation":true}
+]</textarea><div class="actions"><button>保存新版本</button></div></form></dialog>
+
+<script>
+const state={token:sessionStorage.getItem('token'),me:null,users:[],templates:[]};
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,opt={}){const headers={...(opt.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opt.headers||{})};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch(path,{...opt,headers});let data;try{data=await r.json()}catch{data={detail:'请求失败'}}if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data}
+function table(headers,rows){return `<table><thead><tr>${headers.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.join('')||`<tr><td colspan="${headers.length}">暂无数据</td></tr>`}</tbody></table>`}
+function badge(v){return `<span class="badge ${esc(v)}">${esc(v)}</span>`}function fmt(v){return v?new Date(v).toLocaleString():'-' }
+async function refresh(){const [dash,users,templates,assignments,runs]=await Promise.all([api('/api/v1/dashboard'),api('/api/v1/users'),api('/api/v1/sop/templates'),api('/api/v1/assignments'),api('/api/v1/runs')]);state.users=users;state.templates=templates;
+ document.querySelector('#cards').innerHTML=[['用户',dash.users],['SOP模板',dash.active_templates],['待执行任务',dash.pending_assignments],['待复核',dash.awaiting_review],['已完成',dash.completed_assignments]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="metric">${x[1]}</div></div>`).join('');
+ document.querySelector('#usersTable').innerHTML=table(['用户名','姓名','角色','状态','创建时间'],users.map(x=>`<tr><td>${esc(x.username)}</td><td>${esc(x.display_name)}</td><td>${badge(x.role)}</td><td>${x.active?'启用':'停用'}</td><td>${fmt(x.created_at)}</td></tr>`));
+ document.querySelector('#templatesTable').innerHTML=table(['编码','版本','名称','步骤','创建时间'],templates.map(x=>`<tr><td>${esc(x.code)}</td><td>v${x.version}</td><td>${esc(x.title)}</td><td>${x.steps.map(s=>esc(s.title)).join(' → ')}</td><td>${fmt(x.created_at)}</td></tr>`));
+ document.querySelector('#assignmentsTable').innerHTML=table(['点位','SOP','执行人','状态','截止时间','创建时间'],assignments.map(x=>`<tr><td>${esc(x.asset_code)}</td><td>${esc(x.title)} v${x.version}</td><td>${esc(users.find(u=>u.id===x.assignee_id)?.display_name||x.assignee_id)}</td><td>${badge(x.status)}</td><td>${fmt(x.due_at)}</td><td>${fmt(x.created_at)}</td></tr>`));
+ document.querySelector('#runsTable').innerHTML=table(['点位','SOP','执行人','状态','步骤数','开始','提交'],runs.map(x=>`<tr><td>${esc(x.asset_code)}</td><td>${esc(x.sop_title)}</td><td>${esc(x.operator_name)}</td><td>${badge(x.status)}</td><td>${x.step_count}</td><td>${fmt(x.started_at)}</td><td>${fmt(x.submitted_at)}</td></tr>`));
+ assignmentTemplate.innerHTML=templates.map(x=>`<option value="${x.id}">${esc(x.title)} v${x.version}</option>`).join('');assignmentUser.innerHTML=users.filter(x=>x.role==='inspector'&&x.active).map(x=>`<option value="${x.id}">${esc(x.display_name)} (${esc(x.username)})</option>`).join('')}
+async function boot(){if(!state.token)return;try{state.me=await api('/api/v1/users/me');if(state.me.role==='inspector')throw new Error('管理后台仅限管理员和复核员');login.classList.add('hidden');app.classList.remove('hidden');who.textContent=state.me.display_name+' · '+state.me.role;await refresh()}catch(e){sessionStorage.removeItem('token');state.token=null;loginError.textContent=e.message}}
+loginForm.onsubmit=async e=>{e.preventDefault();loginError.textContent='';try{const r=await api('/api/v1/auth/login',{method:'POST',body:JSON.stringify({username:username.value,password:password.value})});state.token=r.access_token;sessionStorage.setItem('token',state.token);await boot()}catch(err){loginError.textContent=err.message}};
+logout.onclick=()=>{sessionStorage.clear();location.reload()};document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabpage').forEach(x=>x.classList.add('hidden'));b.classList.add('active');document.querySelector('#'+b.dataset.tab).classList.remove('hidden')});
+function openDialog(id){document.querySelector('#'+id).showModal()}async function submitForm(form,path,transform){form.onsubmit=async e=>{e.preventDefault();try{const obj=Object.fromEntries(new FormData(form));await api(path,{method:'POST',body:JSON.stringify(transform(obj))});form.closest('dialog').close();await refresh()}catch(err){alert(err.message)}}}submitForm(userForm,'/api/v1/users',x=>x);submitForm(assignmentForm,'/api/v1/assignments',x=>({template_id:+x.template_id,assignee_id:+x.assignee_id,asset_code:x.asset_code,due_at:x.due_at?new Date(x.due_at).toISOString():null}));submitForm(templateForm,'/api/v1/sop/templates',x=>({...x,steps:JSON.parse(x.steps)}));boot();
+</script></body></html>

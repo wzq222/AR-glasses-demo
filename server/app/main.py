@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from .auth import create_token, current_user_dependency, hash_password, verify_password
 from .database import Database, now_iso
@@ -80,6 +80,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.execute("SELECT 1").fetchone()
         return {"status": "ok", "service": "crrc-sop", "version": app.version}
 
+    @app.get("/", include_in_schema=False)
+    def root():
+        return RedirectResponse(url="/admin", status_code=307)
+
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    def admin_console():
+        page = Path(__file__).with_name("static") / "admin.html"
+        return HTMLResponse(page.read_text(encoding="utf-8"))
+
     @app.post("/api/v1/auth/login")
     def login(request: LoginRequest):
         with database.connect() as db:
@@ -109,6 +118,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=409, detail="username already exists") from None
             raise
         return {"id": user_id, **request.model_dump(exclude={"password"}), "active": True}
+
+    @app.get("/api/v1/users")
+    def list_users(user: Annotated[dict, Depends(current_user)]):
+        require(user, "admin", "reviewer")
+        with database.connect() as db:
+            rows = db.execute(
+                "SELECT id,username,display_name,role,active,created_at FROM users ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     @app.post("/api/v1/sop/templates", status_code=201)
     def create_template(request: TemplateCreate, user: Annotated[dict, Depends(current_user)]):
@@ -177,6 +195,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.execute("UPDATE assignments SET status='in_progress' WHERE id=?", (request.assignment_id,))
             audit(db, user["id"], "start", "run", run_id)
         return {"id": run_id, "assignment_id": request.assignment_id, "status": "in_progress", "started_at": started_at, "device": request.device}
+
+    @app.get("/api/v1/runs")
+    def list_runs(user: Annotated[dict, Depends(current_user)]):
+        sql = """SELECT r.id,r.assignment_id,r.operator_id,r.status,r.started_at,r.submitted_at,
+                        r.reviewed_at,r.review_note,a.asset_code,u.display_name AS operator_name,
+                        t.title AS sop_title,
+                        (SELECT COUNT(*) FROM step_results s WHERE s.run_id=r.id) AS step_count
+                 FROM runs r JOIN assignments a ON a.id=r.assignment_id
+                 JOIN users u ON u.id=r.operator_id JOIN sop_templates t ON t.id=a.template_id"""
+        params: tuple = ()
+        if user["role"] == "inspector":
+            sql += " WHERE r.operator_id=?"
+            params = (user["id"],)
+        sql += " ORDER BY r.started_at DESC LIMIT 200"
+        with database.connect() as db:
+            rows = db.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    @app.get("/api/v1/dashboard")
+    def dashboard(user: Annotated[dict, Depends(current_user)]):
+        require(user, "admin", "reviewer")
+        with database.connect() as db:
+            return {
+                "users": db.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0],
+                "active_templates": db.execute("SELECT COUNT(*) FROM sop_templates WHERE active=1").fetchone()[0],
+                "pending_assignments": db.execute("SELECT COUNT(*) FROM assignments WHERE status IN ('pending','in_progress')").fetchone()[0],
+                "awaiting_review": db.execute("SELECT COUNT(*) FROM runs WHERE status='submitted'").fetchone()[0],
+                "completed_assignments": db.execute("SELECT COUNT(*) FROM assignments WHERE status='completed'").fetchone()[0],
+            }
 
     def authorized_run(db, run_id: str, user: dict):
         row = db.execute("SELECT r.*,a.assignee_id,t.steps_json FROM runs r JOIN assignments a ON a.id=r.assignment_id JOIN sop_templates t ON t.id=a.template_id WHERE r.id=?", (run_id,)).fetchone()

@@ -57,9 +57,36 @@ def seed(c: TestClient):
 
 def test_health_and_login(tmp_path):
     with client(tmp_path) as c:
+        root = c.get("/", follow_redirects=False)
+        assert root.status_code == 307
+        assert root.headers["location"] == "/admin"
+        admin_page = c.get("/admin")
+        assert admin_page.status_code == 200
+        assert "中车眼镜巡检后台" in admin_page.text
         assert c.get("/healthz").json()["status"] == "ok"
         assert c.post("/api/v1/auth/login", json={"username": "admin", "password": "wrong-password"}).status_code == 401
         assert c.get("/api/v1/users/me", headers=auth(c)).json()["role"] == "admin"
+
+
+def test_management_dashboard_and_role_guards(tmp_path):
+    with client(tmp_path) as c:
+        admin, user, _ = seed(c)
+        dashboard = c.get("/api/v1/dashboard", headers=admin)
+        assert dashboard.status_code == 200
+        assert dashboard.json()["users"] == 2
+        assert dashboard.json()["pending_assignments"] == 1
+
+        users = c.get("/api/v1/users", headers=admin)
+        assert users.status_code == 200
+        assert {item["username"] for item in users.json()} == {"admin", "worker1"}
+        assert all("password_hash" not in item for item in users.json())
+
+        worker = auth(c, "worker1", "worker-password-123")
+        assert c.get("/api/v1/dashboard", headers=worker).status_code == 403
+        assert c.get("/api/v1/users", headers=worker).status_code == 403
+        own_runs = c.get("/api/v1/runs", headers=worker)
+        assert own_runs.status_code == 200
+        assert own_runs.json() == []
 
 
 def test_inspector_only_sees_own_assignments(tmp_path):

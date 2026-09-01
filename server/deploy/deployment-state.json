@@ -22,8 +22,10 @@
     "expires_at": "2026-11-30T12:46:20Z",
     "automatic_renewal": true
   },
-  "verified_at": "2026-09-01T21:47:00+08:00",
+  "verified_at": "2026-09-01T21:54:00+08:00",
   "verification": {
+    "web_admin": "pass",
+    "root_redirect": "pass",
     "health": "pass",
     "docs": "pass",
     "openapi": "pass",
