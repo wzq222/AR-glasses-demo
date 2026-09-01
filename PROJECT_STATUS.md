@@ -293,6 +293,21 @@ git status --short
   点击后成功进入华为系统相机。拍照返回后复用同一marked-point检测、画框和播报链。
 - 本轮只完成候选检测产品链集成。实验松动状态 ROI 模型质量门仍失败，未进入产品流；正式状态仍须人工确认。
 
+## SOP Backend And User System
+
+- 2026-09-01：`feature/sop-backend-user-system` 新增 FastAPI + SQLite 后台，支持
+  `admin/inspector/reviewer` 三角色、Argon2密码、JWT登录、版本化JSON SOP、任务下发、执行会话、
+  步骤幂等提交、证据图片、人工确认、完整性提交门、复核和审计日志。
+- 默认初始化 `CRRC_THREE_STEP`：二维码打卡、防松标记检查、万用表读数；模板仍可按版本扩展。
+- 后台4个端到端API测试通过，覆盖登录失败、角色越权、任务隔离、弱网幂等重放、漏步骤/漏证据拒绝、
+  图片类型门、完整提交与复核。
+- 已隔离部署到 `101.200.152.104`：容器仅绑定 `127.0.0.1:18081`，通过现有TLS站点
+  `https://finbot.ifix.xin/crrc-sop/` 反代；公开health/docs均为200，容器health为healthy，原站冒烟正常。
+- 生产管理员为`admin`，随机初始密码仅保存在服务器`/root/crrc-sop-admin-password.txt`（0600），
+  secret和密码未进入Git或命令输出。生产鉴权冒烟已验证登录、当前用户和默认三步SOP。
+- Android尚未接入登录、任务列表和步骤/证据上传；当前后台可通过OpenAPI使用，但不能把服务上线等同于
+  手机端SOP闭环完成。
+
 ## Evidence
 
 - `app/src/main/java/com/ar/glass/core/GlassBleService.java`：当前连接与照片同步实现。

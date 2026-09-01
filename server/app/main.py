@@ -55,7 +55,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     )
         yield
 
-    app = FastAPI(title="中车眼镜 SOP Server", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="中车眼镜 SOP Server",
+        version="0.1.0",
+        root_path=settings.root_path,
+        lifespan=lifespan,
+    )
     app.state.settings = settings
     app.state.database = database
 

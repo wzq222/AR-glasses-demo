@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_path: Path = Path("./data/crrc-sop.sqlite3")
     evidence_dir: Path = Path("./data/evidence")
     access_token_minutes: int = 720
+    root_path: str = ""
 
     def validate_production(self) -> None:
         if len(self.secret_key) < 32 or self.secret_key.startswith("development-"):
