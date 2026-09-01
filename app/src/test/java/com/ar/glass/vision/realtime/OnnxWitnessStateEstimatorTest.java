@@ -89,4 +89,84 @@ public class OnnxWitnessStateEstimatorTest {
         OnnxWitnessStateEstimator.validateDecodedOutputs(
                 segmentation, keypoints, quality);
     }
+
+    @Test
+    public void acceptsMinimumSemanticallyUsableEvidence() {
+        Evidence evidence = semanticallyUsableEvidence();
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void emptyWitnessMaskFailsClosed() {
+        Evidence evidence = semanticallyUsableEvidence();
+        for (int y = 0; y < 320; y++) {
+            java.util.Arrays.fill(evidence.segmentation[0][2][y], -1f);
+        }
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void lowMarkIntegrityQualityFailsClosed() {
+        Evidence evidence = semanticallyUsableEvidence();
+        evidence.quality[0][0] = -0.01f;
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void highOcclusionQualityFailsClosed() {
+        Evidence evidence = semanticallyUsableEvidence();
+        evidence.quality[0][1] = 0.01f;
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void flatKeypointHeatmapFailsClosed() {
+        Evidence evidence = semanticallyUsableEvidence();
+        evidence.keypoints[0][3][120][110] = 0f;
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    private static Evidence semanticallyUsableEvidence() {
+        float[][][][] segmentation = new float[1][4][320][320];
+        for (int channel = 0; channel < 4; channel++) {
+            for (int y = 0; y < 320; y++) {
+                java.util.Arrays.fill(segmentation[0][channel][y], -1f);
+            }
+        }
+        for (int index = 0; index < 8; index++) {
+            segmentation[0][2][10][index] = 0f;
+        }
+        float[][][][] keypoints = new float[1][4][320][320];
+        keypoints[0][0][10][10] = 1f;
+        keypoints[0][1][10][110] = 1f;
+        keypoints[0][2][20][110] = 1f;
+        keypoints[0][3][120][110] = 1f;
+        float[][] quality = new float[][]{{0f, 0f, 0f, 0f}};
+        return new Evidence(segmentation, keypoints, quality);
+    }
+
+    private static final class Evidence {
+        private final float[][][][] segmentation;
+        private final float[][][][] keypoints;
+        private final float[][] quality;
+
+        private Evidence(
+                float[][][][] segmentation,
+                float[][][][] keypoints,
+                float[][] quality) {
+            this.segmentation = segmentation;
+            this.keypoints = keypoints;
+            this.quality = quality;
+        }
+    }
 }

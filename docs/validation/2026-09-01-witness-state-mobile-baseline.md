@@ -22,6 +22,12 @@ Android实验阈值人工复核，并未改变质量门结论。
 - 点角度`<=3°`为“倾向正常（待确认）”，`>3° && <15°`为“可疑，建议换角度复拍”，`>=15°`为“高度疑似松动，必须第二视角确认”。
   区间固定为`[max(0,a-6.3), min(90,a+6.3)]`，只作不确定警示，不改变点估计所属分档。
 - 模型缺失、初始化/运行错误、输出错形、任一非有限输出、退化线段或无效裁剪均显示“无法判断，请调整距离/角度后重拍”，不复用上次状态结果。
+- 输出语义门也失败关闭：`segmentation_logits`第2通道为防松线，logit `>=0`的像素至少8个；
+  `quality_logits`通道顺序固定为`mark_integrity/occlusion/blur/topology_confidence`，sigmoid后完整性与拓扑
+  `>=0.5`、遮挡与模糊`<=0.5`；每个关键点热图的`max-min`必须至少`1e-3`。这些是实验拒判下限，不是准确率阈值。
+- 对当前24张合成train-only ROI做只读兼容性检查：防松线正像素最少/median/最多为
+  `3048/4079.5/7255`；mark/topology最低sigmoid为`0.9942/0.9969`，occlusion/blur最高为
+  `0.00514/0.00511`，四关键点全局最小动态范围为`10.7063`。上述拒判下限不会额外拒绝这24张已知训练样本，但仍无真实状态准确率意义。
 - 没有新增图像、结果或人工确认记录落盘；当前用户已取消该范围。正式`FastenerState`仍为`INSUFFICIENT`。
 
 ## 已实现
@@ -93,13 +99,15 @@ Android实验阈值人工复核，并未改变质量门结论。
 - TDD RED：首次目标测试在缺少`SquareRoi`、`WitnessStateEstimate`、
   `DetectionHitTester`和`OnnxWitnessStateEstimator`时以28个编译错误失败；新增的帧外候选反例后，
   `SquareRoiTest`以1个预期断言失败证明边界拒绝有效。
+- 审查修复TDD RED：正式状态字段测试首先以3个`getState()`缺失编译错误失败；补齐字段后，
+  空防松线掩膜、低完整性、高遮挡和平坦热图4个反例均按预期先失败。
 - TDD GREEN：目标测试通过；使用当前512 ncnn检测器、128 XNNPACK复核器和实验状态模型环境执行
   `clean testDebugUnitTest assembleDebug --no-daemon`，随后在最终自审修正后复跑`testDebugUnitTest assembleDebug --no-daemon`，
-  最终结果为`93 tests, 0 failures, 0 errors, 0 skipped`，Debug APK构建PASS。
+  审查修复后再执行同样的干净全量命令，最终结果为`98 tests, 0 failures, 0 errors, 0 skipped`，Debug APK构建PASS。
 - 只设`CRRC_WITNESS_STATE_MODEL_DIR`不设实验开关时，`gradlew help --no-daemon`按预期失败并报告
   `CRRC_WITNESS_STATE_MODEL_DIR requires CRRC_WITNESS_STATE_EXPERIMENTAL=1`。
-- Debug APK：94,453,463 bytes，SHA-256
-  `BEE09FFACE6E020682389470266324CEA9483A98B560D6F0D1619D8306708A3F`。
+- Debug APK：94,373,486 bytes，SHA-256
+  `67A20398B140BCAACF9F1F16D5534EBCDEEF5E101E6EEEC6508C24AC85F4E88B`。
 - APK内嵌资产SHA-256：检测器param
   `EE68160881FE607CCE87485E569095A917A1511394BE66F39FE7567EFE4C9BB0`，检测器bin
   `ED1448C049809A4E8E2D1D2AFD254AAE66AA4C1238D70B1CA6D9C2835DE9DCEC`，候选复核器

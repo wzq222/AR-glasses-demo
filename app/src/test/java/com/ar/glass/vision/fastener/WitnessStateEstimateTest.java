@@ -14,6 +14,7 @@ public class WitnessStateEstimateTest {
         assertEquals(9.3f, result.getAngle().getUpperDegrees(), 0.0001f);
         assertEquals(WitnessReviewHint.LIKELY_ALIGNED, result.getReviewHint());
         assertEquals("POINT_ANGLE_AT_OR_BELOW_REVIEW_THRESHOLD", result.getReviewReason());
+        assertEquals(FastenerState.INSUFFICIENT, result.getState());
         assertEquals(12.5, result.getInferenceMillis(), 0f);
     }
 
@@ -23,6 +24,7 @@ public class WitnessStateEstimateTest {
 
         assertEquals(WitnessReviewHint.POSSIBLE_DISPLACED, result.getReviewHint());
         assertEquals("POINT_ANGLE_REVIEW_REQUIRED", result.getReviewReason());
+        assertEquals(FastenerState.INSUFFICIENT, result.getState());
     }
 
     @Test
@@ -39,6 +41,7 @@ public class WitnessStateEstimateTest {
 
         assertEquals(WitnessReviewHint.POSSIBLE_DISPLACED, result.getReviewHint());
         assertEquals("POINT_ANGLE_SECOND_VIEW_REQUIRED", result.getReviewReason());
+        assertEquals(FastenerState.INSUFFICIENT, result.getState());
         assertEquals(8.7f, result.getAngle().getLowerDegrees(), 0.0001f);
         assertEquals(21.3f, result.getAngle().getUpperDegrees(), 0.0001f);
     }

@@ -3,16 +3,19 @@ package com.ar.glass.vision.fastener;
 public final class WitnessStateEstimate {
     public static final float EXPERIMENTAL_ERROR_DEGREES = 6.3f;
 
+    private final FastenerState state;
     private final AngleInterval angle;
     private final WitnessReviewHint reviewHint;
     private final String reviewReason;
     private final double inferenceMillis;
 
     private WitnessStateEstimate(
+            FastenerState state,
             AngleInterval angle,
             WitnessReviewHint reviewHint,
             String reviewReason,
             double inferenceMillis) {
+        this.state = state;
         this.angle = angle;
         this.reviewHint = reviewHint;
         this.reviewReason = reviewReason;
@@ -31,12 +34,14 @@ public final class WitnessStateEstimate {
         GeometryDecision routing = AntiLooseGeometry.triagePointAngle(
                 pointAngle, ProvisionalTriageThresholds.defaults());
         return new WitnessStateEstimate(
+                routing.getState(),
                 interval,
                 routing.getReviewHint(),
                 routing.getReason(),
                 inferenceMillis);
     }
 
+    public FastenerState getState() { return state; }
     public AngleInterval getAngle() { return angle; }
     public WitnessReviewHint getReviewHint() { return reviewHint; }
     public String getReviewReason() { return reviewReason; }
