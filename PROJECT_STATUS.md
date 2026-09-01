@@ -175,6 +175,11 @@
   0.136、关键点P95 3.61px、角度mean/P95 3.37°/6.27°，严格质量门FAIL，
   `android_packaging_allowed=false`，没有把失败状态模型装进手机。基础/训练Python回归分别为
   361 passed + 3 skipped / 373 passed，Android 56项测试和Debug APK构建通过，formal truth哈希未变。
+- 2026-09-01：完成当前YOLOv8s-P2 640模型的ncnn/MNN转换与17张冻结开发验证集严格一致性门。
+  ncnn FP32为82/82框、0漏框、0多框，最大坐标/分数漂移0.000286像素/0.00000212，唯一
+  `parity_passed`并进入Android实测；ncnn FP16因0.2018阈值边缘框跌破0.20而漏1框，MNN FP32
+  保持82框但有1框宽度漂移约5.7像素，二者均`parity_failed`。桌面时延不作为手机结论，正式
+  真值SHA-256保持不变。证据见`docs/validation/2026-09-01-mobile-runtime-export-phase1.md`。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -278,4 +283,6 @@ git status --short
   真机性能与能力边界。
 - `docs/validation/2026-09-01-witness-state-mobile-baseline.md`：状态分诊合同、ROI训练实验、ONNX一致性、
   质量门拒绝和真实受控采集门。
+- `docs/validation/2026-09-01-mobile-runtime-export-phase1.md`：ncnn/MNN转换、完整集预测一致性、严格
+  失败边界、工具与产物哈希。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。
