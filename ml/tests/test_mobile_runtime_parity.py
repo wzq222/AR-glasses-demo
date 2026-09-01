@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
 
 from crrc_vision.mobile_runtime_parity import (
     decode_yolo_predictions,
     letterbox_rgb,
     predict_image,
+    resolve_below_preserving_alias,
 )
 
 
@@ -86,3 +88,16 @@ def test_predict_image_requires_frozen_output_contract() -> None:
         assert str(error) == "YOLO_OUTPUT_SHAPE_MISMATCH:(1, 6, 100)"
     else:
         raise AssertionError("wrong runtime output shape was accepted")
+
+
+def test_runtime_path_validation_preserves_lexical_root(tmp_path) -> None:
+    root = tmp_path / "ascii-alias"
+    root.mkdir()
+    model = root / "model.mnn"
+    model.write_bytes(b"model")
+
+    resolved = resolve_below_preserving_alias(root, "model.mnn")
+
+    assert resolved == model.absolute()
+    with pytest.raises(ValueError, match="path escapes runtime root"):
+        resolve_below_preserving_alias(root, "../outside.mnn")

@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import cv2
 import numpy as np
+
+
+def resolve_below_preserving_alias(root: Path, relative: str) -> Path:
+    """Validate through real paths while retaining an ASCII junction or symlink."""
+
+    lexical_root = Path(os.path.abspath(root))
+    lexical_path = Path(os.path.abspath(lexical_root / relative))
+    real_root = lexical_root.resolve()
+    real_path = lexical_path.resolve()
+    if real_path == real_root or real_root not in real_path.parents:
+        raise ValueError(f"path escapes runtime root: {relative}")
+    return lexical_path
 
 
 @dataclass(frozen=True)
@@ -231,8 +244,10 @@ def make_mnn_infer(model_path: Path, *, threads: int = 4) -> Callable[[np.ndarra
 
     import MNN
 
-    interpreter = MNN.Interpreter(str(model_path.resolve()))
-    session = interpreter.createSession({"backend": "CPU", "numThread": threads})
+    interpreter = MNN.Interpreter(str(model_path.absolute()))
+    session = interpreter.createSession(
+        {"backend": "CPU", "numThread": threads, "precision": "high"}
+    )
     input_tensor = interpreter.getSessionInput(session)
     interpreter.resizeTensor(input_tensor, (1, 3, 640, 640))
     interpreter.resizeSession(session)

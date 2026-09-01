@@ -33,6 +33,23 @@ def test_mnn_command_is_path_explicit(tmp_path: Path) -> None:
     ]
 
 
+def test_mnn_command_can_disable_graph_optimizations(tmp_path: Path) -> None:
+    converter = tmp_path / "MNNConvert.exe"
+    model = tmp_path / "model.onnx"
+    output = tmp_path / "model.mnn"
+    converter.write_bytes(b"exe")
+    model.write_bytes(b"onnx")
+
+    command = build_mnn_command(
+        converter,
+        model,
+        output,
+        optimize_level=0,
+    )
+
+    assert command[-2:] == ["--optimizeLevel", "0"]
+
+
 def test_pnnx_command_names_all_outputs_below_run(tmp_path: Path) -> None:
     converter = tmp_path / "pnnx.exe"
     model = tmp_path / "model.onnx"

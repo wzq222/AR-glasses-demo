@@ -49,6 +49,8 @@ def main() -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--run", required=True)
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
+    parser.add_argument("--mnn-optimize-level", type=int, choices=(0, 1, 2), default=1)
+    parser.add_argument("--ncnn-fp32", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
@@ -70,7 +72,12 @@ def main() -> int:
         output_root = run / "mnn"
         output_root.mkdir(parents=True, exist_ok=True)
         expected_outputs = [output_root / "model.mnn"]
-        command = build_mnn_command(tool, model, expected_outputs[0])
+        command = build_mnn_command(
+            tool,
+            model,
+            expected_outputs[0],
+            optimize_level=args.mnn_optimize_level,
+        )
     else:
         output_root = run / "ncnn"
         output_root.mkdir(parents=True, exist_ok=True)
@@ -78,7 +85,12 @@ def main() -> int:
             output_root / "model.ncnn.param",
             output_root / "model.ncnn.bin",
         ]
-        command = build_pnnx_command(tool, model, output_root, fp16=True)
+        command = build_pnnx_command(
+            tool,
+            model,
+            output_root,
+            fp16=not args.ncnn_fp32,
+        )
 
     report: dict[str, object] = {
         "schema_version": "mobile-runtime-export-v1",

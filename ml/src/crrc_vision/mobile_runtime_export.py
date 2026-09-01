@@ -19,12 +19,20 @@ def _required_file(path: Path) -> Path:
     return resolved
 
 
-def build_mnn_command(converter: Path, model: Path, output: Path) -> list[str]:
+def build_mnn_command(
+    converter: Path,
+    model: Path,
+    output: Path,
+    *,
+    optimize_level: int = 1,
+) -> list[str]:
     """Build an argument-safe ONNX-to-MNN conversion command."""
 
+    if optimize_level not in (0, 1, 2):
+        raise ValueError("INVALID_MNN_OPTIMIZE_LEVEL")
     executable = _required_file(converter)
     source = _required_file(model)
-    return [
+    command = [
         str(executable),
         "-f",
         "ONNX",
@@ -35,6 +43,9 @@ def build_mnn_command(converter: Path, model: Path, output: Path) -> list[str]:
         "--bizCode",
         "crrc-fastener",
     ]
+    if optimize_level != 1:
+        command.extend(["--optimizeLevel", str(optimize_level)])
+    return command
 
 
 def build_pnnx_command(

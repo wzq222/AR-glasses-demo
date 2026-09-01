@@ -19,17 +19,11 @@ from crrc_vision.mobile_runtime_parity import (
     make_ncnn_infer,
     make_onnx_infer,
     predict_image,
+    resolve_below_preserving_alias,
 )
 
 
 EXPECTED_TRUTH_SHA256 = "B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001"
-
-
-def _below(root: Path, relative: str) -> Path:
-    path = (root / relative).resolve()
-    if path == root or root not in path.parents:
-        raise ValueError(f"path escapes CRRC_VISION_DATA_ROOT: {relative}")
-    return path
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -62,11 +56,14 @@ def main() -> int:
     parser.add_argument("--truth", default="annotations/fastener-v2/instances.json")
     args = parser.parse_args()
 
-    root = asset_root().resolve()
-    dataset_path = _below(root, args.dataset)
-    image_root = _below(root, args.image_root)
-    truth_path = _below(root, args.truth)
-    run = _below(root, args.run)
+    verified_root = asset_root().resolve()
+    root = Path(os.environ["CRRC_VISION_DATA_ROOT"]).expanduser()
+    if root.resolve() != verified_root:
+        raise RuntimeError("CRRC_VISION_DATA_ROOT_CHANGED")
+    dataset_path = resolve_below_preserving_alias(root, args.dataset)
+    image_root = resolve_below_preserving_alias(root, args.image_root)
+    truth_path = resolve_below_preserving_alias(root, args.truth)
+    run = resolve_below_preserving_alias(root, args.run)
     if run.exists() and any(run.iterdir()):
         raise FileExistsError("PREDICTION_RUN_NOT_EMPTY")
     run.mkdir(parents=True, exist_ok=True)
@@ -78,8 +75,8 @@ def main() -> int:
     if args.runtime == "ncnn":
         if not args.param or not args.bin:
             raise ValueError("NCNN_PARAM_AND_BIN_REQUIRED")
-        param_path = _below(root, args.param)
-        bin_path = _below(root, args.bin)
+        param_path = resolve_below_preserving_alias(root, args.param)
+        bin_path = resolve_below_preserving_alias(root, args.bin)
         artifact_hashes = {
             "param": sha256_file(param_path),
             "bin": sha256_file(bin_path),
@@ -89,7 +86,7 @@ def main() -> int:
     else:
         if not args.model:
             raise ValueError("MODEL_REQUIRED")
-        model_path = _below(root, args.model)
+        model_path = resolve_below_preserving_alias(root, args.model)
         artifact_hashes = {"model": sha256_file(model_path)}
         if args.runtime == "onnx":
             infer = make_onnx_infer(model_path, threads=args.threads)
