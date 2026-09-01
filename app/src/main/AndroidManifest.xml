@@ -72,6 +72,22 @@
             android:name=".ui.ImageViewerActivity"
             android:screenOrientation="portrait" />
 
+        <!-- 巡检台账 -->
+        <activity
+            android:name=".ui.MeterRecordsActivity"
+            android:screenOrientation="portrait" />
+
+        <!-- 文件分享（导出台账 CSV/Excel） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.ar.glass.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- BLE前台服务 -->
         <service
             android:name=".core.GlassBleService"

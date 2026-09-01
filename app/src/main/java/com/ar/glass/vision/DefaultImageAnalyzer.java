@@ -2,14 +2,18 @@ package com.ar.glass.vision;
 
 import android.graphics.Bitmap;
 
+import com.ar.glass.vision.cloud.MeterCloudOcr;
+
 /**
- * 识别接口的占位实现（预留）。
+ * 识别接口的默认实现。
  *
- * 当前三个方法均未接入真实算法，直接返回默认值。
- * 后续接入方向：
+ * 「万用表读数识别」：
+ * - readMeterValue：接入火山引擎豆包视觉大模型 API（云端 OCR）
+ *   （需在 gradle.properties 配置 ARK_API_KEY，详见 MeterCloudOcr）
+ *
+ * 其余两个能力暂为占位（预留）：
  * - 二维码：ZXing 或 ML Kit Barcode Scanning
  * - 防松线错位：自定义图像处理 / 目标检测模型
- * - 电压表数字：ML Kit Text Recognition 或 PaddleOCR
  */
 public class DefaultImageAnalyzer implements ImageAnalyzer {
 
@@ -27,7 +31,17 @@ public class DefaultImageAnalyzer implements ImageAnalyzer {
 
     @Override
     public String readMeterValue(Bitmap bitmap) {
-        // TODO 接入电压表数字 OCR
-        return null;
+        MeterReading r = readMeter(bitmap);
+        if (r == null) {
+            return null;
+        }
+        String text = r.getDisplayText();
+        return text.isEmpty() ? null : text;
+    }
+
+    @Override
+    public MeterReading readMeter(Bitmap bitmap) {
+        // 云端识别（读数 + 单位 + 挡位 + 异常），需后台线程调用
+        return MeterCloudOcr.recognizeMeter(bitmap);
     }
 }

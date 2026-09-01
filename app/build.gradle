@@ -11,6 +11,15 @@ android {
         ndk{
             abiFilters 'armeabi-v7a','arm64-v8a'
         }
+        // 云端视觉 API 配置（万用表读数识别），在根目录 gradle.properties 中填写
+        def arkBaseUrl = project.hasProperty('ARK_BASE_URL')
+                ? project.property('ARK_BASE_URL')
+                : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        def arkApiKey = project.hasProperty('ARK_API_KEY') ? project.property('ARK_API_KEY') : ""
+        def arkModel = project.hasProperty('ARK_MODEL') ? project.property('ARK_MODEL') : "qwen3-vl-flash"
+        buildConfigField "String", "ARK_BASE_URL", "\"${arkBaseUrl}\""
+        buildConfigField "String", "ARK_API_KEY", "\"${arkApiKey}\""
+        buildConfigField "String", "ARK_MODEL", "\"${arkModel}\""
     }
     buildTypes {
         release {

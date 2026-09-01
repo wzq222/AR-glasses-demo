@@ -9,3 +9,6 @@
 .cxx
 app/build
 local.properties
+
+# WorkBuddy 本地工作数据
+/.workbuddy/

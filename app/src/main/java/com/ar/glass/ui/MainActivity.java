@@ -10,6 +10,7 @@ import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -24,27 +25,41 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import com.ar.glass.R;
 import com.ar.glass.core.AppState;
 import com.ar.glass.core.GlassBleService;
+import com.ar.glass.record.MeterRecordStore;
 import com.ar.glass.util.EventMsg;
+import com.ar.glass.util.MeterTts;
+import com.ar.glass.vision.MeterReading;
+import com.ar.glass.vision.ThresholdAlarm;
+import com.ar.glass.vision.ThresholdConfig;
+import com.ar.glass.vision.Vision;
+import com.ar.glass.vision.cloud.MeterCloudOcr;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -54,6 +69,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private static final int PERMISSION_REQUEST_CODE = 100;
+    private static final int CAMERA_REQUEST_CODE = 200;
+    private static final String FILE_PROVIDER_AUTHORITY = "com.ar.glass.fileprovider";
 
     private TextView tvBleStatus;
     private TextView tvSystemStatus;
@@ -63,6 +80,21 @@ public class MainActivity extends AppCompatActivity {
     private Button btnSyncPhotos;
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
+    private Button btnMeterRecognize;
+    private Button btnCameraRecognize;
+    private Button btnRecords;
+    private Button btnThreshold;
+    private CheckBox cbVoice;
+    private CheckBox cbAlarm;
+
+    private ActivityResultLauncher<String> mPickImageLauncher;
+    private ActivityResultLauncher<Uri> mTakePictureLauncher;
+    private Uri mCaptureUri;
+    private final ExecutorService mOcrExecutor = Executors.newSingleThreadExecutor();
+
+    private MeterTts mTts;
+    private MeterRecordStore mStore;
+    private ThresholdConfig mThresholdConfig;
 
     private GlassBleService mBleService;
     private boolean mServiceBound = false;
@@ -94,6 +126,10 @@ public class MainActivity extends AppCompatActivity {
         checkPermissions();
         EventBus.getDefault().register(this);
 
+        mTts = new MeterTts(this);
+        mStore = MeterRecordStore.get(this);
+        mThresholdConfig = new ThresholdConfig(this);
+
         appendLog("AR眼镜照片同步应用启动...");
     }
 
@@ -106,10 +142,39 @@ public class MainActivity extends AppCompatActivity {
         btnSyncPhotos = findViewById(R.id.btnSyncFiles);
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
+        btnMeterRecognize = findViewById(R.id.btnMeterRecognize);
+        btnCameraRecognize = findViewById(R.id.btnCameraRecognize);
+        btnRecords = findViewById(R.id.btnRecords);
+        btnThreshold = findViewById(R.id.btnThreshold);
+        cbVoice = findViewById(R.id.cbVoice);
+        cbAlarm = findViewById(R.id.cbAlarm);
 
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+
+        // 万用表读数识别：从相册选图 → 云端识别
+        mPickImageLauncher = registerForActivityResult(
+                new ActivityResultContracts.GetContent(),
+                uri -> {
+                    if (uri != null) {
+                        recognizeMeterFromUri(uri);
+                    }
+                });
+        btnMeterRecognize.setOnClickListener(v -> mPickImageLauncher.launch("image/*"));
+        btnRecords.setOnClickListener(v ->
+                startActivity(new Intent(this, MeterRecordsActivity.class)));
+        btnThreshold.setOnClickListener(v -> showThresholdDialog());
+
+        // 万用表读数识别：现场拍照 → 云端识别
+        mTakePictureLauncher = registerForActivityResult(
+                new ActivityResultContracts.TakePicture(),
+                success -> {
+                    if (success && mCaptureUri != null) {
+                        recognizeMeterFromUri(mCaptureUri);
+                    }
+                });
+        btnCameraRecognize.setOnClickListener(v -> captureMeter());
 
         setControlsEnabled(false);
     }
@@ -250,6 +315,12 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "请授予所有权限以正常使用", Toast.LENGTH_LONG).show();
             }
             checkLocationAndStartService();
+        } else if (requestCode == CAMERA_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                launchCamera();
+            } else {
+                Toast.makeText(this, "需要相机权限才能拍照识别", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -370,6 +441,317 @@ public class MainActivity extends AppCompatActivity {
         Intent intent = new Intent(this, GalleryActivity.class);
         intent.putExtra(GalleryActivity.EXTRA_MODE, mode);
         startActivity(intent);
+    }
+
+    /**
+     * 识别相册选中的万用表照片（云端识别，后台线程执行）。
+     */
+    /**
+     * 现场拍照识别：检查 CAMERA 权限后启动系统相机。
+     */
+    private void captureMeter() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST_CODE);
+            return;
+        }
+        launchCamera();
+    }
+
+    /** 启动系统相机，照片写入缓存临时文件（FileProvider content URI）。 */
+    private void launchCamera() {
+        try {
+            File captureFile = new File(getCacheDir(),
+                    "meter_capture_" + System.currentTimeMillis() + ".jpg");
+            mCaptureUri = FileProvider.getUriForFile(this, FILE_PROVIDER_AUTHORITY, captureFile);
+            mTakePictureLauncher.launch(mCaptureUri);
+        } catch (Exception e) {
+            Log.e(TAG, "启动相机失败", e);
+            Toast.makeText(this, "无法启动相机：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void recognizeMeterFromUri(Uri uri) {
+        btnMeterRecognize.setEnabled(false);
+        btnMeterRecognize.setText("识别中...");
+        appendLog("🔍 正在云端识别万用表读数与挡位，请稍候...");
+
+        mOcrExecutor.execute(() -> {
+            byte[] originalBytes = readBytesFromUri(uri);
+            Bitmap bitmap = originalBytes != null ? decodeBytes(originalBytes, 2048) : null;
+
+            MeterReading reading = null;
+            String error = null;
+            if (bitmap != null) {
+                try {
+                    reading = Vision.get().readMeter(bitmap);
+                } catch (Exception e) {
+                    error = "识别异常：" + e.getMessage();
+                }
+                if ((reading == null || !reading.hasValue()) && error == null) {
+                    error = MeterCloudOcr.getLastError();
+                }
+            } else {
+                error = "图片解码失败";
+            }
+
+            // 识别成功 → 自动保存到巡检台账（含原照片）
+            if (reading != null && reading.hasValue()) {
+                mStore.add(reading, originalBytes);
+            }
+
+            final MeterReading fReading = reading;
+            final String fError = error;
+            runOnUiThread(() -> {
+                btnMeterRecognize.setEnabled(true);
+                btnMeterRecognize.setText("🔍 识别万用表读数");
+                if (fReading != null && fReading.hasValue()) {
+                    String display = fReading.getDisplayText();
+                    String log = "✅ 识别结果: " + display
+                            + (fReading.gear.isEmpty() ? "" : "（挡位: " + fReading.gear + "）")
+                            + "，已保存到台账";
+                    if (cbAlarm != null && cbAlarm.isChecked()) {
+                        ThresholdAlarm.Result alarm = ThresholdAlarm.check(fReading, mThresholdConfig);
+                        if (alarm != null && alarm.isAlarm()) {
+                            log += "\n🚨 " + ThresholdAlarm.describe(alarm, fReading);
+                        }
+                    }
+                    appendLog(log);
+                    showMeterResultDialog(fReading);
+                    speakMeterReading(fReading);
+                } else {
+                    String msg = fError != null ? fError : "未识别到读数";
+                    appendLog("❌ " + msg);
+                    new AlertDialog.Builder(this)
+                            .setTitle("🔍 万用表读数")
+                            .setMessage("未识别到读数。\n\n" + msg
+                                    + "\n\n请确认：1) 图片为万用表/电压表屏幕照片；2) 数字清晰可见；3) 网络正常")
+                            .setPositiveButton("确定", null)
+                            .show();
+                }
+            });
+        });
+    }
+
+    /** 展示识别结果：读数 + 挡位 + 异常提示 + 阈值报警 + 保存状态。 */
+    private void showMeterResultDialog(MeterReading r) {
+        // 阈值报警判断
+        ThresholdAlarm.Result alarm = null;
+        if (cbAlarm != null && cbAlarm.isChecked()) {
+            alarm = ThresholdAlarm.check(r, mThresholdConfig);
+        }
+
+        StringBuilder msg = new StringBuilder();
+        msg.append("读数：").append(r.getDisplayText());
+        if (r.gear != null && !r.gear.isEmpty()) {
+            msg.append("\n挡位：").append(r.gear);
+        }
+        if (r.unit == null || r.unit.isEmpty()) {
+            String inferred = r.inferUnitFromGear();
+            if (!inferred.isEmpty()) {
+                msg.append("\n（单位按挡位推断为：").append(inferred).append("）");
+            }
+        }
+        if (r.warning != null && !r.warning.isEmpty()) {
+            msg.append("\n\n⚠️ ").append(r.warning);
+        }
+        if (alarm != null && alarm.isAlarm()) {
+            msg.append("\n\n🚨 ").append(ThresholdAlarm.describe(alarm, r));
+        }
+        msg.append("\n\n✅ 已自动保存到巡检台账");
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle("🔍 万用表读数")
+                .setMessage(msg.toString())
+                .setPositiveButton("确定", null);
+        b.setNegativeButton("查看台账", (d, w) ->
+                startActivity(new Intent(this, MeterRecordsActivity.class)));
+        b.show();
+    }
+
+    /** 阈值设置弹窗：按类别选择 → 配置上下限。 */
+    private void showThresholdDialog() {
+        final String[] labels = new String[ThresholdConfig.CATEGORIES.length];
+        for (int i = 0; i < ThresholdConfig.CATEGORIES.length; i++) {
+            ThresholdConfig.Bounds b = mThresholdConfig.getBounds(ThresholdConfig.CATEGORIES[i]);
+            labels[i] = ThresholdConfig.CATEGORIES[i] + describeBounds(b);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("⚙️ 阈值设置\n（选择量纲类别，读数超出上下限即报警）")
+                .setItems(labels, (d, w) -> showCategoryBoundsDialog(ThresholdConfig.CATEGORIES[w]))
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    /** 某类别上下限的简要描述，如 "（上限 36.0）"。 */
+    private String describeBounds(ThresholdConfig.Bounds b) {
+        if (b == null || (!b.upperEnabled && !b.lowerEnabled)) {
+            return "（未设置）";
+        }
+        StringBuilder sb = new StringBuilder("（");
+        if (b.upperEnabled) {
+            sb.append("上限 ").append(formatNum(b.upper));
+        }
+        if (b.lowerEnabled) {
+            if (b.upperEnabled) sb.append("，");
+            sb.append("下限 ").append(formatNum(b.lower));
+        }
+        sb.append("）");
+        return sb.toString();
+    }
+
+    /** 配置某类别的上下限。 */
+    private void showCategoryBoundsDialog(final String category) {
+        ThresholdConfig.Bounds cur = mThresholdConfig.getBounds(category);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(20);
+        container.setPadding(pad, dp(16), pad, dp(4));
+
+        final CheckBox cbUpper = new CheckBox(this);
+        cbUpper.setText("启用上限");
+        cbUpper.setChecked(cur.upperEnabled);
+        container.addView(cbUpper);
+
+        final EditText etUpper = new EditText(this);
+        etUpper.setHint("上限值（如 36.0）");
+        etUpper.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        if (cur.upperEnabled && !Double.isNaN(cur.upper)) {
+            etUpper.setText(formatNum(cur.upper));
+        }
+        container.addView(etUpper);
+
+        final CheckBox cbLower = new CheckBox(this);
+        cbLower.setText("启用下限");
+        cbLower.setChecked(cur.lowerEnabled);
+        cbLower.setPadding(0, dp(12), 0, 0);
+        container.addView(cbLower);
+
+        final EditText etLower = new EditText(this);
+        etLower.setHint("下限值（如 0.0）");
+        etLower.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        if (cur.lowerEnabled && !Double.isNaN(cur.lower)) {
+            etLower.setText(formatNum(cur.lower));
+        }
+        container.addView(etLower);
+
+        new AlertDialog.Builder(this)
+                .setTitle(category + " 阈值")
+                .setView(container)
+                .setPositiveButton("保存", (d, w) -> {
+                    boolean upperOn = cbUpper.isChecked();
+                    double upper = parseNum(etUpper.getText().toString());
+                    boolean lowerOn = cbLower.isChecked();
+                    double lower = parseNum(etLower.getText().toString());
+                    if (upperOn && Double.isNaN(upper)) {
+                        Toast.makeText(this, "请填写有效的上限值", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (lowerOn && Double.isNaN(lower)) {
+                        Toast.makeText(this, "请填写有效的下限值", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (upperOn && lowerOn && upper < lower) {
+                        Toast.makeText(this, "上限不能小于下限", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    mThresholdConfig.setBounds(category, upperOn, upper, lowerOn, lower);
+                    Toast.makeText(this, "已保存 " + category + " 阈值", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private static String formatNum(double d) {
+        if (Double.isNaN(d)) return "";
+        if (d == (long) d) return String.valueOf((long) d);
+        return String.valueOf(d);
+    }
+
+    private static double parseNum(String s) {
+        if (s == null) return Double.NaN;
+        String t = s.trim();
+        if (t.isEmpty()) return Double.NaN;
+        try {
+            return Double.parseDouble(t);
+        } catch (Exception e) {
+            return Double.NaN;
+        }
+    }
+
+    private int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** 语音播报识别结果（开关打开且 TTS 就绪时）。 */
+    private void speakMeterReading(MeterReading r) {
+        if (cbVoice == null || !cbVoice.isChecked() || mTts == null) {
+            return;
+        }
+        String text = r.getSpeechText();
+        if (cbAlarm != null && cbAlarm.isChecked()) {
+            ThresholdAlarm.Result alarm = ThresholdAlarm.check(r, mThresholdConfig);
+            if (alarm != null && alarm.isAlarm()) {
+                text = text + "，" + ThresholdAlarm.speechText(alarm);
+            }
+        }
+        mTts.speak(text);
+    }
+
+    /**
+     * 从 Uri 读取原始图片字节。
+     */
+    private byte[] readBytesFromUri(Uri uri) {
+        try {
+            InputStream is = getContentResolver().openInputStream(uri);
+            if (is == null) {
+                return null;
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                baos.write(buf, 0, n);
+            }
+            is.close();
+            byte[] bytes = baos.toByteArray();
+            return bytes.length == 0 ? null : bytes;
+        } catch (Exception e) {
+            Log.e(TAG, "读取图片失败", e);
+            return null;
+        }
+    }
+
+    /**
+     * 按采样率解码字节为 Bitmap，限制最长边避免 OOM。
+     */
+    private Bitmap decodeBytes(byte[] bytes, int maxEdge) {
+        if (bytes == null || bytes.length == 0) {
+            return null;
+        }
+        try {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+            int sample = 1;
+            int maxDim = Math.max(opts.outWidth, opts.outHeight);
+            while (maxDim / sample > maxEdge) {
+                sample *= 2;
+            }
+            opts.inJustDecodeBounds = false;
+            opts.inSampleSize = sample;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+        } catch (Exception e) {
+            Log.e(TAG, "解码图片失败", e);
+            return null;
+        }
     }
 
     /** 显示已发现的眼镜设备列表，供用户手动选择连接 */
@@ -506,6 +888,10 @@ public class MainActivity extends AppCompatActivity {
         if (mServiceBound) {
             unbindService(mServiceConnection);
             mServiceBound = false;
+        }
+        mOcrExecutor.shutdownNow();
+        if (mTts != null) {
+            mTts.shutdown();
         }
         EventBus.getDefault().unregister(this);
     }
