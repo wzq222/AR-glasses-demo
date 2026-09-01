@@ -58,8 +58,9 @@ def seed(c: TestClient):
 def test_health_and_login(tmp_path):
     with client(tmp_path) as c:
         root = c.get("/", follow_redirects=False)
-        assert root.status_code == 307
-        assert root.headers["location"] == "/admin"
+        assert root.status_code == 200
+        assert "中车眼镜巡检后台" in root.text
+        assert root.headers["cache-control"] == "no-store, max-age=0"
         admin_page = c.get("/admin")
         assert admin_page.status_code == 200
         assert "中车眼镜巡检后台" in admin_page.text

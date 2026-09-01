@@ -25,7 +25,7 @@
   "verified_at": "2026-09-01T21:54:00+08:00",
   "verification": {
     "web_admin": "pass",
-    "root_redirect": "pass",
+    "root_page": "pass",
     "health": "pass",
     "docs": "pass",
     "openapi": "pass",

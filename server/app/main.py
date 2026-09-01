@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from .auth import create_token, current_user_dependency, hash_password, verify_password
 from .database import Database, now_iso
@@ -80,14 +80,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.execute("SELECT 1").fetchone()
         return {"status": "ok", "service": "crrc-sop", "version": app.version}
 
-    @app.get("/", include_in_schema=False)
+    def admin_page() -> HTMLResponse:
+        page = Path(__file__).with_name("static") / "admin.html"
+        return HTMLResponse(
+            page.read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def root():
-        return RedirectResponse(url="/admin", status_code=307)
+        return admin_page()
 
     @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
     def admin_console():
-        page = Path(__file__).with_name("static") / "admin.html"
-        return HTMLResponse(page.read_text(encoding="utf-8"))
+        return admin_page()
 
     @app.post("/api/v1/auth/login")
     def login(request: LoginRequest):
