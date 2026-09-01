@@ -1,7 +1,6 @@
 package com.ar.glass.vision.realtime;
 
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
 
 import org.junit.Test;
 
@@ -9,7 +8,6 @@ import java.io.Closeable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,15 +42,7 @@ public class ModelAssetContractTest {
 
     @Test
     public void retainsOneReusableInferenceWorkspace() throws Exception {
-        assertFinalInstanceField("inputBuffer", FloatBuffer.class);
-        assertFinalInstanceField("pixels", int[].class);
-        assertFinalInstanceField("letterboxBitmap", Bitmap.class);
-        assertFinalInstanceField("letterboxCanvas", Canvas.class);
-
-        Method fillInputBuffer = OnnxFastenerDetector.class.getDeclaredMethod(
-                "fillInputBuffer", Bitmap.class, LetterboxTransform.class);
-        assertEquals(void.class, fillInputBuffer.getReturnType());
-        assertTrue(!Modifier.isStatic(fillInputBuffer.getModifiers()));
+        assertFinalInstanceField("inputWorkspace", FastenerInputWorkspace.class);
     }
 
     @Test

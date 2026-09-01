@@ -3,9 +3,6 @@ package com.ar.glass.vision.realtime;
 import android.content.Context;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Paint;
-import android.graphics.Rect;
 
 import ai.onnxruntime.NodeInfo;
 import ai.onnxruntime.OnnxTensor;
@@ -16,12 +13,8 @@ import ai.onnxruntime.OrtSession;
 import ai.onnxruntime.TensorInfo;
 
 import java.io.ByteArrayOutputStream;
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -29,22 +22,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-public final class OnnxFastenerDetector implements Closeable {
+public final class OnnxFastenerDetector implements FastenerDetector {
     public static final String MODEL_ASSET_NAME = "fastener-target-p2-640.onnx";
     public static final int INPUT_SIZE = 640;
     public static final int OUTPUT_CHANNELS = 6;
     public static final int OUTPUT_CANDIDATES = 34_000;
 
     private static final long[] INPUT_SHAPE = {1, 3, INPUT_SIZE, INPUT_SIZE};
-    private static final int LETTERBOX_COLOR = 0xFF727272;
-    private static final int PIXEL_COUNT = INPUT_SIZE * INPUT_SIZE;
-
-    private final FloatBuffer inputBuffer;
-    private final int[] pixels;
-    private final Bitmap letterboxBitmap;
-    private final Canvas letterboxCanvas;
-    private final Paint bitmapPaint;
-    private final Rect destinationRect;
+    private final FastenerInputWorkspace inputWorkspace;
     private OrtEnvironment environment;
     private OrtSession session;
     private String inputName;
@@ -54,26 +39,12 @@ public final class OnnxFastenerDetector implements Closeable {
 
     public OnnxFastenerDetector(Context context) {
         if (context == null) {
-            inputBuffer = null;
-            pixels = null;
-            letterboxBitmap = null;
-            letterboxCanvas = null;
-            bitmapPaint = null;
-            destinationRect = null;
+            inputWorkspace = null;
             initializationError = "模型初始化失败";
             return;
         }
 
-        inputBuffer = ByteBuffer
-                .allocateDirect(PIXEL_COUNT * 3 * Float.BYTES)
-                .order(ByteOrder.nativeOrder())
-                .asFloatBuffer();
-        pixels = new int[PIXEL_COUNT];
-        letterboxBitmap = Bitmap.createBitmap(
-                INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888);
-        letterboxCanvas = new Canvas(letterboxBitmap);
-        bitmapPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
-        destinationRect = new Rect();
+        inputWorkspace = new FastenerInputWorkspace(INPUT_SIZE);
 
         OrtSession candidateSession = null;
         try {
@@ -121,7 +92,8 @@ public final class OnnxFastenerDetector implements Closeable {
         long startedAtNanos = System.nanoTime();
         LetterboxTransform transform = LetterboxTransform.forSquare(
                 bitmap.getWidth(), bitmap.getHeight(), INPUT_SIZE);
-        fillInputBuffer(bitmap, transform);
+        java.nio.FloatBuffer inputBuffer = inputWorkspace.prepare(bitmap, transform);
+        long preprocessedAtNanos = System.nanoTime();
 
         float[][] prediction;
         try (OnnxTensor inputTensor = OnnxTensor.createTensor(
@@ -156,8 +128,8 @@ public final class OnnxFastenerDetector implements Closeable {
         closed = true;
         closeQuietly(session);
         session = null;
-        if (letterboxBitmap != null && !letterboxBitmap.isRecycled()) {
-            letterboxBitmap.recycle();
+        if (inputWorkspace != null) {
+            inputWorkspace.close();
         }
     }
 
@@ -205,28 +177,6 @@ public final class OnnxFastenerDetector implements Closeable {
             }
             return output.toByteArray();
         }
-    }
-
-    private void fillInputBuffer(
-            Bitmap source, LetterboxTransform transform) {
-        letterboxCanvas.drawColor(LETTERBOX_COLOR);
-        destinationRect.set(
-                transform.getPadLeft(),
-                transform.getPadTop(),
-                transform.getPadLeft() + transform.getResizedWidth(),
-                transform.getPadTop() + transform.getResizedHeight());
-        letterboxCanvas.drawBitmap(source, null, destinationRect, bitmapPaint);
-
-        letterboxBitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
-
-        inputBuffer.clear();
-        for (int index = 0; index < PIXEL_COUNT; index++) {
-            int pixel = pixels[index];
-            inputBuffer.put(index, ((pixel >> 16) & 0xFF) / 255f);
-            inputBuffer.put(PIXEL_COUNT + index, ((pixel >> 8) & 0xFF) / 255f);
-            inputBuffer.put(2 * PIXEL_COUNT + index, (pixel & 0xFF) / 255f);
-        }
-        inputBuffer.position(0);
     }
 
     private static float[][] extractPrediction(
