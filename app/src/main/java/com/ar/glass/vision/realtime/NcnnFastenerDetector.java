@@ -28,10 +28,18 @@ public final class NcnnFastenerDetector implements FastenerDetector {
     private boolean closed;
 
     public NcnnFastenerDetector(Context context) {
-        this(context, YoloPostprocessor.DEFAULT_CONFIDENCE_THRESHOLD);
+        this(context, YoloPostprocessor.DEFAULT_CONFIDENCE_THRESHOLD, false, false);
     }
 
     public NcnnFastenerDetector(Context context, float confidenceThreshold) {
+        this(context, confidenceThreshold, false, false);
+    }
+
+    public NcnnFastenerDetector(
+            Context context,
+            float confidenceThreshold,
+            boolean useVulkan,
+            boolean useVulkanFp16) {
         if (Float.isNaN(confidenceThreshold) || Float.isInfinite(confidenceThreshold)
                 || confidenceThreshold < 0f || confidenceThreshold > 1f) {
             throw new IllegalArgumentException("confidence threshold must be from 0 to 1");
@@ -59,7 +67,9 @@ public final class NcnnFastenerDetector implements FastenerDetector {
                     BIN_ASSET_NAME,
                     INPUT_BLOB_NAME,
                     OUTPUT_BLOB_NAME,
-                    InferenceThreadPolicy.intraOpThreads());
+                    InferenceThreadPolicy.intraOpThreads(),
+                    useVulkan,
+                    useVulkanFp16);
             if (nativeHandle == 0L) {
                 initializationError = "ncnn 模型未打包或不兼容";
             }
@@ -162,7 +172,9 @@ public final class NcnnFastenerDetector implements FastenerDetector {
             String binAssetName,
             String inputBlobName,
             String outputBlobName,
-            int threads);
+            int threads,
+            boolean useVulkan,
+            boolean useVulkanFp16);
 
     private static native boolean nativeInfer(
             long handle, FloatBuffer input, FloatBuffer output);

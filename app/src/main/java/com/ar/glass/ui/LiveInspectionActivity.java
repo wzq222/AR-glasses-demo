@@ -160,7 +160,9 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             FastenerDetector candidate = DetectorFactory.create(
                     getApplicationContext(),
                     BuildConfig.DETECTOR_BACKEND,
-                    BuildConfig.NCNN_CONFIDENCE_THRESHOLD);
+                    BuildConfig.NCNN_CONFIDENCE_THRESHOLD,
+                    BuildConfig.NCNN_VULKAN,
+                    BuildConfig.NCNN_VULKAN_FP16);
             if (destroyed) {
                 candidate.close();
                 return;
