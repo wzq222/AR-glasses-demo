@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 Role = Literal["admin", "inspector", "reviewer"]
-StepType = Literal["QR", "FASTENER_MARK", "METER"]
+StepType = Literal["PHOTO", "QR", "FASTENER_MARK", "METER", "HUMAN_CONFIRM"]
 
 
 class LoginRequest(BaseModel):

@@ -59,11 +59,11 @@ def test_health_and_login(tmp_path):
     with client(tmp_path) as c:
         root = c.get("/", follow_redirects=False)
         assert root.status_code == 200
-        assert "中车眼镜巡检后台" in root.text
+        assert "中车眼镜巡检平台" in root.text
         assert root.headers["cache-control"] == "no-store, max-age=0"
         admin_page = c.get("/admin")
         assert admin_page.status_code == 200
-        assert "中车眼镜巡检后台" in admin_page.text
+        assert "中车眼镜巡检平台" in admin_page.text
         assert c.get("/healthz").json()["status"] == "ok"
         assert c.post("/api/v1/auth/login", json={"username": "admin", "password": "wrong-password"}).status_code == 401
         assert c.get("/api/v1/users/me", headers=auth(c)).json()["role"] == "admin"
@@ -88,6 +88,46 @@ def test_management_dashboard_and_role_guards(tmp_path):
         own_runs = c.get("/api/v1/runs", headers=worker)
         assert own_runs.status_code == 200
         assert own_runs.json() == []
+
+
+def test_visual_flow_supports_detection_and_confirmation_nodes(tmp_path):
+    with client(tmp_path) as c:
+        admin = auth(c)
+        response = c.post(
+            "/api/v1/sop/templates",
+            headers=admin,
+            json={
+                "code": "VISUAL_FLOW",
+                "title": "可视化检测流程",
+                "description": "自动检测与人工确认穿插",
+                "steps": [
+                    {
+                        "key": "CAPTURE",
+                        "type": "PHOTO",
+                        "title": "采集全景",
+                        "instruction": "拍摄检查区域全景",
+                        "config": {"capture_source": "BOTH"},
+                    },
+                    {
+                        "key": "DETECT",
+                        "type": "FASTENER_MARK",
+                        "title": "检测防松标记",
+                        "instruction": "自动检出全部带标记检查点",
+                        "config": {"analyzer": "marked-point-v1"},
+                    },
+                    {
+                        "key": "CONFIRM",
+                        "type": "HUMAN_CONFIRM",
+                        "title": "人工复核",
+                        "instruction": "逐项确认检测结果",
+                        "require_human_confirmation": True,
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 201, response.text
+        created = response.json()
+        assert [step["type"] for step in created["steps"]] == ["PHOTO", "FASTENER_MARK", "HUMAN_CONFIRM"]
 
 
 def test_inspector_only_sees_own_assignments(tmp_path):

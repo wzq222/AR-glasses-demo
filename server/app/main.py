@@ -45,9 +45,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     admin_id = admin["id"]
                 if not db.execute("SELECT id FROM sop_templates WHERE code='CRRC_THREE_STEP'").fetchone():
                     default_steps = [
-                        {"key": "QR_CHECK", "type": "QR", "title": "二维码打卡", "instruction": "拍摄设备二维码并确认点位", "required": True, "require_evidence": True, "require_human_confirmation": False, "config": {}},
-                        {"key": "FASTENER_CHECK", "type": "FASTENER_MARK", "title": "防松标记检查", "instruction": "拍摄防松标记并人工确认状态", "required": True, "require_evidence": True, "require_human_confirmation": True, "config": {"allowedValues": ["ALIGNED", "SUSPECTED", "UNABLE_TO_JUDGE"]}},
-                        {"key": "METER_CHECK", "type": "METER", "title": "万用表读数", "instruction": "拍摄屏幕并确认数值与单位", "required": True, "require_evidence": True, "require_human_confirmation": True, "config": {}},
+                        {"key": "QR_CHECK", "type": "QR", "title": "二维码点位确认", "instruction": "扫描设备二维码，自动解析点位并核对任务设备", "required": True, "require_evidence": True, "require_human_confirmation": False, "config": {"analyzer": "barcode-v1", "capture_source": "BOTH", "failure_action": "RETRY"}},
+                        {"key": "FASTENER_CHECK", "type": "FASTENER_MARK", "title": "防松标记检测", "instruction": "拍摄检查区域，检测带红黄防松标记的紧固点并逐项确认状态", "required": True, "require_evidence": True, "require_human_confirmation": True, "config": {"analyzer": "marked-point-v1", "capture_source": "BOTH", "allowedValues": ["ALIGNED", "SUSPECTED", "UNABLE_TO_JUDGE"], "failure_action": "MANUAL_REVIEW"}},
+                        {"key": "METER_CHECK", "type": "METER", "title": "万用表读数复核", "instruction": "拍摄万用表屏幕，识别数值与单位并由作业人员确认", "required": True, "require_evidence": True, "require_human_confirmation": True, "config": {"analyzer": "meter-ocr-v1", "capture_source": "BOTH", "failure_action": "MANUAL_REVIEW"}},
                     ]
                     db.execute(
                         "INSERT INTO sop_templates(code,version,title,description,steps_json,created_by,created_at) VALUES('CRRC_THREE_STEP',1,?,?,?,?,?)",
@@ -57,7 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="中车眼镜 SOP Server",
-        version="0.1.0",
+        version="0.2.0",
         root_path=settings.root_path,
         lifespan=lifespan,
     )
