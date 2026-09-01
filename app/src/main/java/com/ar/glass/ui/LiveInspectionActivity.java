@@ -25,6 +25,9 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.ar.glass.R;
+import com.ar.glass.BuildConfig;
+import com.ar.glass.vision.realtime.DetectorFactory;
+import com.ar.glass.vision.realtime.FastenerDetector;
 import com.ar.glass.vision.realtime.FrameCropper;
 import com.ar.glass.vision.realtime.FrameRotation;
 import com.ar.glass.vision.realtime.InferenceGate;
@@ -50,7 +53,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private TextView modelStatusView;
     private TextView metricsView;
     private ExecutorService inferenceExecutor;
-    private volatile OnnxFastenerDetector detector;
+    private volatile FastenerDetector detector;
     private volatile boolean destroyed;
     private boolean cameraRequested;
     private ProcessCameraProvider cameraProvider;
@@ -154,7 +157,10 @@ public final class LiveInspectionActivity extends AppCompatActivity {
 
     private void initializeDetectorInBackground() {
         inferenceExecutor.execute(() -> {
-            OnnxFastenerDetector candidate = new OnnxFastenerDetector(getApplicationContext());
+            FastenerDetector candidate = DetectorFactory.create(
+                    getApplicationContext(),
+                    BuildConfig.DETECTOR_BACKEND,
+                    BuildConfig.NCNN_CONFIDENCE_THRESHOLD);
             if (destroyed) {
                 candidate.close();
                 return;
@@ -246,7 +252,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private void analyzeFrame(ImageProxy image) {
         boolean acquired = false;
         try {
-            OnnxFastenerDetector currentDetector = detector;
+            FastenerDetector currentDetector = detector;
             if (destroyed || currentDetector == null || !currentDetector.isReady()) {
                 return;
             }
@@ -368,7 +374,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     }
 
     private void closeInferenceResources() {
-        OnnxFastenerDetector currentDetector = detector;
+        FastenerDetector currentDetector = detector;
         detector = null;
         if (currentDetector != null) {
             currentDetector.close();

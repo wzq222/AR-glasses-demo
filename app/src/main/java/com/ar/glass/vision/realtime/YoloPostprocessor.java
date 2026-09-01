@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.nio.FloatBuffer;
 
 public final class YoloPostprocessor {
     public static final float DEFAULT_CONFIDENCE_THRESHOLD = 0.20f;
@@ -53,20 +54,123 @@ public final class YoloPostprocessor {
                 confidenceThreshold,
                 nmsIouThreshold);
 
+        return processValidated(
+                new PredictionReader() {
+                    @Override
+                    public float get(int row, int column) {
+                        return prediction[row][column];
+                    }
+                },
+                candidateCount,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold);
+    }
+
+    public static List<Detection> process(
+            FloatBuffer prediction,
+            int candidateCount,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY) {
+        if (prediction == null || candidateCount < 0
+                || prediction.capacity() < OUTPUT_ROWS * candidateCount) {
+            throw new IllegalArgumentException("flat prediction buffer is too small");
+        }
+        validateGeometry(
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                DEFAULT_CONFIDENCE_THRESHOLD,
+                DEFAULT_NMS_IOU_THRESHOLD);
+        return processValidated(
+                new PredictionReader() {
+                    @Override
+                    public float get(int row, int column) {
+                        return prediction.get(row * candidateCount + column);
+                    }
+                },
+                candidateCount,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                DEFAULT_CONFIDENCE_THRESHOLD,
+                DEFAULT_NMS_IOU_THRESHOLD);
+    }
+
+    public static List<Detection> process(
+            FloatBuffer prediction,
+            int candidateCount,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY,
+            float confidenceThreshold,
+            float nmsIouThreshold) {
+        if (prediction == null || candidateCount < 0
+                || prediction.capacity() < OUTPUT_ROWS * candidateCount) {
+            throw new IllegalArgumentException("flat prediction buffer is too small");
+        }
+        validateGeometry(
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold);
+        return processValidated(
+                new PredictionReader() {
+                    @Override
+                    public float get(int row, int column) {
+                        return prediction.get(row * candidateCount + column);
+                    }
+                },
+                candidateCount,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold);
+    }
+
+    private static List<Detection> processValidated(
+            PredictionReader prediction,
+            int candidateCount,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY,
+            float confidenceThreshold,
+            float nmsIouThreshold) {
         List<Detection> candidates = new ArrayList<>();
         for (int index = 0; index < candidateCount; index++) {
-            float class0 = prediction[4][index];
-            float class1 = prediction[5][index];
+            float class0 = prediction.get(4, index);
+            float class1 = prediction.get(5, index);
             int classId = class1 > class0 ? 1 : 0;
             float confidence = classId == 1 ? class1 : class0;
             if (!isFinite(confidence) || confidence < confidenceThreshold) {
                 continue;
             }
 
-            float centerX = prediction[0][index];
-            float centerY = prediction[1][index];
-            float width = prediction[2][index];
-            float height = prediction[3][index];
+            float centerX = prediction.get(0, index);
+            float centerY = prediction.get(1, index);
+            float width = prediction.get(2, index);
+            float height = prediction.get(3, index);
             if (!isFinite(centerX) || !isFinite(centerY)
                     || !isFinite(width) || !isFinite(height)
                     || width <= 0f || height <= 0f) {
@@ -133,6 +237,25 @@ public final class YoloPostprocessor {
                 throw new IllegalArgumentException("prediction rows must have equal lengths");
             }
         }
+        validateGeometry(
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold);
+        return candidateCount;
+    }
+
+    private static void validateGeometry(
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY,
+            float confidenceThreshold,
+            float nmsIouThreshold) {
         if (originalWidth <= 0 || originalHeight <= 0) {
             throw new IllegalArgumentException("original dimensions must be positive");
         }
@@ -142,7 +265,10 @@ public final class YoloPostprocessor {
         if (!isProbability(confidenceThreshold) || !isProbability(nmsIouThreshold)) {
             throw new IllegalArgumentException("thresholds must be finite values from 0 to 1");
         }
-        return candidateCount;
+    }
+
+    private interface PredictionReader {
+        float get(int row, int column);
     }
 
     private static float intersectionOverUnion(Detection first, Detection second) {

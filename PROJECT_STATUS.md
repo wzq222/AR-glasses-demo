@@ -180,6 +180,13 @@
   `parity_passed`并进入Android实测；ncnn FP16因0.2018阈值边缘框跌破0.20而漏1框，MNN FP32
   保持82框但有1框宽度漂移约5.7像素，二者均`parity_failed`。桌面时延不作为手机结论，正式
   真值SHA-256保持不变。证据见`docs/validation/2026-09-01-mobile-runtime-export-phase1.md`。
+- 2026-09-01：完成P20 Pro同端ONNX/ncnn A/B。两后端共用Android解码、letterbox和NMS后，17图
+  逐图框数完全一致、均为81框，显示精度内坐标/分数一致；ncnn未增加漏框或误框。快速ncnn的
+  17图P50为1049.8ms（965.1–1071.2ms），相对手机ONNX约1.65s降低约三分之一；最终实拍页一次
+  热态为1115.4ms，仍不属于实时。0.15低阈值会从81增至94框而被拒，关闭packing/Winograd/
+  SGEMM的精确数学模式慢到约2.1–2.4s且不改善同端一致性，也被拒。快速ncnn APK已重新安装到
+  指定P20 Pro，SHA-256为`49A5D4ED95D6857987F24293868CC4757CB1ED16084D70DC5683B8665A23DEDD`；
+  正式真值哈希未变。证据见`docs/validation/2026-09-01-android-ncnn-benchmark-phase2.md`。
 - 仓库没有眼镜端 App、后台服务、SOP 引擎、登录、巡检记录、语音引导、内窥镜接入、自动化测试或 CI。
 - 2026-08-25：在 Windows 中文路径下加入 `android.overridePathCheck=true` 后，
   `.\gradlew.bat assembleDebug` 构建成功；APK 大小 28,268,821 bytes，SHA-256 为
@@ -198,7 +205,8 @@ MobileNetV3-Small复核：在17个同源开发val场景、75个marked-point真�
 但单模型候选负担为22.47/17.29/23.24个/图，只有一个seed通过≤20门。固定等权几何均值为17.59个/图；
 单模型权重平均挑战者为19.71个/图并保持75/75，可进入跨设备挑战但余量很小。阈值仍使用同一val选择，
 sealed test未打开、当前手机实测只验证运行与性能，尚无跨车辆现场准确率证据，因此不允许表述为
-生产准确率。松动状态已完成真实首审和
+生产准确率。当前快速ncnn已在P20 Pro保持与手机ONNX同端一致，并将约1.65s降到约1.05s，但仍未
+达到实时；下一性能门是Vulkan和单类marked-point轻量挑战者。松动状态已完成真实首审和
 2个疑似点的隐藏二审；两个疑似点均因宽涂层或低分辨率落为`INSUFFICIENT`。当前ROI状态实验模型
 已经完成训练和ONNX技术验证，但严格质量门失败并禁止Android打包。真实数据仍没有受控
 `ALIGNED/DISPLACED`成对真值，因此不能宣称可靠状态模型。现有审计链已能阻止单张历史图被错误
@@ -285,4 +293,6 @@ git status --short
   质量门拒绝和真实受控采集门。
 - `docs/validation/2026-09-01-mobile-runtime-export-phase1.md`：ncnn/MNN转换、完整集预测一致性、严格
   失败边界、工具与产物哈希。
+- `docs/validation/2026-09-01-android-ncnn-benchmark-phase2.md`：共享检测器、P20 Pro同端一致性、
+  阈值/精确数学拒绝实验、APK哈希和真机时延。
 - Git外`review-packs/fastener-v2/reference-teacher-v1/ai-review-v1.json`：100图教师候选与整图复核结果。
