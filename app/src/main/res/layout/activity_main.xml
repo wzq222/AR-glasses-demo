@@ -210,14 +210,24 @@
                         android:textColor="#333333"
                         android:layout_marginBottom="10dp"/>
 
-                    <Button
-                        android:id="@+id/btnDetectLoop"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="📷 单张检测"
-                        android:textSize="14sp"
-                        android:backgroundTint="#FF5722"
-                        android:textColor="@android:color/white"/>
+                      <Button
+                          android:id="@+id/btnDetectLoop"
+                          android:layout_width="match_parent"
+                          android:layout_height="wrap_content"
+                          android:text="👓 眼镜拍照检测"
+                          android:textSize="14sp"
+                          android:backgroundTint="#FF5722"
+                          android:textColor="@android:color/white"/>
+
+                      <Button
+                          android:id="@+id/btnPhoneDetect"
+                          android:layout_width="match_parent"
+                          android:layout_height="wrap_content"
+                          android:layout_marginTop="6dp"
+                          android:text="📱 手机拍照检测"
+                          android:textSize="14sp"
+                          android:backgroundTint="#1976D2"
+                          android:textColor="@android:color/white"/>
 
                     <!-- 检测预览：照片 fitCenter 完整显示 + 检测框叠加（fitCenter 同步映射） -->
                     <FrameLayout
@@ -286,7 +296,7 @@
                         android:id="@+id/tvDetectStatus"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="点上方按钮：眼镜拍一张 → 照片传到手机 → YOLO 检测 → 显示预览框"
+                          android:text="可选择眼镜拍照同步，或直接使用手机相机；两种方式使用同一套防松标记检测模型"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="6dp"/>

@@ -285,10 +285,12 @@ git status --short
 - ONNX 集成构建保持产品分支的 ONNX Runtime 1.19.2，并打包
   `fastener-target-p2-640.onnx`（SHA-256
   `C50F9105FF75885BE3BA02464E6A994FA7A45FDE0B0634AEA12FAA04A6CC5B7A`）。
-- 42项 Android JVM 测试通过；Debug APK 构建通过，SHA-256
-  `7CE5FB8941DE500EB0CDF5DBF6DE8FB652E519C8CF5567EB873D17FCE01429BC`。
+- 42项 Android JVM 测试通过；Debug APK 构建通过。加入手机独立拍照入口后的APK SHA-256为
+  `6B5190C634227FB6435F4F4628E624C7FB88D2D422B735D3D88901BB5C7ADAD8`。
 - 该 APK 已只安装到 P20 Pro `CLT-AL00`，没有安装到眼镜。ADB 全图自测成功：同一张现场图输出
   5个“防松标记”检查点，端到端推理1774ms，未发生初始化或运行异常。
+- 主界面新增“手机拍照检测”，在BLE未连接、系统未就绪时仍保持可用；P20 Pro UI检查确认按钮启用，
+  点击后成功进入华为系统相机。拍照返回后复用同一marked-point检测、画框和播报链。
 - 本轮只完成候选检测产品链集成。实验松动状态 ROI 模型质量门仍失败，未进入产品流；正式状态仍须人工确认。
 
 ## Evidence
