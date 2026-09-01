@@ -61,6 +61,7 @@ public final class YoloPostprocessor {
                         return prediction[row][column];
                     }
                 },
+                OUTPUT_ROWS,
                 candidateCount,
                 originalWidth,
                 originalHeight,
@@ -68,7 +69,9 @@ public final class YoloPostprocessor {
                 padX,
                 padY,
                 confidenceThreshold,
-                nmsIouThreshold);
+                nmsIouThreshold,
+                DEFAULT_PRE_NMS_TOP_K,
+                DEFAULT_MAX_DETECTIONS);
     }
 
     public static List<Detection> process(
@@ -98,6 +101,7 @@ public final class YoloPostprocessor {
                         return prediction.get(row * candidateCount + column);
                     }
                 },
+                OUTPUT_ROWS,
                 candidateCount,
                 originalWidth,
                 originalHeight,
@@ -105,7 +109,9 @@ public final class YoloPostprocessor {
                 padX,
                 padY,
                 DEFAULT_CONFIDENCE_THRESHOLD,
-                DEFAULT_NMS_IOU_THRESHOLD);
+                DEFAULT_NMS_IOU_THRESHOLD,
+                DEFAULT_PRE_NMS_TOP_K,
+                DEFAULT_MAX_DETECTIONS);
     }
 
     public static List<Detection> process(
@@ -137,6 +143,7 @@ public final class YoloPostprocessor {
                         return prediction.get(row * candidateCount + column);
                     }
                 },
+                OUTPUT_ROWS,
                 candidateCount,
                 originalWidth,
                 originalHeight,
@@ -144,11 +151,14 @@ public final class YoloPostprocessor {
                 padX,
                 padY,
                 confidenceThreshold,
-                nmsIouThreshold);
+                nmsIouThreshold,
+                DEFAULT_PRE_NMS_TOP_K,
+                DEFAULT_MAX_DETECTIONS);
     }
 
-    private static List<Detection> processValidated(
-            PredictionReader prediction,
+    public static List<Detection> process(
+            FloatBuffer prediction,
+            int outputRows,
             int candidateCount,
             int originalWidth,
             int originalHeight,
@@ -156,13 +166,68 @@ public final class YoloPostprocessor {
             float padX,
             float padY,
             float confidenceThreshold,
-            float nmsIouThreshold) {
+            float nmsIouThreshold,
+            int preNmsTopK,
+            int maxDetections) {
+        if (prediction == null || outputRows < 5 || candidateCount < 0
+                || prediction.capacity() < outputRows * candidateCount) {
+            throw new IllegalArgumentException("flat prediction buffer is too small");
+        }
+        if (preNmsTopK <= 0 || maxDetections <= 0) {
+            throw new IllegalArgumentException("candidate limits must be positive");
+        }
+        validateGeometry(
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold);
+        return processValidated(
+                new PredictionReader() {
+                    @Override
+                    public float get(int row, int column) {
+                        return prediction.get(row * candidateCount + column);
+                    }
+                },
+                outputRows,
+                candidateCount,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold,
+                preNmsTopK,
+                maxDetections);
+    }
+
+    private static List<Detection> processValidated(
+            PredictionReader prediction,
+            int outputRows,
+            int candidateCount,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY,
+            float confidenceThreshold,
+            float nmsIouThreshold,
+            int preNmsTopK,
+            int maxDetections) {
         List<Detection> candidates = new ArrayList<>();
         for (int index = 0; index < candidateCount; index++) {
-            float class0 = prediction.get(4, index);
-            float class1 = prediction.get(5, index);
-            int classId = class1 > class0 ? 1 : 0;
-            float confidence = classId == 1 ? class1 : class0;
+            int classId = 0;
+            float confidence = prediction.get(4, index);
+            for (int row = 5; row < outputRows; row++) {
+                float score = prediction.get(row, index);
+                if (score > confidence) {
+                    confidence = score;
+                    classId = row - 4;
+                }
+            }
             if (!isFinite(confidence) || confidence < confidenceThreshold) {
                 continue;
             }
@@ -196,10 +261,10 @@ public final class YoloPostprocessor {
         });
 
         List<Detection> selected = new ArrayList<>();
-        int nmsCandidateCount = Math.min(candidates.size(), DEFAULT_PRE_NMS_TOP_K);
+        int nmsCandidateCount = Math.min(candidates.size(), preNmsTopK);
         for (int candidateIndex = 0;
                 candidateIndex < nmsCandidateCount
-                        && selected.size() < DEFAULT_MAX_DETECTIONS;
+                        && selected.size() < maxDetections;
                 candidateIndex++) {
             Detection candidate = candidates.get(candidateIndex);
             boolean suppressed = false;

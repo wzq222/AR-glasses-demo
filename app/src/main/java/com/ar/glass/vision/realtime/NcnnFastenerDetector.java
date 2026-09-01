@@ -13,9 +13,11 @@ public final class NcnnFastenerDetector implements FastenerDetector {
     public static final String BIN_ASSET_NAME = "model.ncnn.bin";
     public static final String INPUT_BLOB_NAME = "in0";
     public static final String OUTPUT_BLOB_NAME = "out0";
-    public static final int INPUT_SIZE = 640;
-    public static final int OUTPUT_CHANNELS = 6;
-    public static final int OUTPUT_CANDIDATES = 34_000;
+    public static final int INPUT_SIZE = 512;
+    public static final int OUTPUT_CHANNELS = 5;
+    public static final int OUTPUT_CANDIDATES = 21_760;
+    public static final float NMS_IOU_THRESHOLD = 0.70f;
+    public static final int MAX_DETECTIONS = 300;
 
     private static boolean nativeLoadAttempted;
     private static boolean nativeLoaded;
@@ -114,6 +116,7 @@ public final class NcnnFastenerDetector implements FastenerDetector {
 
         List<Detection> detections = YoloPostprocessor.process(
                 outputBuffer,
+                OUTPUT_CHANNELS,
                 OUTPUT_CANDIDATES,
                 bitmap.getWidth(),
                 bitmap.getHeight(),
@@ -121,7 +124,9 @@ public final class NcnnFastenerDetector implements FastenerDetector {
                 transform.getPadX(),
                 transform.getPadY(),
                 confidenceThreshold,
-                YoloPostprocessor.DEFAULT_NMS_IOU_THRESHOLD);
+                NMS_IOU_THRESHOLD,
+                YoloPostprocessor.DEFAULT_PRE_NMS_TOP_K,
+                MAX_DETECTIONS);
         long completedAtNanos = System.nanoTime();
         return new OnnxFastenerDetector.DetectionResult(
                 detections,

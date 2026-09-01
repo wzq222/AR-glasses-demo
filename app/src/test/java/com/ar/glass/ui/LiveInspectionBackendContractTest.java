@@ -24,5 +24,8 @@ public class LiveInspectionBackendContractTest {
         assertTrue(text.contains("BuildConfig.DETECTOR_BACKEND"));
         assertTrue(text.contains("BuildConfig.NCNN_VULKAN"));
         assertTrue(text.contains("BuildConfig.NCNN_VULKAN_FP16"));
+        assertTrue(text.contains("private volatile boolean inferenceFailed"));
+        assertTrue(text.contains("overlayView.clearDetections()"));
+        assertTrue(text.contains("inferenceFailed = true"));
     }
 }
