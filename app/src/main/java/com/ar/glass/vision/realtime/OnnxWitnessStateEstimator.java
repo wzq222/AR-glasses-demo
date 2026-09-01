@@ -38,12 +38,10 @@ public final class OnnxWitnessStateEstimator implements Closeable {
     public static final int EXPERIMENTAL_WITNESS_MARK_CHANNEL = 2;
     public static final float EXPERIMENTAL_SEGMENTATION_LOGIT_THRESHOLD = 0f;
     public static final int EXPERIMENTAL_MINIMUM_WITNESS_PIXELS = 8;
-    public static final int EXPERIMENTAL_QUALITY_MARK_INTEGRITY_CHANNEL = 0;
-    public static final int EXPERIMENTAL_QUALITY_OCCLUSION_CHANNEL = 1;
-    public static final int EXPERIMENTAL_QUALITY_BLUR_CHANNEL = 2;
-    public static final int EXPERIMENTAL_QUALITY_TOPOLOGY_CHANNEL = 3;
-    public static final float EXPERIMENTAL_QUALITY_PROBABILITY_THRESHOLD = 0.5f;
-    public static final float EXPERIMENTAL_MINIMUM_KEYPOINT_DYNAMIC_RANGE = 1.0e-3f;
+    public static final float EXPERIMENTAL_MINIMUM_KEYPOINT_PEAK_PROBABILITY = 0.005f;
+    public static final int EXPERIMENTAL_WITNESS_SUPPORT_RADIUS = 2;
+    public static final float EXPERIMENTAL_MAXIMUM_JOINT_GAP_RATIO = 0.25f;
+    public static final float EXPERIMENTAL_MINIMUM_SEGMENT_LENGTH_PIXELS = 4f;
 
     private static final int PIXEL_COUNT = INPUT_SIZE * INPUT_SIZE;
     private static final float[] MEAN = {0.485f, 0.456f, 0.406f};
@@ -123,7 +121,7 @@ public final class OnnxWitnessStateEstimator implements Closeable {
         return initializationError;
     }
 
-    public synchronized WitnessStateEstimate estimate(Bitmap source, SquareRoi roi)
+    public synchronized WitnessStateEstimate estimate(Bitmap source, WitnessRoi roi)
             throws OrtException {
         if (!isReady()) {
             throw new IllegalStateException(initializationError);
@@ -132,7 +130,7 @@ public final class OnnxWitnessStateEstimator implements Closeable {
                 || roi.getLeft() < 0 || roi.getTop() < 0
                 || roi.getRight() > source.getWidth()
                 || roi.getBottom() > source.getHeight()
-                || roi.getSide() <= 0) {
+                || roi.getWidth() <= 0 || roi.getHeight() <= 0) {
             throw new IllegalArgumentException("witness ROI is invalid");
         }
         prepareInput(source, roi);
@@ -151,7 +149,7 @@ public final class OnnxWitnessStateEstimator implements Closeable {
         }
     }
 
-    private void prepareInput(Bitmap source, SquareRoi roi) {
+    private void prepareInput(Bitmap source, WitnessRoi roi) {
         sourceRect.set(roi.getLeft(), roi.getTop(), roi.getRight(), roi.getBottom());
         inputCanvas.drawBitmap(source, sourceRect, destinationRect, bitmapPaint);
         inputBitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
@@ -173,9 +171,11 @@ public final class OnnxWitnessStateEstimator implements Closeable {
         if (!shapeMatches(inputShape, 3, INPUT_SIZE, INPUT_SIZE)
                 || outputShapes == null
                 || outputShapes.size() != 3
-                || !shapeMatches(outputShapes.get(SEGMENTATION_OUTPUT), 4, INPUT_SIZE, INPUT_SIZE)
-                || !shapeMatches(outputShapes.get(KEYPOINT_OUTPUT), 4, INPUT_SIZE, INPUT_SIZE)
-                || !shapeMatches(outputShapes.get(QUALITY_OUTPUT), 4)
+                || !outputShapeMatches(
+                        outputShapes.get(SEGMENTATION_OUTPUT), 4, INPUT_SIZE, INPUT_SIZE)
+                || !outputShapeMatches(
+                        outputShapes.get(KEYPOINT_OUTPUT), 4, INPUT_SIZE, INPUT_SIZE)
+                || !outputShapeMatches(outputShapes.get(QUALITY_OUTPUT), 4)
                 || outputShapes.get(SEGMENTATION_OUTPUT)[0] != inputShape[0]
                 || outputShapes.get(KEYPOINT_OUTPUT)[0] != inputShape[0]
                 || outputShapes.get(QUALITY_OUTPUT)[0] != inputShape[0]) {
@@ -250,13 +250,12 @@ public final class OnnxWitnessStateEstimator implements Closeable {
                 throw new IllegalArgumentException("quality output is nonfinite");
             }
         }
-        validateSemanticEvidence(segmentation[0], keypoints[0], quality[0]);
+        validateSemanticEvidence(segmentation[0], keypoints[0]);
     }
 
     private static void validateSemanticEvidence(
             float[][][] segmentation,
-            float[][][] keypoints,
-            float[] quality) {
+            float[][][] keypoints) {
         int witnessPixels = 0;
         float[][] witness = segmentation[EXPERIMENTAL_WITNESS_MARK_CHANNEL];
         for (int y = 0; y < INPUT_SIZE; y++) {
@@ -276,40 +275,66 @@ public final class OnnxWitnessStateEstimator implements Closeable {
             throw new IllegalArgumentException("witness mask evidence is empty");
         }
 
-        float markIntegrity = sigmoid(
-                quality[EXPERIMENTAL_QUALITY_MARK_INTEGRITY_CHANNEL]);
-        float occlusion = sigmoid(quality[EXPERIMENTAL_QUALITY_OCCLUSION_CHANNEL]);
-        float blur = sigmoid(quality[EXPERIMENTAL_QUALITY_BLUR_CHANNEL]);
-        float topology = sigmoid(quality[EXPERIMENTAL_QUALITY_TOPOLOGY_CHANNEL]);
-        if (markIntegrity < EXPERIMENTAL_QUALITY_PROBABILITY_THRESHOLD
-                || topology < EXPERIMENTAL_QUALITY_PROBABILITY_THRESHOLD
-                || occlusion > EXPERIMENTAL_QUALITY_PROBABILITY_THRESHOLD
-                || blur > EXPERIMENTAL_QUALITY_PROBABILITY_THRESHOLD) {
-            throw new IllegalArgumentException("witness quality evidence failed");
-        }
-
-        for (float[][] heatmap : keypoints) {
-            float minimum = Float.POSITIVE_INFINITY;
+        int[][] points = new int[4][2];
+        for (int channel = 0; channel < keypoints.length; channel++) {
+            float[][] heatmap = keypoints[channel];
             float maximum = Float.NEGATIVE_INFINITY;
-            for (float[] row : heatmap) {
-                for (float value : row) {
-                    minimum = Math.min(minimum, value);
-                    maximum = Math.max(maximum, value);
+            int maximumX = -1;
+            int maximumY = -1;
+            for (int y = 0; y < heatmap.length; y++) {
+                for (int x = 0; x < heatmap[y].length; x++) {
+                    if (heatmap[y][x] > maximum) {
+                        maximum = heatmap[y][x];
+                        maximumX = x;
+                        maximumY = y;
+                    }
                 }
             }
-            if (maximum - minimum < EXPERIMENTAL_MINIMUM_KEYPOINT_DYNAMIC_RANGE) {
-                throw new IllegalArgumentException("keypoint heatmap evidence is flat");
+            double exponentialSum = 0.0;
+            for (float[] row : heatmap) {
+                for (float value : row) {
+                    exponentialSum += Math.exp(value - maximum);
+                }
             }
+            double peakProbability = 1.0 / exponentialSum;
+            if (!Double.isFinite(peakProbability)
+                    || peakProbability < EXPERIMENTAL_MINIMUM_KEYPOINT_PEAK_PROBABILITY) {
+                throw new IllegalArgumentException("keypoint heatmap evidence is not localized");
+            }
+            points[channel][0] = maximumX;
+            points[channel][1] = maximumY;
+            if (!hasWitnessSupport(witness, maximumX, maximumY)) {
+                throw new IllegalArgumentException("keypoint lacks local witness-mask support");
+            }
+        }
+
+        double fixedLength = distance(points[0], points[1]);
+        double movingLength = distance(points[2], points[3]);
+        double jointGap = distance(points[1], points[2]);
+        double minimumLength = Math.min(fixedLength, movingLength);
+        if (minimumLength < EXPERIMENTAL_MINIMUM_SEGMENT_LENGTH_PIXELS
+                || jointGap > minimumLength * EXPERIMENTAL_MAXIMUM_JOINT_GAP_RATIO) {
+            throw new IllegalArgumentException("decoded witness topology is incoherent");
         }
     }
 
-    private static float sigmoid(float value) {
-        if (value >= 0f) {
-            double exponential = Math.exp(-value);
-            return (float) (1.0 / (1.0 + exponential));
+    private static boolean hasWitnessSupport(float[][] witness, int pointX, int pointY) {
+        int minimumX = Math.max(0, pointX - EXPERIMENTAL_WITNESS_SUPPORT_RADIUS);
+        int maximumX = Math.min(INPUT_SIZE - 1, pointX + EXPERIMENTAL_WITNESS_SUPPORT_RADIUS);
+        int minimumY = Math.max(0, pointY - EXPERIMENTAL_WITNESS_SUPPORT_RADIUS);
+        int maximumY = Math.min(INPUT_SIZE - 1, pointY + EXPERIMENTAL_WITNESS_SUPPORT_RADIUS);
+        for (int y = minimumY; y <= maximumY; y++) {
+            for (int x = minimumX; x <= maximumX; x++) {
+                if (witness[y][x] >= EXPERIMENTAL_SEGMENTATION_LOGIT_THRESHOLD) {
+                    return true;
+                }
+            }
         }
-        double exponential = Math.exp(value);
-        return (float) (exponential / (1.0 + exponential));
+        return false;
+    }
+
+    private static double distance(int[] first, int[] second) {
+        return Math.hypot(second[0] - first[0], second[1] - first[1]);
     }
 
     private static void validate4dFinite(
@@ -342,6 +367,20 @@ public final class OnnxWitnessStateEstimator implements Closeable {
         }
         for (int index = 0; index < dimensionsAfterBatch.length; index++) {
             if (shape[index + 1] != dimensionsAfterBatch[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean outputShapeMatches(long[] shape, long... dimensionsAfterBatch) {
+        if (shape == null || shape.length != dimensionsAfterBatch.length + 1
+                || (shape[0] != -1 && shape[0] <= 0)) {
+            return false;
+        }
+        for (int index = 0; index < dimensionsAfterBatch.length; index++) {
+            long actual = shape[index + 1];
+            if (actual != -1 && actual != dimensionsAfterBatch[index]) {
                 return false;
             }
         }

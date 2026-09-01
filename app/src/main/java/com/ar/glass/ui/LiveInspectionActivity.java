@@ -39,7 +39,8 @@ import com.ar.glass.vision.realtime.OnnxWitnessStateEstimator;
 import com.ar.glass.vision.realtime.OnnxFastenerDetector;
 import com.ar.glass.vision.realtime.Rgba8888Converter;
 import com.ar.glass.vision.realtime.Detection;
-import com.ar.glass.vision.realtime.SquareRoi;
+import com.ar.glass.vision.realtime.WitnessRoi;
+import com.ar.glass.vision.realtime.WitnessStateInteractionPolicy;
 import com.ar.glass.vision.fastener.WitnessReviewHint;
 import com.ar.glass.vision.fastener.WitnessStateEstimate;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -61,6 +62,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private DetectionOverlayView overlayView;
     private TextView modelStatusView;
     private TextView metricsView;
+    private TextView safetyStatusView;
     private ExecutorService inferenceExecutor;
     private volatile FastenerDetector detector;
     private volatile OnnxWitnessStateEstimator stateEstimator;
@@ -89,10 +91,10 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         overlayView = findViewById(R.id.detection_overlay);
         modelStatusView = findViewById(R.id.model_status);
         metricsView = findViewById(R.id.inference_metrics);
+        safetyStatusView = findViewById(R.id.live_safety_status);
         Button backButton = findViewById(R.id.live_back);
 
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-        overlayView.setOnDetectionTapListener(this::onDetectionTapped);
         backButton.setOnClickListener(view -> finish());
 
         inferenceExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -209,6 +211,20 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 detector = null;
                 return;
             }
+            boolean stateReady = stateCandidate != null && stateCandidate.isReady();
+            WitnessStateInteractionPolicy policy =
+                    WitnessStateInteractionPolicy.forRuntime(
+                            BuildConfig.WITNESS_STATE_EXPERIMENTAL_ENABLED,
+                            stateReady);
+            if (stateReady) {
+                Log.i(TAG, "Experimental witness state estimator ready: "
+                        + OnnxWitnessStateEstimator.MODEL_ASSET_NAME);
+            } else if (stateCandidate != null) {
+                Log.w(TAG, "Experimental witness state estimator unavailable: "
+                        + stateCandidate.getInitializationError());
+                stateCandidate.close();
+                stateCandidate = null;
+            }
             stateEstimator = stateCandidate;
             String initializationError = candidate.getInitializationError();
             int statusResource;
@@ -227,6 +243,19 @@ public final class LiveInspectionActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 if (!destroyed) {
                     modelStatusView.setText(statusResource);
+                    if (policy.canTapCandidate()) {
+                        overlayView.setOnDetectionTapListener(
+                                LiveInspectionActivity.this::onDetectionTapped);
+                        safetyStatusView.setText(
+                                R.string.live_safety_experimental_enabled);
+                    } else {
+                        overlayView.setOnDetectionTapListener(null);
+                        safetyStatusView.setText(
+                                policy.getAvailability()
+                                                == WitnessStateInteractionPolicy.Availability.UNAVAILABLE
+                                        ? R.string.live_safety_experimental_unavailable
+                                        : R.string.live_safety_refusal);
+                    }
                     if (!candidate.isReady()) {
                         overlayView.clearDetections();
                     }
@@ -507,14 +536,14 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         Bitmap roiPreview = null;
         WitnessStateEstimate estimate = null;
         try {
-            SquareRoi roi = SquareRoi.fromDetection(
+            WitnessRoi roi = WitnessRoi.fromDetection(
                     detection, selectedFrame.getWidth(), selectedFrame.getHeight());
             roiPreview = Bitmap.createBitmap(
                     selectedFrame,
                     roi.getLeft(),
                     roi.getTop(),
-                    roi.getSide(),
-                    roi.getSide());
+                    roi.getWidth(),
+                    roi.getHeight());
             OnnxWitnessStateEstimator currentEstimator = stateEstimator;
             if (currentEstimator == null || !currentEstimator.isReady()) {
                 throw new IllegalStateException("experimental witness state estimator unavailable");

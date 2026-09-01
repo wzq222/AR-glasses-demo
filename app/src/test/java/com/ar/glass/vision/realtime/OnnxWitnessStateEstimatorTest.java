@@ -24,6 +24,28 @@ public class OnnxWitnessStateEstimatorTest {
                 new long[]{-1, 3, 320, 320}, outputs);
     }
 
+    @Test
+    public void acceptsSymbolicOutputDimensionsFromPinnedOnnxMetadata() {
+        Map<String, long[]> outputs = new LinkedHashMap<>();
+        outputs.put("segmentation_logits", new long[]{-1, -1, -1, -1});
+        outputs.put("keypoint_heatmaps", new long[]{-1, -1, -1, -1});
+        outputs.put("quality_logits", new long[]{-1, -1});
+
+        OnnxWitnessStateEstimator.validateModelShapes(
+                new long[]{-1, 3, 320, 320}, outputs);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsWrongConcreteOutputDimensionAlongsideSymbolicMetadata() {
+        Map<String, long[]> outputs = new LinkedHashMap<>();
+        outputs.put("segmentation_logits", new long[]{-1, -1, 160, -1});
+        outputs.put("keypoint_heatmaps", new long[]{-1, -1, -1, -1});
+        outputs.put("quality_logits", new long[]{-1, -1});
+
+        OnnxWitnessStateEstimator.validateModelShapes(
+                new long[]{-1, 3, 320, 320}, outputs);
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void rejectsUnexpectedOutputShape() {
         Map<String, long[]> outputs = new LinkedHashMap<>();
@@ -91,7 +113,7 @@ public class OnnxWitnessStateEstimatorTest {
     }
 
     @Test
-    public void acceptsMinimumSemanticallyUsableEvidence() {
+    public void acceptsLocalizedMaskSupportedCoherentEvidence() {
         Evidence evidence = semanticallyUsableEvidence();
 
         OnnxWitnessStateEstimator.validateDecodedOutputs(
@@ -109,19 +131,24 @@ public class OnnxWitnessStateEstimatorTest {
                 evidence.segmentation, evidence.keypoints, evidence.quality);
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void lowMarkIntegrityQualityFailsClosed() {
+    @Test
+    public void finiteQualityLogitsAreInterfaceOnly() {
         Evidence evidence = semanticallyUsableEvidence();
-        evidence.quality[0][0] = -0.01f;
+        evidence.quality[0] = new float[]{-100f, 100f, 100f, -100f};
 
         OnnxWitnessStateEstimator.validateDecodedOutputs(
                 evidence.segmentation, evidence.keypoints, evidence.quality);
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void highOcclusionQualityFailsClosed() {
+    public void broadKeypointHeatmapFailsClosed() {
         Evidence evidence = semanticallyUsableEvidence();
-        evidence.quality[0][1] = 0.01f;
+        for (int y = 100; y < 120; y++) {
+            for (int x = 100; x < 120; x++) {
+                evidence.keypoints[0][3][y][x] = 0f;
+            }
+        }
+        evidence.segmentation[0][2][100][100] = 0f;
 
         OnnxWitnessStateEstimator.validateDecodedOutputs(
                 evidence.segmentation, evidence.keypoints, evidence.quality);
@@ -130,7 +157,35 @@ public class OnnxWitnessStateEstimatorTest {
     @Test(expected = IllegalArgumentException.class)
     public void flatKeypointHeatmapFailsClosed() {
         Evidence evidence = semanticallyUsableEvidence();
-        evidence.keypoints[0][3][120][110] = 0f;
+        for (int y = 0; y < 320; y++) {
+            java.util.Arrays.fill(evidence.keypoints[0][3][y], 0f);
+        }
+        evidence.segmentation[0][2][0][0] = 0f;
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void maskKeypointDisagreementFailsClosed() {
+        Evidence evidence = semanticallyUsableEvidence();
+        for (int y = 0; y < 320; y++) {
+            java.util.Arrays.fill(evidence.segmentation[0][2][y], -1f);
+        }
+        for (int x = 200; x < 208; x++) {
+            evidence.segmentation[0][2][200][x] = 0f;
+        }
+
+        OnnxWitnessStateEstimator.validateDecodedOutputs(
+                evidence.segmentation, evidence.keypoints, evidence.quality);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void incoherentJointGeometryFailsClosed() {
+        Evidence evidence = semanticallyUsableEvidence();
+        evidence.keypoints[0][2][10][110] = -10f;
+        evidence.keypoints[0][2][200][200] = 0f;
+        evidence.segmentation[0][2][200][200] = 0f;
 
         OnnxWitnessStateEstimator.validateDecodedOutputs(
                 evidence.segmentation, evidence.keypoints, evidence.quality);
@@ -147,10 +202,18 @@ public class OnnxWitnessStateEstimatorTest {
             segmentation[0][2][10][index] = 0f;
         }
         float[][][][] keypoints = new float[1][4][320][320];
-        keypoints[0][0][10][10] = 1f;
-        keypoints[0][1][10][110] = 1f;
-        keypoints[0][2][20][110] = 1f;
-        keypoints[0][3][120][110] = 1f;
+        for (int channel = 0; channel < 4; channel++) {
+            for (int y = 0; y < 320; y++) {
+                java.util.Arrays.fill(keypoints[0][channel][y], -10f);
+            }
+        }
+        keypoints[0][0][10][10] = 0f;
+        keypoints[0][1][10][110] = 0f;
+        keypoints[0][2][10][110] = 0f;
+        keypoints[0][3][110][110] = 0f;
+        segmentation[0][2][10][10] = 0f;
+        segmentation[0][2][10][110] = 0f;
+        segmentation[0][2][110][110] = 0f;
         float[][] quality = new float[][]{{0f, 0f, 0f, 0f}};
         return new Evidence(segmentation, keypoints, quality);
     }

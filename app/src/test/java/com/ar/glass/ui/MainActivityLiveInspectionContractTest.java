@@ -40,6 +40,27 @@ public class MainActivityLiveInspectionContractTest {
         assertNotEquals(0, R.string.live_state_experimental_warning);
         assertNotEquals(0, R.string.live_state_unavailable);
         assertNotEquals(0, R.string.live_state_result_format);
+        assertNotEquals(0, R.string.live_safety_experimental_enabled);
+        assertNotEquals(0, R.string.live_safety_experimental_unavailable);
+    }
+
+    @Test
+    public void defaultCopyRetainsRefusalAndSeparatesExperimentalAvailability() throws Exception {
+        Path projectRoot = Paths.get(System.getProperty("user.dir"));
+        Path strings = projectRoot.resolve("app/src/main/res/values/strings.xml");
+        if (!Files.exists(strings)) {
+            strings = projectRoot.resolve("src/main/res/values/strings.xml");
+        }
+        String text = new String(Files.readAllBytes(strings), StandardCharsets.UTF_8);
+
+        assertTrue(text.contains(
+                "<string name=\"live_inspection_entry_disclaimer\">"
+                        + "防松标记候选检测；松动状态暂需人工确认</string>"));
+        assertTrue(text.contains(
+                "<string name=\"live_safety_refusal\">"
+                        + "松动状态：无法判断（实验状态模型未启用）</string>"));
+        assertTrue(text.contains("name=\"live_safety_experimental_enabled\""));
+        assertTrue(text.contains("name=\"live_safety_experimental_unavailable\""));
     }
 
     @Test
