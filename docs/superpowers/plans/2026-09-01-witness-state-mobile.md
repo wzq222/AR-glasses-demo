@@ -88,26 +88,27 @@
 
 ## Task 6: Android ROI ONNX 推理与候选交互
 
-> 2026-09-01阻塞：实验模型质量门FAIL，`android_packaging_allowed=false`。按安全设计不把失败模型
-> 接入候选点击或安装到手机；待独立物理点角度门通过后继续本任务。
+> 2026-09-01用户显式授权实验阈值路径：实验模型质量门仍为FAIL，
+> `android_packaging_allowed=false`仍是生产质量事实。Android只在同时设置Git外模型目录和
+> `CRRC_WITNESS_STATE_EXPERIMENTAL=1`时打包，UI全程标注“实验阈值·待确认”。
 
 **Files:**
 
 - Create: `app/src/main/java/com/ar/glass/vision/realtime/OnnxWitnessStateEstimator.java`
-- Create: `app/src/main/java/com/ar/glass/vision/realtime/WitnessRoiTransform.java`
-- Create: `app/src/test/java/com/ar/glass/vision/realtime/WitnessRoiTransformTest.java`
+- Create: `app/src/main/java/com/ar/glass/vision/realtime/SquareRoi.java`
+- Create: `app/src/test/java/com/ar/glass/vision/realtime/SquareRoiTest.java`
 - Modify: `app/src/main/java/com/ar/glass/ui/DetectionOverlayView.java`
 - Modify: `app/src/main/java/com/ar/glass/ui/LiveInspectionActivity.java`
 - Modify: `app/src/main/res/layout/activity_live_inspection.xml`
 - Modify: `app/src/main/res/values/strings.xml`
 - Modify: `app/build.gradle`
 
-- [ ] 先写 ROI 扩框/裁剪/坐标回投测试，覆盖边界框、竖图、横图和空框。
-- [ ] 加载 Git 外导出的状态 ONNX；模型缺失、输出错形、非有限值和异常全部回落 `INSUFFICIENT`。
-- [ ] 候选点击后才运行单 ROI；展示角度区间、灰/绿/黄/红复核提示和耗时，所有文案保留“待确认”。
-- [ ] 增加“确认正常 / 确认错位 / 无法确认重拍”本地记录合同；未经人工确认不得写正式状态。
+- [x] 先写 ROI 方形扩框/裁剪/边界夹取测试；本次完成实验候选点击所需坐标变换。
+- [x] 加载 Git 外导出的状态 ONNX；模型缺失、输出错形、非有限值和异常全部失败关闭。仅为用户授权的实验路径。
+- [x] 候选点击后才运行单 ROI；展示点角度、±6.3°不确定范围、3°/15°分档和耗时，文案保留“实验阈值·待确认”。
+- [ ] 增加“确认正常 / 确认错位 / 无法确认重拍”本地记录合同。当前用户已取消采集与手工证据落盘，本项保持未执行。
 - [ ] 构建 Debug APK，在 P20 Pro 验证单 ROI 冷/热 P50、P95、内存和 10 分钟稳定性。
-- [ ] Commit: `feat(android): run witness roi review on selected candidate`
+- [x] Commit: `feat(android): run experimental witness roi review on selected candidate`
 
 ## Task 7: 验证收口与下一训练门
 

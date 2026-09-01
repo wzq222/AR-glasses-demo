@@ -59,6 +59,9 @@ public class ModelAssetContractTest {
                 "com.microsoft.onnxruntime:onnxruntime-android:1.17.1"));
         assertTrue(!buildScript.contains(
                 "com.microsoft.onnxruntime:onnxruntime-android:1.17.3"));
+        assertTrue(buildScript.contains("CRRC_WITNESS_STATE_MODEL_DIR"));
+        assertTrue(buildScript.contains("CRRC_WITNESS_STATE_EXPERIMENTAL"));
+        assertTrue(buildScript.contains("witness-roi.onnx"));
     }
 
     @Test(expected = UnsupportedOperationException.class)

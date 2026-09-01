@@ -6,9 +6,11 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Looper;
 import android.util.AttributeSet;
+import android.view.MotionEvent;
 import android.view.View;
 
 import com.ar.glass.vision.realtime.Detection;
+import com.ar.glass.vision.realtime.DetectionHitTester;
 import com.ar.glass.vision.realtime.PreviewCoordinateMapper;
 
 import java.util.ArrayList;
@@ -23,6 +25,11 @@ public final class DetectionOverlayView extends View {
     private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint labelBackgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private volatile OverlayResult result = OverlayResult.empty();
+    private OnDetectionTapListener detectionTapListener;
+
+    public interface OnDetectionTapListener {
+        void onDetectionTapped(Detection detection);
+    }
 
     public DetectionOverlayView(Context context) {
         this(context, null);
@@ -51,6 +58,47 @@ public final class DetectionOverlayView extends View {
         requireMainThread();
         result = OverlayResult.empty();
         invalidate();
+    }
+
+    public void setOnDetectionTapListener(OnDetectionTapListener listener) {
+        requireMainThread();
+        detectionTapListener = listener;
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        OnDetectionTapListener listener = detectionTapListener;
+        OverlayResult snapshot = result;
+        if (listener == null
+                || snapshot.imageWidth <= 0 || snapshot.imageHeight <= 0
+                || getWidth() <= 0 || getHeight() <= 0) {
+            return false;
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            return true;
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            Detection selected = DetectionHitTester.smallestContainingFillCenter(
+                    snapshot.detections,
+                    snapshot.imageWidth,
+                    snapshot.imageHeight,
+                    getWidth(),
+                    getHeight(),
+                    event.getX(),
+                    event.getY());
+            if (selected != null) {
+                performClick();
+                listener.onDetectionTapped(selected);
+            }
+            return true;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean performClick() {
+        super.performClick();
+        return true;
     }
 
     @Override

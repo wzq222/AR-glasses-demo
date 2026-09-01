@@ -4,10 +4,25 @@
 
 本轮完成了防松线状态的安全分诊合同、历史健康基准估计、Git外 ROI 数据合同、MobileNetV3-Small
 多头训练链、ONNX 导出和 Python/Android 同源边界测试。实验模型能够在24张合成 train-only 样本上
-学习关键点方向，但未通过实验质量门，禁止打包进 Android，也不能声称可以可靠判断真实松动。
+学习关键点方向，但未通过实验质量门，也不能声称可以可靠判断真实松动。当前用户只授权显式开启的
+Android实验阈值人工复核，并未改变质量门结论。
 
 当前可交付的是“可审计的测量与拒判链”，不是生产状态模型。未标定时正式状态始终为
 `INSUFFICIENT`；3°/15°只产生人工复核提示。
+
+## 用户授权的 Android 实验阈值路径
+
+- 打包必须同时设置`CRRC_WITNESS_STATE_MODEL_DIR`与`CRRC_WITNESS_STATE_EXPERIMENTAL=1`；只设模型目录时Gradle拒绝配置。
+- 打包输入固定为`witness-roi-mobilenetv3-small.onnx`，SHA-256
+  `6D42E0D6C5785866DC65077FCD4D5E6EED576689431CA5C3E6649A280A5880BA`；APK内资产名为`witness-roi.onnx`。
+- 候选点击时复制该叠加框对应的原始检测帧，以候选框中心扩展并边界夹取为方形ROI，状态估计期间和结果对话框关闭前暂停候选推理。
+- ONNX输入为`[batch,3,320,320]`，ImageNet归一化；输出必须精确为
+  `segmentation_logits [batch,4,320,320]`、`keypoint_heatmaps [batch,4,320,320]`和`quality_logits [batch,4]`。
+  四点通道顺序为`fixed_outer/fixed_joint/moving_joint/moving_outer`，以两线段绝对余弦解码`0–90°`点角度。
+- 点角度`<=3°`为“倾向正常（待确认）”，`>3° && <15°`为“可疑，建议换角度复拍”，`>=15°`为“高度疑似松动，必须第二视角确认”。
+  区间固定为`[max(0,a-6.3), min(90,a+6.3)]`，只作不确定警示，不改变点估计所属分档。
+- 模型缺失、初始化/运行错误、输出错形、任一非有限输出、退化线段或无效裁剪均显示“无法判断，请调整距离/角度后重拍”，不复用上次状态结果。
+- 没有新增图像、结果或人工确认记录落盘；当前用户已取消该范围。正式`FastenerState`仍为`INSUFFICIENT`。
 
 ## 已实现
 
@@ -72,6 +87,25 @@
   `B938BAB33B10FB7B95B6213C19D251437C476020FDDC875B0BD386F0FA129007`；该APK没有状态模型。
 - formal truth SHA-256复核保持
   `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`。
+
+## Android 实验接入验证
+
+- TDD RED：首次目标测试在缺少`SquareRoi`、`WitnessStateEstimate`、
+  `DetectionHitTester`和`OnnxWitnessStateEstimator`时以28个编译错误失败；新增的帧外候选反例后，
+  `SquareRoiTest`以1个预期断言失败证明边界拒绝有效。
+- TDD GREEN：目标测试通过；使用当前512 ncnn检测器、128 XNNPACK复核器和实验状态模型环境执行
+  `clean testDebugUnitTest assembleDebug --no-daemon`，随后在最终自审修正后复跑`testDebugUnitTest assembleDebug --no-daemon`，
+  最终结果为`93 tests, 0 failures, 0 errors, 0 skipped`，Debug APK构建PASS。
+- 只设`CRRC_WITNESS_STATE_MODEL_DIR`不设实验开关时，`gradlew help --no-daemon`按预期失败并报告
+  `CRRC_WITNESS_STATE_MODEL_DIR requires CRRC_WITNESS_STATE_EXPERIMENTAL=1`。
+- Debug APK：94,453,463 bytes，SHA-256
+  `BEE09FFACE6E020682389470266324CEA9483A98B560D6F0D1619D8306708A3F`。
+- APK内嵌资产SHA-256：检测器param
+  `EE68160881FE607CCE87485E569095A917A1511394BE66F39FE7567EFE4C9BB0`，检测器bin
+  `ED1448C049809A4E8E2D1D2AFD254AAE66AA4C1238D70B1CA6D9C2835DE9DCEC`，候选复核器
+  `FED197A11134DD4358B70EFF64086C050DDECC9B2C484E72AAEB102E4BA563CD`，实验状态模型
+  `6D42E0D6C5785866DC65077FCD4D5E6EED576689431CA5C3E6649A280A5880BA`。
+- 本轮未安装到手机；单ROI冷/热P50、P95、内存和10分钟稳定性仍待验证。
 
 ## 下一训练门
 

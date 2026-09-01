@@ -214,6 +214,38 @@ public final class AntiLooseGeometry {
                 interval.getUpperDegrees());
     }
 
+    public static GeometryDecision triagePointAngle(
+            float pointAngleDegrees,
+            ProvisionalTriageThresholds thresholds) {
+        if (!isFinite(pointAngleDegrees)
+                || pointAngleDegrees < 0f
+                || pointAngleDegrees > 90f
+                || thresholds == null) {
+            return uncertain("POINT_ANGLE_INVALID");
+        }
+        WitnessReviewHint hint;
+        String reason;
+        if (pointAngleDegrees <= thresholds.getReviewDegrees()) {
+            hint = WitnessReviewHint.LIKELY_ALIGNED;
+            reason = "POINT_ANGLE_AT_OR_BELOW_REVIEW_THRESHOLD";
+        } else if (pointAngleDegrees < thresholds.getHighSuspicionDegrees()) {
+            hint = WitnessReviewHint.POSSIBLE_DISPLACED;
+            reason = "POINT_ANGLE_REVIEW_REQUIRED";
+        } else {
+            hint = WitnessReviewHint.POSSIBLE_DISPLACED;
+            reason = "POINT_ANGLE_SECOND_VIEW_REQUIRED";
+        }
+        return new GeometryDecision(
+                FastenerState.INSUFFICIENT,
+                reason,
+                pointAngleDegrees,
+                Float.NaN,
+                Float.NaN,
+                hint,
+                pointAngleDegrees,
+                pointAngleDegrees);
+    }
+
     private static GeometryDecision uncertain(String reason) {
         return new GeometryDecision(FastenerState.INSUFFICIENT, reason, Float.NaN, Float.NaN, Float.NaN);
     }

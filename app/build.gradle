@@ -5,6 +5,8 @@ def detectorBackend = (System.getenv('CRRC_DETECTOR_BACKEND') ?: 'onnx').trim().
 def ncnnAndroidRoot = System.getenv('CRRC_NCNN_ANDROID_ROOT')
 def ncnnModelDir = System.getenv('CRRC_NCNN_MODEL_DIR')
 def markedPointVerifierModelDir = System.getenv('CRRC_MARKED_POINT_VERIFIER_MODEL_DIR')
+def witnessStateModelDir = System.getenv('CRRC_WITNESS_STATE_MODEL_DIR')
+def witnessStateExperimental = (System.getenv('CRRC_WITNESS_STATE_EXPERIMENTAL') ?: '0') == '1'
 def ncnnJniBuildRoot = System.getenv('CRRC_NCNN_JNI_BUILD_ROOT')
 def ncnnConfidenceThreshold = (System.getenv('CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.20').toFloat()
 def ncnnExactMath = (System.getenv('CRRC_NCNN_EXACT_MATH') ?: '0') == '1'
@@ -16,9 +18,18 @@ def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
 def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
 def filteredOnnxModelDir = file("$buildDir/generated/filteredOnnxModel")
 def filteredMarkedPointVerifierDir = file("$buildDir/generated/filteredMarkedPointVerifier")
+def filteredWitnessStateModelDir = file("$buildDir/generated/filteredWitnessStateModel")
 def markedPointVerifierEnabled = detectorBackend == 'ncnn'
         && markedPointVerifierModelDir != null
         && !markedPointVerifierModelDir.trim().isEmpty()
+def witnessStateModelConfigured = witnessStateModelDir != null
+        && !witnessStateModelDir.trim().isEmpty()
+def witnessStateExperimentalEnabled = witnessStateModelConfigured && witnessStateExperimental
+def witnessStateExpectedSha256 = '6D42E0D6C5785866DC65077FCD4D5E6EED576689431CA5C3E6649A280A5880BA'
+if (witnessStateModelConfigured && !witnessStateExperimental) {
+    throw new GradleException(
+            'CRRC_WITNESS_STATE_MODEL_DIR requires CRRC_WITNESS_STATE_EXPERIMENTAL=1')
+}
 if (markedPointVerifierNnapi && markedPointVerifierXnnpack) {
     throw new GradleException('only one marked-point verifier accelerator may be enabled')
 }
@@ -70,6 +81,35 @@ if (markedPointVerifierEnabled) {
         into filteredMarkedPointVerifierDir
     }
 }
+if (witnessStateExperimentalEnabled) {
+    def witnessStateModelFile = file(
+            "${witnessStateModelDir}/witness-roi-mobilenetv3-small.onnx")
+    task prepareFilteredWitnessStateModel(type: Sync) {
+        doFirst {
+            if (!witnessStateModelFile.isFile()) {
+                throw new GradleException(
+                        "experimental witness state model missing: ${witnessStateModelFile}")
+            }
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            witnessStateModelFile.withInputStream { input ->
+                byte[] chunk = new byte[32768]
+                int count
+                while ((count = input.read(chunk)) != -1) {
+                    digest.update(chunk, 0, count)
+                }
+            }
+            def actualSha256 = digest.digest().encodeHex().toString().toUpperCase()
+            if (actualSha256 != witnessStateExpectedSha256) {
+                throw new GradleException(
+                        "experimental witness state model SHA-256 mismatch: ${actualSha256}")
+            }
+        }
+        from(witnessStateModelFile) {
+            rename { 'witness-roi.onnx' }
+        }
+        into filteredWitnessStateModelDir
+    }
+}
 
 android {
     compileSdkVersion 33
@@ -90,6 +130,8 @@ android {
                 markedPointVerifierNnapi.toString()
         buildConfigField 'boolean', 'MARKED_POINT_VERIFIER_XNNPACK',
                 markedPointVerifierXnnpack.toString()
+        buildConfigField 'boolean', 'WITNESS_STATE_EXPERIMENTAL_ENABLED',
+                witnessStateExperimentalEnabled.toString()
         ndk{
             abiFilters 'armeabi-v7a','arm64-v8a'
         }
@@ -117,6 +159,9 @@ android {
             }
             if (markedPointVerifierEnabled) {
                 assets.srcDir filteredMarkedPointVerifierDir
+            }
+            if (witnessStateExperimentalEnabled) {
+                assets.srcDir filteredWitnessStateModelDir
             }
             jniLibs.srcDirs = [filteredJniLibsDir]
         }
@@ -159,6 +204,9 @@ if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
 }
 if (markedPointVerifierEnabled) {
     preBuild.dependsOn prepareFilteredMarkedPointVerifier
+}
+if (witnessStateExperimentalEnabled) {
+    preBuild.dependsOn prepareFilteredWitnessStateModel
 }
 
 if (detectorBackend == 'ncnn') {

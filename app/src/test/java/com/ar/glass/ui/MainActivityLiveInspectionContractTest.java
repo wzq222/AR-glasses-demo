@@ -36,6 +36,10 @@ public class MainActivityLiveInspectionContractTest {
         assertNotEquals(0, R.string.live_model_initialization_error);
         assertNotEquals(0, R.string.live_frame_inference_failed);
         assertNotEquals(0, R.string.live_metrics_format);
+        assertNotEquals(0, R.string.live_state_experimental_title);
+        assertNotEquals(0, R.string.live_state_experimental_warning);
+        assertNotEquals(0, R.string.live_state_unavailable);
+        assertNotEquals(0, R.string.live_state_result_format);
     }
 
     @Test

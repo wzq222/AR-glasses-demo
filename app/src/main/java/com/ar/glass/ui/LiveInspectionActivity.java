@@ -8,10 +8,14 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.Size;
+import android.view.Gravity;
 import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -31,8 +35,13 @@ import com.ar.glass.vision.realtime.FastenerDetector;
 import com.ar.glass.vision.realtime.FrameCropper;
 import com.ar.glass.vision.realtime.FrameRotation;
 import com.ar.glass.vision.realtime.InferenceGate;
+import com.ar.glass.vision.realtime.OnnxWitnessStateEstimator;
 import com.ar.glass.vision.realtime.OnnxFastenerDetector;
 import com.ar.glass.vision.realtime.Rgba8888Converter;
+import com.ar.glass.vision.realtime.Detection;
+import com.ar.glass.vision.realtime.SquareRoi;
+import com.ar.glass.vision.fastener.WitnessReviewHint;
+import com.ar.glass.vision.fastener.WitnessStateEstimate;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.nio.ByteBuffer;
@@ -54,8 +63,10 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private TextView metricsView;
     private ExecutorService inferenceExecutor;
     private volatile FastenerDetector detector;
+    private volatile OnnxWitnessStateEstimator stateEstimator;
     private volatile boolean destroyed;
     private volatile boolean inferenceFailed;
+    private volatile boolean reviewInProgress;
     private boolean cameraRequested;
     private ProcessCameraProvider cameraProvider;
     private ImageAnalysis imageAnalysis;
@@ -65,6 +76,8 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     private int[] rotatedPixels;
     private final List<Bitmap> frameBitmaps = new ArrayList<>();
     private Bitmap frameBitmap;
+    private Bitmap detectionFrame;
+    private AlertDialog activeReviewDialog;
     private long previousResultAtMillis;
 
     @Override
@@ -79,6 +92,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         Button backButton = findViewById(R.id.live_back);
 
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        overlayView.setOnDetectionTapListener(this::onDetectionTapped);
         backButton.setOnClickListener(view -> finish());
 
         inferenceExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -123,6 +137,11 @@ public final class LiveInspectionActivity extends AppCompatActivity {
     protected void onDestroy() {
         destroyed = true;
         cameraRequested = false;
+        AlertDialog reviewDialog = activeReviewDialog;
+        activeReviewDialog = null;
+        if (reviewDialog != null) {
+            reviewDialog.dismiss();
+        }
         if (imageAnalysis != null) {
             imageAnalysis.clearAnalyzer();
             imageAnalysis = null;
@@ -135,6 +154,11 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         if (executor != null) {
             executor.execute(this::closeInferenceResources);
             executor.shutdown();
+        }
+        Bitmap currentDetectionFrame = detectionFrame;
+        detectionFrame = null;
+        if (currentDetectionFrame != null && !currentDetectionFrame.isRecycled()) {
+            currentDetectionFrame.recycle();
         }
         super.onDestroy();
     }
@@ -173,6 +197,19 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 return;
             }
             detector = candidate;
+            OnnxWitnessStateEstimator stateCandidate =
+                    BuildConfig.WITNESS_STATE_EXPERIMENTAL_ENABLED
+                            ? new OnnxWitnessStateEstimator(getApplicationContext())
+                            : null;
+            if (destroyed) {
+                if (stateCandidate != null) {
+                    stateCandidate.close();
+                }
+                candidate.close();
+                detector = null;
+                return;
+            }
+            stateEstimator = stateCandidate;
             String initializationError = candidate.getInitializationError();
             int statusResource;
             if (candidate.isReady()) {
@@ -260,7 +297,7 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         boolean acquired = false;
         try {
             FastenerDetector currentDetector = detector;
-            if (destroyed || inferenceFailed
+            if (destroyed || inferenceFailed || reviewInProgress
                     || currentDetector == null || !currentDetector.isReady()) {
                 return;
             }
@@ -277,7 +314,16 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                     ? 0.0
                     : 1_000.0 / Math.max(1L, completedAtMillis - previousResultAtMillis);
             previousResultAtMillis = completedAtMillis;
-            postResult(result, approximateFps);
+            Bitmap frozenDetectionFrame = inferenceBitmap.copy(
+                    Bitmap.Config.ARGB_8888, false);
+            if (frozenDetectionFrame == null) {
+                throw new IllegalStateException("unable to freeze detection frame");
+            }
+            if (reviewInProgress) {
+                frozenDetectionFrame.recycle();
+                return;
+            }
+            postResult(result, approximateFps, frozenDetectionFrame);
         } catch (Exception | LinkageError exception) {
             inferenceFailed = true;
             Log.e(TAG, "Frame inference failed", exception);
@@ -389,6 +435,11 @@ public final class LiveInspectionActivity extends AppCompatActivity {
         if (currentDetector != null) {
             currentDetector.close();
         }
+        OnnxWitnessStateEstimator currentStateEstimator = stateEstimator;
+        stateEstimator = null;
+        if (currentStateEstimator != null) {
+            currentStateEstimator.close();
+        }
         for (Bitmap bitmap : frameBitmaps) {
             if (!bitmap.isRecycled()) {
                 bitmap.recycle();
@@ -404,7 +455,8 @@ public final class LiveInspectionActivity extends AppCompatActivity {
 
     private void postResult(
             OnnxFastenerDetector.DetectionResult result,
-            double approximateFps) {
+            double approximateFps,
+            Bitmap frozenDetectionFrame) {
         Log.i(TAG, String.format(
                 java.util.Locale.US,
                 "detections=%d total=%.1fms preprocess=%.1fms inference=%.1fms postprocess=%.1fms fps=%.2f",
@@ -420,7 +472,8 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                 result.getLatencyMillis(),
                 approximateFps);
         runOnUiThread(() -> {
-            if (destroyed) {
+            if (destroyed || reviewInProgress) {
+                frozenDetectionFrame.recycle();
                 return;
             }
             modelStatusView.setText(R.string.live_model_ready);
@@ -429,6 +482,151 @@ public final class LiveInspectionActivity extends AppCompatActivity {
                     result.getDetections(),
                     result.getOriginalWidth(),
                     result.getOriginalHeight());
+            Bitmap previousDetectionFrame = detectionFrame;
+            detectionFrame = frozenDetectionFrame;
+            if (previousDetectionFrame != null && !previousDetectionFrame.isRecycled()) {
+                previousDetectionFrame.recycle();
+            }
         });
+    }
+
+    private void onDetectionTapped(Detection detection) {
+        if (destroyed || reviewInProgress || detectionFrame == null) {
+            return;
+        }
+        reviewInProgress = true;
+        Bitmap selectedFrame = detectionFrame.copy(Bitmap.Config.ARGB_8888, false);
+        if (selectedFrame == null) {
+            showStateReviewDialog(null, null);
+            return;
+        }
+        inferenceExecutor.execute(() -> estimateTappedDetection(selectedFrame, detection));
+    }
+
+    private void estimateTappedDetection(Bitmap selectedFrame, Detection detection) {
+        Bitmap roiPreview = null;
+        WitnessStateEstimate estimate = null;
+        try {
+            SquareRoi roi = SquareRoi.fromDetection(
+                    detection, selectedFrame.getWidth(), selectedFrame.getHeight());
+            roiPreview = Bitmap.createBitmap(
+                    selectedFrame,
+                    roi.getLeft(),
+                    roi.getTop(),
+                    roi.getSide(),
+                    roi.getSide());
+            OnnxWitnessStateEstimator currentEstimator = stateEstimator;
+            if (currentEstimator == null || !currentEstimator.isReady()) {
+                throw new IllegalStateException("experimental witness state estimator unavailable");
+            }
+            estimate = currentEstimator.estimate(selectedFrame, roi);
+        } catch (Exception | LinkageError exception) {
+            Log.w(TAG, "Experimental witness state estimate failed closed", exception);
+        } finally {
+            selectedFrame.recycle();
+        }
+        Bitmap finalRoiPreview = roiPreview;
+        WitnessStateEstimate finalEstimate = estimate;
+        runOnUiThread(() -> showStateReviewDialog(finalRoiPreview, finalEstimate));
+    }
+
+    private void showStateReviewDialog(
+            Bitmap roiPreview, WitnessStateEstimate estimate) {
+        if (destroyed) {
+            if (roiPreview != null && !roiPreview.isRecycled()) {
+                roiPreview.recycle();
+            }
+            reviewInProgress = false;
+            return;
+        }
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        int padding = dp(20);
+        content.setPadding(padding, dp(8), padding, 0);
+
+        if (roiPreview != null) {
+            ImageView image = new ImageView(this);
+            image.setAdjustViewBounds(true);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setMinimumHeight(dp(180));
+            image.setMaxHeight(dp(300));
+            image.setImageBitmap(roiPreview);
+            content.addView(image, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+
+        TextView details = new TextView(this);
+        details.setTextSize(16f);
+        details.setTextColor(0xFF202124);
+        details.setGravity(Gravity.START);
+        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        detailParams.topMargin = dp(14);
+        if (estimate == null) {
+            details.setText(R.string.live_state_unavailable);
+        } else {
+            details.setText(getString(
+                    R.string.live_state_result_format,
+                    estimate.getAngle().getPointEstimateDegrees(),
+                    estimate.getAngle().getLowerDegrees(),
+                    estimate.getAngle().getUpperDegrees(),
+                    thresholdBucket(estimate),
+                    estimate.getInferenceMillis(),
+                    reviewAdvice(estimate)));
+        }
+        content.addView(details, detailParams);
+
+        TextView warning = new TextView(this);
+        warning.setText(R.string.live_state_experimental_warning);
+        warning.setTextSize(17f);
+        warning.setTextColor(0xFFC62828);
+        warning.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams warningParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        warningParams.topMargin = dp(18);
+        content.addView(warning, warningParams);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.live_state_experimental_title)
+                .setView(content)
+                .setPositiveButton(R.string.live_state_confirm, null)
+                .create();
+        activeReviewDialog = dialog;
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnDismissListener(ignored -> {
+            activeReviewDialog = null;
+            reviewInProgress = false;
+            if (roiPreview != null && !roiPreview.isRecycled()) {
+                roiPreview.recycle();
+            }
+        });
+        dialog.show();
+    }
+
+    private String thresholdBucket(WitnessStateEstimate estimate) {
+        if (estimate.getReviewHint() == WitnessReviewHint.LIKELY_ALIGNED) {
+            return getString(R.string.live_state_bucket_likely_aligned);
+        }
+        if ("POINT_ANGLE_SECOND_VIEW_REQUIRED".equals(estimate.getReviewReason())) {
+            return getString(R.string.live_state_bucket_high);
+        }
+        return getString(R.string.live_state_bucket_review);
+    }
+
+    private String reviewAdvice(WitnessStateEstimate estimate) {
+        if (estimate.getReviewHint() == WitnessReviewHint.LIKELY_ALIGNED) {
+            return getString(R.string.live_state_review_likely_aligned);
+        }
+        if ("POINT_ANGLE_SECOND_VIEW_REQUIRED".equals(estimate.getReviewReason())) {
+            return getString(R.string.live_state_review_second_view);
+        }
+        return getString(R.string.live_state_review_retake);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
