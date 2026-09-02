@@ -314,6 +314,12 @@ git status --short
   `1CF55BFD2AE6EAB16839C1D97B45B0FAFBDA475C0A795661D6DE83C4F0C1BB15`，仅安装到P20 Pro
   `CLT-AL00`，真机确认主界面入口和登录页，未安装到眼镜。尚未用真实巡检员账号完成生产任务实单，
   因此不能把接口与UI闭环表述为现场验收完成。
+- 2026-09-02：`fastener-target-p2-640.onnx`和`marked-point-verifier.onnx`已放入Android标准
+  `assets`并由Git LFS管理，构建不再依赖开发机的模型目录环境变量。`preBuild`会校验精确文件大小和
+  SHA-256，缺失、LFS对象未拉取或内容不匹配时拒绝构建。45项Android JVM测试通过；Debug APK内
+  两个模型的大小和哈希均复核一致，APK SHA-256为
+  `8939E12AF52935091E66728A4B3421AE40696C0E3870AAB0E956FFFFA23C5D6E`。本轮ADB未发现已连接设备，
+  因此尚未覆盖安装到P20 Pro；此前安装的APK仍缺少模型，不能用于算法测试。
 - 2026-09-01：生产根入口已补齐中文 Web 管理后台，支持登录、仪表盘、用户、SOP版本、任务下发和
   巡检记录列表；巡检员被服务端权限门拒绝进入管理接口。`/`直接页面、`/admin`、鉴权冒烟、容器健康
   和原Finbot站点均已在线验证通过。服务端闭环已可管理，但Android登录与SOP执行上传仍待接入。

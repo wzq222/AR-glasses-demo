@@ -1,10 +1,8 @@
 apply plugin: 'com.android.application'
 
-def crrcVisionModelDir = System.getenv('CRRC_VISION_MODEL_DIR')
 def detectorBackend = (System.getenv('CRRC_DETECTOR_BACKEND') ?: 'onnx').trim().toLowerCase()
 def ncnnAndroidRoot = System.getenv('CRRC_NCNN_ANDROID_ROOT')
 def ncnnModelDir = System.getenv('CRRC_NCNN_MODEL_DIR')
-def markedPointVerifierModelDir = System.getenv('CRRC_MARKED_POINT_VERIFIER_MODEL_DIR')
 def ncnnJniBuildRoot = System.getenv('CRRC_NCNN_JNI_BUILD_ROOT')
 def ncnnConfidenceThreshold = (System.getenv('CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.20').toFloat()
 def ncnnExactMath = (System.getenv('CRRC_NCNN_EXACT_MATH') ?: '0') == '1'
@@ -14,11 +12,17 @@ def markedPointVerifierNnapi = (System.getenv('CRRC_MARKED_POINT_VERIFIER_NNAPI'
 def markedPointVerifierXnnpack = (System.getenv('CRRC_MARKED_POINT_VERIFIER_XNNPACK') ?: '0') == '1'
 def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
 def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
-def filteredOnnxModelDir = file("$buildDir/generated/filteredOnnxModel")
-def filteredMarkedPointVerifierDir = file("$buildDir/generated/filteredMarkedPointVerifier")
 def markedPointVerifierEnabled = detectorBackend == 'ncnn'
-        && markedPointVerifierModelDir != null
-        && !markedPointVerifierModelDir.trim().isEmpty()
+def bundledVisionModels = [
+        'src/main/assets/fastener-target-p2-640.onnx': [
+                size: 43245031L,
+                sha256: 'C50F9105FF75885BE3BA02464E6A994FA7A45FDE0B0634AEA12FAA04A6CC5B7A'
+        ],
+        'src/main/assets/marked-point-verifier.onnx': [
+                size: 6089246L,
+                sha256: 'FED197A11134DD4358B70EFF64086C050DDECC9B2C484E72AAEB102E4BA563CD'
+        ]
+]
 if (markedPointVerifierNnapi && markedPointVerifierXnnpack) {
     throw new GradleException('only one marked-point verifier accelerator may be enabled')
 }
@@ -53,21 +57,33 @@ if (detectorBackend == 'ncnn') {
         into filteredNcnnModelDir
     }
 }
-if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
-    task prepareFilteredOnnxModel(type: Sync) {
-        from(crrcVisionModelDir) {
-            include 'fastener-target-p2-640.onnx'
+task verifyBundledVisionModels {
+    inputs.files bundledVisionModels.keySet().collect { file(it) }
+    doLast {
+        bundledVisionModels.each { relativePath, expected ->
+            def modelFile = file(relativePath)
+            if (!modelFile.isFile()) {
+                throw new GradleException(
+                        "missing bundled vision model: ${relativePath}; run git lfs pull")
+            }
+            if (modelFile.length() != expected.size) {
+                throw new GradleException(
+                        "invalid bundled vision model size: ${relativePath}; run git lfs pull")
+            }
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            modelFile.withInputStream { stream ->
+                byte[] buffer = new byte[1024 * 1024]
+                int count
+                while ((count = stream.read(buffer)) != -1) {
+                    digest.update(buffer, 0, count)
+                }
+            }
+            def actualSha256 = digest.digest().collect { String.format('%02X', it) }.join()
+            if (actualSha256 != expected.sha256) {
+                throw new GradleException(
+                        "invalid bundled vision model SHA-256: ${relativePath}")
+            }
         }
-        into filteredOnnxModelDir
-    }
-}
-if (markedPointVerifierEnabled) {
-    task prepareFilteredMarkedPointVerifier(type: Sync) {
-        from(markedPointVerifierModelDir) {
-            include 'marked-point-verifier-mobilenetv3-small.onnx'
-            rename { 'marked-point-verifier.onnx' }
-        }
-        into filteredMarkedPointVerifierDir
     }
 }
 
@@ -121,14 +137,8 @@ android {
     }
     sourceSets {
         main {
-            if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
-                assets.srcDir filteredOnnxModelDir
-            }
             if (detectorBackend == 'ncnn') {
                 assets.srcDir filteredNcnnModelDir
-            }
-            if (markedPointVerifierEnabled) {
-                assets.srcDir filteredMarkedPointVerifierDir
             }
             jniLibs.srcDirs = [filteredJniLibsDir]
         }
@@ -170,14 +180,9 @@ dependencies {
 }
 
 preBuild.dependsOn prepareFilteredJniLibs
+preBuild.dependsOn verifyBundledVisionModels
 if (detectorBackend == 'ncnn') {
     preBuild.dependsOn prepareFilteredNcnnModel
-}
-if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
-    preBuild.dependsOn prepareFilteredOnnxModel
-}
-if (markedPointVerifierEnabled) {
-    preBuild.dependsOn prepareFilteredMarkedPointVerifier
 }
 
 if (detectorBackend == 'ncnn') {
