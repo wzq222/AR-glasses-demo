@@ -77,6 +77,11 @@
             android:name=".ui.MeterRecordsActivity"
             android:screenOrientation="portrait" />
 
+        <!-- 后台任务领取与SOP逐步执行 -->
+        <activity
+            android:name=".sop.SopActivity"
+            android:screenOrientation="portrait" />
+
         <!-- 文件分享（导出台账 CSV/Excel） -->
         <provider
             android:name="androidx.core.content.FileProvider"

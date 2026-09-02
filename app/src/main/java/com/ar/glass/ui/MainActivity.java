@@ -97,6 +97,7 @@ public class MainActivity extends AppCompatActivity {
     private Button btnVoice;
     private Button btnDetectLoop;
     private Button btnPhoneDetect;
+    private Button btnSopTasks;
     private TextView tvDetectStatus;
     private TextView tvDetectConf;
     private TextView tvDetectPlaceholder;
@@ -184,6 +185,7 @@ public class MainActivity extends AppCompatActivity {
         btnVoice = findViewById(R.id.btnVoice);
         btnDetectLoop = findViewById(R.id.btnDetectLoop);
         btnPhoneDetect = findViewById(R.id.btnPhoneDetect);
+        btnSopTasks = findViewById(R.id.btnSopTasks);
         tvDetectStatus = findViewById(R.id.tvDetectStatus);
         tvDetectConf = findViewById(R.id.tvDetectConf);
         tvDetectPlaceholder = findViewById(R.id.tvDetectPlaceholder);
@@ -204,6 +206,8 @@ public class MainActivity extends AppCompatActivity {
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
         btnDetectLoop.setOnClickListener(v -> startSingleDetect());
         btnPhoneDetect.setOnClickListener(v -> launchPhoneDetectionCamera());
+        btnSopTasks.setOnClickListener(v ->
+                startActivity(new Intent(this, com.ar.glass.sop.SopActivity.class)));
         btnVoice.setOnTouchListener((v, event) -> {
             if (mVoiceController == null) return false;
             switch (event.getAction()) {

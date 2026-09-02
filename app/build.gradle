@@ -104,6 +104,7 @@ android {
         buildConfigField "String", "ARK_BASE_URL", "\"${arkBaseUrl}\""
         buildConfigField "String", "ARK_API_KEY", "\"${arkApiKey}\""
         buildConfigField "String", "ARK_MODEL", "\"${arkModel}\""
+        buildConfigField "String", "SOP_BASE_URL", '"https://crrc-glasses.ifix.xin"'
     }
     buildTypes {
         release {

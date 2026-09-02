@@ -2,5 +2,6 @@
 <paths>
     <external-files-path name="meter_exports" path="meter_exports/" />
     <external-files-path name="meter_photos" path="meter_photos/" />
+    <external-files-path name="sop_evidence" path="sop_evidence/" />
     <cache-path name="meter_capture" path="." />
 </paths>
