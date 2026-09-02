@@ -103,7 +103,8 @@ git lfs pull
 ```
 
 1. 确认 `app/src/main/assets/fastener-target-p2-640.onnx` 和
-   `app/src/main/assets/marked-point-verifier.onnx` 已由 Git LFS 拉取完成。
+   `app/src/main/assets/marked-point-verifier.onnx`、`app/src/main/assets/witness-roi.onnx`
+   已由 Git LFS 拉取完成。
 2. 用 Android Studio 打开 `ar_glass_app` 目录，等待 Gradle 同步完成。
 3. 连接 Android 手机（Android 5.1 / API 22 及以上），点击 Run 编译安装。
 
@@ -115,7 +116,7 @@ git lfs pull
 
 生成的 APK 位于 `app/build/outputs/apk/debug/`。
 
-构建会校验两个模型的文件大小和 SHA-256。模型缺失、仍是 Git LFS pointer 或内容不匹配时会直接失败，
+构建会校验三个模型的文件大小和 SHA-256。模型缺失、仍是 Git LFS pointer 或内容不匹配时会直接失败，
 不会生成缺少算法资源的 APK。
 
 ## 核心实现说明

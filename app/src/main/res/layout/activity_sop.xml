@@ -259,14 +259,25 @@
                             android:textColor="#315568"
                             android:textSize="12sp" />
 
-                        <ImageView
-                            android:id="@+id/ivSopEvidence"
+                        <FrameLayout
+                            android:id="@+id/panelSopEvidence"
                             android:layout_width="match_parent"
                             android:layout_height="210dp"
                             android:layout_marginTop="12dp"
-                            android:scaleType="centerCrop"
-                            android:background="#E7ECEF"
-                            android:contentDescription="本步骤现场证据" />
+                            android:background="#E7ECEF">
+
+                            <ImageView
+                                android:id="@+id/ivSopEvidence"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:contentDescription="本步骤现场证据" />
+
+                            <com.ar.glass.vision.ui.BoxOverlay
+                                android:id="@+id/overlaySopEvidence"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent" />
+                        </FrameLayout>
 
                         <Button
                             android:id="@+id/btnCaptureStep"
@@ -284,6 +295,14 @@
                             android:layout_marginTop="9dp"
                             android:text="等待采集"
                             android:textColor="#71818D" />
+
+                        <LinearLayout
+                            android:id="@+id/markedPointReviewList"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:orientation="vertical"
+                            android:visibility="gone" />
 
                         <Spinner
                             android:id="@+id/spinnerStepDecision"

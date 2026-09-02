@@ -24,6 +24,7 @@ public class ModelAssetContractTest {
     @Test
     public void exposesTheFrozenModelContract() {
         assertEquals("fastener-target-p2-640.onnx", OnnxFastenerDetector.MODEL_ASSET_NAME);
+        assertEquals("witness-roi.onnx", OnnxWitnessStateEstimator.MODEL_ASSET_NAME);
         assertEquals(640, OnnxFastenerDetector.INPUT_SIZE);
         assertEquals(6, OnnxFastenerDetector.OUTPUT_CHANNELS);
         assertEquals(34_000, OnnxFastenerDetector.OUTPUT_CANDIDATES);
