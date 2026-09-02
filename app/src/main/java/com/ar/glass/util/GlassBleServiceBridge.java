@@ -88,4 +88,19 @@ public final class GlassBleServiceBridge {
     public static String reconnectLast() {
         return GlassBleService.debugReconnectLast();
     }
+
+    /** 全量回传：拉取眼镜全部照片并自动导入原图库 */
+    public static String syncAll() {
+        return GlassBleService.debugSyncAll();
+    }
+
+    /** 清空原图库（UI 需二次确认），返回删除数量 */
+    public static int clearPhotos() {
+        return GlassBleService.debugClearPhotos();
+    }
+
+    /** 当前 BLE 写队列状态 */
+    public static String queueStatus() {
+        return GlassBleService.debugQueueStatus();
+    }
 }

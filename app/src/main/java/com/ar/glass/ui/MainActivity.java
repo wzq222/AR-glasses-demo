@@ -104,6 +104,8 @@ public class MainActivity extends AppCompatActivity {
     private Button btnGalleryDetect;
     private Button btnSopTasks;
     private Button btnChangeModel;
+    private Button btnClearGallery;
+    private Button btnPriority;
     private TextView tvModelName;
     private TextView tvDetectStatus;
     private TextView tvDetectConf;
@@ -199,6 +201,8 @@ public class MainActivity extends AppCompatActivity {
         btnGalleryDetect = findViewById(R.id.btnGalleryDetect);
         btnSopTasks = findViewById(R.id.btnSopTasks);
         btnChangeModel = findViewById(R.id.btnChangeModel);
+        btnClearGallery = findViewById(R.id.btnClearGallery);
+        btnPriority = findViewById(R.id.btnPriority);
         tvModelName = findViewById(R.id.tvModelName);
         updateModelNameUI();
         tvDetectStatus = findViewById(R.id.tvDetectStatus);
@@ -243,6 +247,10 @@ public class MainActivity extends AppCompatActivity {
             confirmRestoreDefaultModel();
             return true;
         });
+        // 清空原图库：二次确认后一键清除（权限与体验兼顾）
+        if (btnClearGallery != null) btnClearGallery.setOnClickListener(v -> confirmClearGallery());
+        // 指令优先级规则管理（管理员可配置：将 bulk 命令升级为 urgent 或恢复）
+        if (btnPriority != null) btnPriority.setOnClickListener(v -> showPriorityDialog());
         btnVoice.setOnTouchListener((v, event) -> {
             if (mVoiceController == null) return false;
             switch (event.getAction()) {
@@ -412,6 +420,59 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception ignored) {}
         return "自定义模型";
+    }
+
+    /** 清空原图库：统计数量 → 二次确认 → 一键清除 */
+    private void confirmClearGallery() {
+        final File dir = new File(getExternalFilesDir(null), "glass_media/photos");
+        final int count;
+        File[] files = dir.listFiles();
+        int c = 0;
+        if (files != null) {
+            for (File f : files) if (f.isFile()) c++;
+        }
+        count = c;
+        if (count == 0) {
+            Toast.makeText(this, "原图库已是空的", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("清空原图库")
+                .setMessage("将永久删除原图库中的 " + count + " 张照片，此操作不可恢复。确定继续？")
+                .setPositiveButton("确定清空", (d, w) -> {
+                    int deleted = com.ar.glass.util.GlassBleServiceBridge.clearPhotos();
+                    appendLog("🧹 已清空原图库 " + deleted + " 张照片");
+                    Toast.makeText(this, "已清空 " + deleted + " 张照片", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 指令优先级规则管理：管理员可将指定 bulk 命令升级为 urgent（高优先）或恢复常规 */
+    private void showPriorityDialog() {
+        final android.content.SharedPreferences sp = getSharedPreferences("debug", MODE_PRIVATE);
+        final String[] cmds = {"cs_wfsta", "cs_opap", "cs_hrt", "cs_flts", "cs_sdfl", "cs_wfscan"};
+        final String[] labels = new String[cmds.length];
+        final boolean[] checked = new boolean[cmds.length];
+        StringBuilder sb = new StringBuilder("当前队列: " + com.ar.glass.util.GlassBleServiceBridge.queueStatus() + "\n\n勾选 = 升级为高优先级（urgent）：\n");
+        for (int i = 0; i < cmds.length; i++) {
+            boolean isUrgent = "urgent".equals(sp.getString("prio_" + cmds[i], null));
+            checked[i] = isUrgent;
+            labels[i] = cmds[i] + (isUrgent ? "（⚡高优先）" : "（常规）");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("指令优先级规则")
+                .setMessage(sb.toString())
+                .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
+                    String key = "prio_" + cmds[which];
+                    android.content.SharedPreferences.Editor ed = sp.edit();
+                    if (isChecked) ed.putString(key, "urgent");
+                    else ed.remove(key);
+                    ed.apply();
+                    appendLog("⚙ 优先级规则: " + cmds[which] + " => " + (isChecked ? "urgent" : "bulk"));
+                })
+                .setPositiveButton("完成", null)
+                .show();
     }
 
     private void initVoiceController() {
@@ -813,8 +874,10 @@ public class MainActivity extends AppCompatActivity {
         detectOverlay.setResults(r.detections, r.frameW, r.frameH);
 
         tvDetectStatus.setText("[" + time + "] " + r.fileName + " · 检测到 "
-                + detections + " 个目标 · 推理 " + r.inferMs + "ms");
-        appendLog("🎯 [" + time + "] YOLO 检测到 " + detections + " 个目标");
+                + detections + " 个目标 · 推理 " + r.inferMs + "ms\n"
+                + "计算设备: " + com.ar.glass.vision.MarkedPointDetectorHolder.getBackendInfo());
+        appendLog("🎯 [" + time + "] YOLO 检测到 " + detections + " 个目标 · "
+                + com.ar.glass.vision.MarkedPointDetectorHolder.getBackendInfo());
         // 结果通过眼镜扬声器语音播报（TTS 走 A2DP 媒体通道）
         if (mVoiceController != null) {
             mVoiceController.speak(detections > 0

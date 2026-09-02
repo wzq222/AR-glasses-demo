@@ -91,6 +91,18 @@ public final class MarkedPointDetectorHolder {
         return get(context) != null;
     }
 
+    /** 当前检测计算设备描述（NNAPI(GPU/NPU) 或 CPU(线程数)），未就绪返回提示文本 */
+    public static String getBackendInfo() {
+        FastenerDetector d = detector;
+        if (d instanceof OnnxFastenerDetector) {
+            return ((OnnxFastenerDetector) d).getProviderInfo();
+        }
+        if (d != null) {
+            return d.getClass().getSimpleName();
+        }
+        return initializationError != null ? "未就绪:" + initializationError : "初始化中";
+    }
+
     public static String getInitializationError() {
         return initializationError;
     }

@@ -36,9 +36,16 @@ public final class OnnxFastenerDetector implements FastenerDetector {
     private String outputName;
     private String initializationError;
     private boolean closed;
+    /** 计算设备描述（NNAPI(GPU/NPU) 或 CPU(线程数)），初始化时确定 */
+    private String providerInfo = "未知";
     /** 输出通道数（4+类别数）与候选数；0 表示形状动态、以首次推理实际值为准 */
     private int outputChannels;
     private int outputCandidates;
+
+    /** 当前计算设备描述，供 UI 展示 */
+    public synchronized String getProviderInfo() {
+        return providerInfo;
+    }
 
     public OnnxFastenerDetector(Context context) {
         this(readAssetBytes(context), false, "模型未打包：" + MODEL_ASSET_NAME);
@@ -61,10 +68,28 @@ public final class OnnxFastenerDetector implements FastenerDetector {
         OrtSession candidateSession = null;
         try {
             environment = OrtEnvironment.getEnvironment();
-            try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
-                options.setIntraOpNumThreads(InferenceThreadPolicy.intraOpThreads());
-                candidateSession = environment.createSession(modelBytes, options);
+            // GPU 优先：先尝试 NNAPI 加速，失败自动回退 CPU（兼容性优先）
+            boolean nnapiOk = false;
+            try {
+                try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
+                    options.setIntraOpNumThreads(InferenceThreadPolicy.intraOpThreads());
+                    options.addNnapi();
+                    candidateSession = environment.createSession(modelBytes, options);
+                    nnapiOk = true;
+                }
+            } catch (Throwable gpuErr) {
+                closeQuietly(candidateSession);
+                candidateSession = null;
             }
+            if (!nnapiOk) {
+                try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
+                    options.setIntraOpNumThreads(InferenceThreadPolicy.intraOpThreads());
+                    candidateSession = environment.createSession(modelBytes, options);
+                }
+            }
+            providerInfo = nnapiOk
+                    ? "NNAPI(GPU/NPU)"
+                    : "CPU(" + InferenceThreadPolicy.intraOpThreads() + "线程)";
 
             inputName = requireUniqueName(candidateSession.getInputNames(), "input");
             outputName = requireUniqueName(candidateSession.getOutputNames(), "output");

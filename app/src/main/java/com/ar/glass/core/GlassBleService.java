@@ -199,7 +199,11 @@ public class GlassBleService extends Service {
     // bulk  ：KSDK 数据帧（文件确认/状态上报等），同命令覆盖旧帧、超限丢最旧
     private final java.util.ArrayDeque<byte[]> mUrgentWriteQueue = new java.util.ArrayDeque<>();
     private final java.util.ArrayDeque<byte[]> mBulkWriteQueue = new java.util.ArrayDeque<>();
+    /** bulk 帧入队时间戳（与 mBulkWriteQueue 同步），用于过期清理 */
+    private final java.util.ArrayDeque<Long> mBulkEnqueueTimes = new java.util.ArrayDeque<>();
     private static final int MAX_BULK_QUEUE = 24;
+    /** bulk 指令最大等待时间：超过即视为过期丢弃（防指令风暴堆积） */
+    private static final long BULK_EXPIRE_MS = 15000;
     private volatile boolean mSerialWriting = false;
 
     // WiFi Direct (P2P) 连接（CY01 照片同步走 P2P + HTTP，而非普通 WiFi 热点）
@@ -966,6 +970,18 @@ public class GlassBleService extends Service {
      */
     private void enqueueWrite(byte[] frame, boolean urgent) {
         synchronized (mUrgentWriteQueue) {
+            // 过期清理：bulk 队列中等待超过 15s 的指令视为过期，直接丢弃（防指令风暴堆积）
+            long now = System.currentTimeMillis();
+            boolean expired = false;
+            while (!mBulkEnqueueTimes.isEmpty()
+                    && now - mBulkEnqueueTimes.peekFirst() > BULK_EXPIRE_MS) {
+                mBulkWriteQueue.pollFirst();
+                mBulkEnqueueTimes.pollFirst();
+                expired = true;
+            }
+            if (expired) {
+                postLog("🧹 [队列] 清理过期 bulk 指令（等待超 15s），剩余 " + mBulkWriteQueue.size());
+            }
             if (urgent) {
                 mUrgentWriteQueue.add(frame);
                 return;
@@ -973,12 +989,25 @@ public class GlassBleService extends Service {
             // bulk 帧栈式去重：KSDK JSON 帧提取命令名（"C":"cs_xxx"），同命令保留最新
             String cmdKey = ksdkCmdKey(frame);
             if (cmdKey != null) {
-                mBulkWriteQueue.removeIf(f -> cmdKey.equals(ksdkCmdKey(f)));
+                boolean removed = mBulkWriteQueue.removeIf(f -> cmdKey.equals(ksdkCmdKey(f)));
+                if (removed) {
+                    // 冲突日志：新帧覆盖同命令旧帧
+                    mBulkEnqueueTimes.pollLast();
+                    postLog("⚔️ [队列] 指令冲突: " + cmdKey + " 旧帧被新帧覆盖");
+                }
+                // 优先级可配置：prio_<cmd>=urgent 可将特定 bulk 命令升级为 urgent
+                if ("urgent".equals(getSharedPreferences("debug", MODE_PRIVATE)
+                        .getString("prio_" + cmdKey, null))) {
+                    mUrgentWriteQueue.add(frame);
+                    return;
+                }
             }
             while (mBulkWriteQueue.size() >= MAX_BULK_QUEUE) {
                 mBulkWriteQueue.pollFirst(); // 丢最旧，保最新（栈语义）
+                mBulkEnqueueTimes.pollFirst();
             }
             mBulkWriteQueue.add(frame);
+            mBulkEnqueueTimes.addLast(now);
             if (mBulkWriteQueue.size() >= MAX_BULK_QUEUE) {
                 postLog("⚠️ BLE bulk 队列已满（" + mBulkWriteQueue.size() + "），丢弃最旧帧");
             }
@@ -1126,6 +1155,8 @@ public class GlassBleService extends Service {
     private int mThumbTotalPages = -1;
     private long mThumbLastChunkAt = 0;
     private static final long THUMB_PAGE_GAP_TIMEOUT_MS = 2500;
+    /** 全量回传标志：置位后照片列表拉取完成直接全部导入（不弹勾选框） */
+    private volatile boolean mAutoImportAll = false;
 
     private void markBackhaulSuccess(String mode) {
         mActiveBackhaul = mode;
@@ -1249,6 +1280,43 @@ public class GlassBleService extends Service {
         s.postLog("🛠 [直连] " + name + " (" + addr + ")");
         s.connectToDevice(addr, name);
         return "已发起连接: " + name;
+    }
+
+    /** 调试用：全量回传——拉取眼镜全部照片并自动导入原图库（含回传进度） */
+    public static String debugSyncAll() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return "服务未就绪";
+        if (!AppState.getInstance().isBleConnected) return "眼镜未连接（先执行 connect）";
+        if (s.mSyncActive) return "同步进行中，请稍候";
+        s.mAutoImportAll = true;
+        s.mCaptureMode = CAPTURE_MODE_MANUAL;
+        s.postLog("🛠 [全部回传] 拉取眼镜全部照片并自动导入...");
+        s.startPhotoSync();
+        return "已启动全部回传";
+    }
+
+    /** 调试用：清空原图库，返回删除的照片数量（UI 需二次确认） */
+    public static int debugClearPhotos() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return -1;
+        File dir = s.getPhotoDir();
+        File[] files = dir.listFiles();
+        int n = 0;
+        if (files != null) {
+            for (File f : files) {
+                if (f.isFile() && f.delete()) n++;
+            }
+        }
+        s.postLog("🧹 [原图库] 已清空 " + n + " 张照片");
+        return n;
+    }
+
+    /** 调试用：当前 BLE 写队列状态（urgent/bulk 数量），供指令冲突观察 */
+    public static String debugQueueStatus() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return "服务未就绪";
+        return "urgent=" + s.mUrgentWriteQueue.size() + " bulk=" + s.mBulkWriteQueue.size()
+                + " 过期阈值=" + (BULK_EXPIRE_MS / 1000) + "s";
     }
 
     /** 解析 action=66（电量）响应帧：payload[0]=电量，payload[1]=充电状态 */
@@ -1798,12 +1866,19 @@ public class GlassBleService extends Service {
             if (httpDownload(fileBaseUrl + n, out, n)) {
                 success++;
                 postLog("📥 下载缩略图 " + success + "/" + total + ": " + n);
+                if (total > 0) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                            success * 100 / total, "📥 回传中 " + success + "/" + total));
+                }
             }
         }
-        if (mCaptureMode != CAPTURE_MODE_MANUAL) {
-            // 语音拍照分流模式：下载完直接全部导入，不弹勾选框
+        if (mCaptureMode != CAPTURE_MODE_MANUAL || mAutoImportAll) {
+            // 语音拍照分流/全部回传模式：下载完直接全部导入，不弹勾选框
             postLog("📥 缩略图下载完成 " + success + "/" + total + "，自动导入全部照片");
+            boolean all = mAutoImportAll;
+            mAutoImportAll = false;
             finalizeImport(names);
+            if (all) markBackhaulSuccess(mActiveBackhaul);
         } else {
             postLog("📥 缩略图下载完成 " + success + "/" + total + "，请选择要导入的照片");
             EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, names));
@@ -2302,28 +2377,38 @@ public class GlassBleService extends Service {
                             new DetectResult(error == null ? "防松标记模型加载失败" : error)));
                     return;
                 }
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                        20, "🖼 查找照片..."));
                 File latest = findLatestPhoto();
                 if (latest == null) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
                     postLog("⚠️ 未找到照片，无法检测");
                     EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("无照片")));
                     return;
                 }
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                        40, "🖼 解码照片..."));
                 Bitmap bitmap = decodeForDetection(latest.getAbsolutePath());
                 if (bitmap == null) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
                     EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("照片解码失败")));
                     return;
                 }
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                        70, "🧠 本地推理中（" + MarkedPointDetectorHolder.getBackendInfo() + "）..."));
                 MarkedPointDetectorHolder.Result marked = MarkedPointDetectorHolder.detect(
                         getApplicationContext(), bitmap);
                 List<YoloDetector.Detection> dets = marked.detections;
                 long ms = Math.round(marked.latencyMillis);
                 postLog("🎯 防松标记检测: " + dets.size() + " 个检查点, 推理 " + ms
-                        + "ms (" + latest.getName() + ")");
+                        + "ms (" + latest.getName() + ") 设备=" + MarkedPointDetectorHolder.getBackendInfo());
                 // bitmap 所有权交给 UI 作为预览图（UI 显示下一帧时回收）
                 DetectResult result = new DetectResult(bitmap, dets, bitmap.getWidth(), bitmap.getHeight(), ms, latest.getName());
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, dets.size(), result));
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
             } catch (Throwable e) {
                 Log.e(TAG, "detectLatestPhotoWithYolo error", e);
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
                 postLog("⚠️ YOLO 检测异常: " + e.getMessage());
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult(e.getMessage())));
             }

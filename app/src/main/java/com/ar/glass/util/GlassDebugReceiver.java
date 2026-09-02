@@ -237,6 +237,39 @@ public class GlassDebugReceiver extends BroadcastReceiver {
                 new Thread(() -> log("connect: " + GlassBleServiceBridge.reconnectLast())).start();
                 break;
             }
+            case "syncall": {
+                // 全量回传：拉取眼镜全部照片自动导入原图库
+                new Thread(() -> log("syncall: " + GlassBleServiceBridge.syncAll())).start();
+                break;
+            }
+            case "clearphotos": {
+                // 清空原图库（二次确认在 UI 层；此命令直接执行）
+                new Thread(() -> {
+                    int n = GlassBleServiceBridge.clearPhotos();
+                    log("clearphotos: 已清空 " + n + " 张照片");
+                }).start();
+                break;
+            }
+            case "queue": {
+                log("队列状态: " + GlassBleServiceBridge.queueStatus());
+                break;
+            }
+            case "prio": {
+                // 指令优先级配置：--es cmd cs_xxx --es p urgent|bulk|clear
+                String c = intent.getStringExtra("cmd");
+                String p = intent.getStringExtra("p");
+                if (c == null || p == null) {
+                    log("缺少 --es cmd（cs_xxx）/ --es p（urgent|bulk|clear）");
+                    break;
+                }
+                android.content.SharedPreferences.Editor ed =
+                        app.getSharedPreferences("debug", Context.MODE_PRIVATE).edit();
+                if ("clear".equals(p)) ed.remove("prio_" + c);
+                else ed.putString("prio_" + c, "urgent".equals(p) ? "urgent" : "bulk");
+                ed.apply();
+                log("优先级规则: " + c + " => " + p + "（urgent=高优先进urgent队列；bulk=常规；clear=清除规则）");
+                break;
+            }
             case "photo": {
                 new Thread(() -> {
                     GlassBleServiceBridge.takePhoto();
