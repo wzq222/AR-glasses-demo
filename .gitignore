@@ -12,3 +12,6 @@ local.properties
 
 # WorkBuddy 本地工作数据
 /.workbuddy/
+
+# Gradle lock files
+.LCK*
