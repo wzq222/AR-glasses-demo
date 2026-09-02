@@ -28,6 +28,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -36,6 +38,7 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -106,6 +109,7 @@ public class MainActivity extends AppCompatActivity {
     private Button btnChangeModel;
     private Button btnClearGallery;
     private Button btnPriority;
+    private Spinner spTransferMode;
     private TextView tvModelName;
     private TextView tvDetectStatus;
     private TextView tvDetectConf;
@@ -205,6 +209,37 @@ public class MainActivity extends AppCompatActivity {
         btnPriority = findViewById(R.id.btnPriority);
         tvModelName = findViewById(R.id.tvModelName);
         updateModelNameUI();
+        // 回传模式选择（auto/p2p/ap/thumb）：与 ADB setmode 共用 transfer_mode 配置
+        spTransferMode = findViewById(R.id.spTransferMode);
+        if (spTransferMode != null) {
+            final String[] modes = {"auto（智能选择）", "p2p（WiFi直连）", "ap（热点）", "thumb（BLE缩略图）"};
+            final String[] modeKeys = {"auto", "p2p", "ap", "thumb"};
+            ArrayAdapter<String> modeAdapter = new ArrayAdapter<>(
+                    this, android.R.layout.simple_spinner_item, modes);
+            modeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            spTransferMode.setAdapter(modeAdapter);
+            String cur = getSharedPreferences("debug", MODE_PRIVATE)
+                    .getString("transfer_mode", "auto");
+            for (int i = 0; i < modeKeys.length; i++) {
+                if (modeKeys[i].equals(cur)) {
+                    spTransferMode.setSelection(i);
+                    break;
+                }
+            }
+            spTransferMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, android.view.View view, int position, long id) {
+                    String key = modeKeys[position];
+                    getSharedPreferences("debug", MODE_PRIVATE).edit()
+                            .putString("transfer_mode", key).apply();
+                    appendLog("⚙ 回传模式已设为: " + key);
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) {
+                }
+            });
+        }
         tvDetectStatus = findViewById(R.id.tvDetectStatus);
         tvDetectConf = findViewById(R.id.tvDetectConf);
         tvDetectPlaceholder = findViewById(R.id.tvDetectPlaceholder);
