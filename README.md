@@ -1,6 +1,6 @@
 # AR 眼镜控制（CY01）
 
-一款针对 **CY01 智能 AR 眼镜** 的 Android 应用。通过 BLE（低功耗蓝牙）连接眼镜，实现**照片同步**、**语音控制拍照**、**二维码识别**、**电量显示**、**语音播报**等能力。
+一款针对 **CY01 智能 AR 眼镜** 的 Android 应用。通过 BLE（低功耗蓝牙）连接眼镜，实现**照片同步**、**语音控制拍照**、**二维码识别**、**YOLO 目标检测**、**万用表读数识别**、**电量显示**、**语音播报**等能力。
 
 ## 功能特性
 
@@ -15,12 +15,22 @@
 - **原图库浏览**：网格 + 全屏两种方式浏览已同步照片（保存在 `glass_media/photos` 目录）。
 
 ### 语音控制与播报
-- **语音拍照**：按住「按住说话」按钮，通过蓝牙 SCO 采集眼镜麦克风，松手后调用讯飞 SparkChain 在线语音听写（ASR）识别；说出「拍照」即触发拍照并自动识别二维码。
+- **语音拍照**：按住「按住说话」按钮，通过蓝牙 SCO 采集眼镜麦克风，松手后调用讯飞 SparkChain 在线语音听写（ASR）识别；识别文本经同音字容错表匹配后按意图分流——「二维码拍照」→ 二维码识别、「对齐拍照」→ YOLO 检测、「万用表拍照」→ 读数识别，普通「拍照」仅存原图库。
 - **结果播报**：二维码识别结果通过 TTS 走媒体音频流（A2DP）从眼镜扬声器播报，未识别到也会语音提示。
 - **录音提示音**：录音开始 / 结束各有「滴」提示音；连眼镜时走眼镜扬声器，未连接时走手机扬声器。
 
 ### 二维码识别
 - 基于 ML Kit Barcode Scanning，采用**四级递进策略**（原图 / 对比度增强 / 放大 2 倍 / 放大 2 倍 + 对比度增强），提升远距离与模糊二维码的识别率。
+
+### 目标检测（YOLO）
+- 基于 ONNX Runtime 离线推理，支持 NNAPI 硬件加速（失败自动回退 CPU）。
+- 模型 `screw_detect_v2_best.onnx` 用于紧固件/螺丝检测，检测结果在图片上绘制红框与标签（类别 + 置信度）。
+- 支持「对齐拍照」语音触发，以及原图库内对任意照片执行检测。
+
+### 万用表读数识别
+- 基于通义千问视觉模型（`qwen3-vl-flash`）云端识别万用表读数与挡位。
+- 支持「万用表拍照」语音触发，以及原图库内对任意照片执行识别。
+- 识别结果写入**巡检台账**（本地记录），支持阈值报警与语音播报。
 
 ### 设备状态
 - **实时电量**：周期查询眼镜电量（协议 `action=66`），在设备状态卡片实时显示电量与充电状态。
@@ -32,6 +42,8 @@
 - WiFi Direct（Wi-Fi P2P）+ HTTP 明文文件传输
 - EventBus（`org.greenrobot.eventbus`）实现服务与 UI 通信
 - ML Kit Barcode Scanning 二维码识别
+- ONNX Runtime 离线目标检测（YOLO，NNAPI 加速）
+- 通义千问视觉模型云端识别（万用表读数）
 - 讯飞 SparkChain SDK（在线语音听写 ASR）
 - 系统 TTS + ToneGenerator 语音播报与提示音
 - K900 SDK（`ksdk-release.aar`）
@@ -50,13 +62,21 @@ ar_glass_app/
 │   │   │   ├── ui/                           # 界面
 │   │   │   │   ├── MainActivity.java         # 主界面：连接、同步、语音入口
 │   │   │   │   ├── GalleryActivity.java      # 原图库（网格浏览）
-│   │   │   │   └── ImageViewerActivity.java  # 全屏看图
+│   │   │   │   ├── ImageViewerActivity.java  # 全屏看图（长按三项检测）
+│   │   │   │   └── MeterRecordsActivity.java # 巡检台账
+│   │   │   ├── record/                       # 台账记录
+│   │   │   │   ├── MeterRecord.java          # 台账数据模型
+│   │   │   │   └── MeterRecordStore.java     # 台账本地存储
 │   │   │   ├── util/EventMsg.java            # EventBus 事件定义
 │   │   │   ├── voice/VoiceController.java    # 语音采集、识别与播报
 │   │   │   └── vision/                       # 图像识别
 │   │   │       ├── ImageAnalyzer.java        # 识别接口
 │   │   │       ├── DefaultImageAnalyzer.java # ML Kit 二维码识别实现
-│   │   │       └── Vision.java               # 识别引擎入口
+│   │   │       ├── Vision.java               # 识别引擎入口
+│   │   │       ├── YoloDetector.java         # YOLO 离线目标检测（ONNX）
+│   │   │       ├── MeterReading.java         # 万用表读数模型
+│   │   │       ├── ThresholdAlarm.java       # 阈值报警
+│   │   │       └── cloud/MeterCloudOcr.java  # 通义千问云端识别
 │   │   ├── res/                              # 布局、图标、字符串等资源
 │   │   ├── jniLibs/                          # native 库（onnxruntime、sherpa-onnx 等）
 │   │   ├── libs/                             # K900 SDK、SparkChain SDK 等 aar
@@ -123,7 +143,7 @@ CY01 使用两套 BLE 服务：
 1. 按住「按住说话」按钮，进入蓝牙 SCO 通话模式，通过 `AudioRecord` 采集眼镜麦克风（16k/16bit/mono PCM）。
 2. 松手后退出 SCO，把 PCM 交给讯飞 SparkChain 在线语音听写识别。
 3. 识别文本包含「拍照 / 拍摄 / 拍一张」时，触发拍照：先发 `action=74 {2,1,1}` 开启相机，延时 600ms 后再发 `action=65 {2,1,1}` 拍照。
-4. 拍照完成后自动同步最新照片并识别二维码，结果通过 TTS 走媒体流（A2DP）从眼镜扬声器播报。
+4. 拍照完成后自动同步最新照片，并按语音意图分流——「二维码拍照」→ 二维码识别、「对齐拍照」→ YOLO 检测、「万用表拍照」→ 读数识别，结果通过 TTS 走媒体流（A2DP）从眼镜扬声器播报。
 
 ### 电量查询
 
@@ -153,6 +173,7 @@ CY01 使用两套 BLE 服务：
 - `com.google.code.gson:gson:2.8.8`
 - `ksdk-release.aar`（K900 SDK）
 - `SparkChain.aar` / `Codec.aar`（讯飞 SparkChain 在线语音听写）
+- `com.microsoft.onnxruntime:onnxruntime-android`（YOLO 离线推理）
 
 ## 注意事项
 
