@@ -210,10 +210,29 @@
                         android:textColor="#333333"
                         android:layout_marginBottom="10dp"/>
 
+                    <Button
+                        android:id="@+id/btnDetectLoop"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="👓 眼镜拍照检测"
+                        android:textSize="14sp"
+                        android:backgroundTint="#FF5722"
+                        android:textColor="@android:color/white"/>
+
+                    <Button
+                        android:id="@+id/btnPhoneDetect"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="📱 手机拍照检测"
+                        android:textSize="14sp"
+                        android:backgroundTint="#1976D2"
+                        android:textColor="@android:color/white"/>
+
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="语音说“对齐拍照”：眼镜拍照 → 照片传到手机 → YOLO 检测 → 显示预览框并播报"
+                        android:text="语音说“对齐拍照”：眼镜拍照 → 照片传到手机 → 防松标记检测 → 显示预览框并播报"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginBottom="4dp"/>
@@ -285,7 +304,7 @@
                         android:id="@+id/tvDetectStatus"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="语音说“对齐拍照”即可触发检测；也可在“图片浏览”卡片从相册选图检测"
+                        android:text="语音说“对齐拍照”即可触发检测；也可用“手机拍照检测”，两种方式使用同一套防松标记检测模型"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="6dp"/>

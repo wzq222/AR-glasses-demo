@@ -49,9 +49,9 @@ import com.ar.glass.R;
 import com.ar.glass.ui.MainActivity;
 import com.ar.glass.util.EventMsg;
 import com.ar.glass.vision.DetectResult;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.Vision;
 import com.ar.glass.vision.YoloDetector;
-import com.ar.glass.vision.YoloDetectorHolder;
 
 import org.greenrobot.eventbus.EventBus;
 
@@ -1960,21 +1960,39 @@ public class GlassBleService extends Service {
         }
     }
 
-    /** 对最新同步照片跑 YOLO 检测，结果（含预览图）通过 MSG_DETECT_RESULT 事件发往 UI */
+    public boolean isSingleShotActive() {
+        return mSingleShotActive;
+    }
+
+    /** 停止连拍检测循环 */
+    public void stopDetectionLoop() {
+        if (!mDetectLoopActive) return;
+        mDetectLoopActive = false;
+        mMainHandler.removeCallbacks(mDetectNextRoundRunnable);
+        mMainHandler.removeCallbacks(mDetectFallbackRunnable);
+        mDetectNextScheduled = false;
+        postLog("⏹️ 连拍检测循环已停止");
+    }
+
+    public boolean isDetectionLoopActive() {
+        return mDetectLoopActive;
+    }
+
+    private void scheduleNextDetectRound() {
+        if (!mDetectLoopActive || mDetectNextScheduled) return;
+        mDetectNextScheduled = true;
+        mMainHandler.postDelayed(mDetectNextRoundRunnable, DETECT_LOOP_INTERVAL_MS);
+    }
+
+    /** 对最新同步照片跑防松标记检测（新 YOLO 紧固件模型），结果（含预览图）通过 MSG_DETECT_RESULT 发往 UI。 */
     private void detectLatestPhotoWithYolo() {
         new Thread(() -> {
             try {
-                if (!YoloDetectorHolder.isReady()) {
-                    // 懒加载引擎：首次调用时加载模型；失败则上报具体原因
-                    YoloDetectorHolder.get(getApplicationContext());
-                }
-                if (!YoloDetectorHolder.isReady()) {
-                    String reason = YoloDetectorHolder.getInitError();
-                    String msg = (reason != null && !reason.isEmpty())
-                            ? ("模型加载失败：" + reason)
-                            : "模型加载失败";
-                    postLog("⚠️ YOLO 引擎未就绪（" + msg + "）");
-                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult(msg)));
+                if (!MarkedPointDetectorHolder.isReady(getApplicationContext())) {
+                    String error = MarkedPointDetectorHolder.getInitializationError();
+                    postLog("⚠️ 防松标记模型未就绪: " + error);
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
+                            new DetectResult(error == null ? "防松标记模型加载失败" : error)));
                     return;
                 }
                 File latest = findLatestPhoto();
@@ -1988,10 +2006,12 @@ public class GlassBleService extends Service {
                     EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("照片解码失败")));
                     return;
                 }
-                long t0 = System.currentTimeMillis();
-                List<YoloDetector.Detection> dets = YoloDetectorHolder.get(getApplicationContext()).detect(bitmap);
-                long ms = System.currentTimeMillis() - t0;
-                postLog("🎯 YOLO 检测: " + dets.size() + " 个目标, 推理 " + ms + "ms (" + latest.getName() + ")");
+                MarkedPointDetectorHolder.Result marked = MarkedPointDetectorHolder.detect(
+                        getApplicationContext(), bitmap);
+                List<YoloDetector.Detection> dets = marked.detections;
+                long ms = Math.round(marked.latencyMillis);
+                postLog("🎯 防松标记检测: " + dets.size() + " 个检查点, 推理 " + ms
+                        + "ms (" + latest.getName() + ")");
                 // bitmap 所有权交给 UI 作为预览图（UI 显示下一帧时回收）
                 DetectResult result = new DetectResult(bitmap, dets, bitmap.getWidth(), bitmap.getHeight(), ms, latest.getName());
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, dets.size(), result));

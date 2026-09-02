@@ -9,8 +9,8 @@ import android.util.Log;
 
 import com.ar.glass.util.EventMsg;
 import com.ar.glass.vision.DetectResult;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.YoloDetector;
-import com.ar.glass.vision.YoloDetectorHolder;
 
 import org.greenrobot.eventbus.EventBus;
 
@@ -50,10 +50,11 @@ public class DetectSelfTestReceiver extends BroadcastReceiver {
         final Context app = context.getApplicationContext();
         new Thread(() -> {
             try {
-                YoloDetector detector = YoloDetectorHolder.get(app);
-                if (detector == null || !detector.isReady()) {
-                    postLog("自测: YOLO 引擎未就绪");
-                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("模型加载失败")));
+                if (!MarkedPointDetectorHolder.isReady(app)) {
+                    String error = MarkedPointDetectorHolder.getInitializationError();
+                    postLog("自测: 防松标记模型未就绪: " + error);
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
+                            new DetectResult(error == null ? "防松标记模型加载失败" : error)));
                     return;
                 }
                 BitmapFactory.Options opts = new BitmapFactory.Options();
@@ -68,10 +69,10 @@ public class DetectSelfTestReceiver extends BroadcastReceiver {
                     EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("照片解码失败")));
                     return;
                 }
-                long t0 = System.currentTimeMillis();
-                List<YoloDetector.Detection> dets = detector.detect(bmp);
-                long ms = System.currentTimeMillis() - t0;
-                postLog("自测: " + dets.size() + " 个目标, 推理 " + ms + "ms");
+                MarkedPointDetectorHolder.Result marked = MarkedPointDetectorHolder.detect(app, bmp);
+                List<YoloDetector.Detection> dets = marked.detections;
+                long ms = Math.round(marked.latencyMillis);
+                postLog("自测: " + dets.size() + " 个防松标记检查点, 推理 " + ms + "ms");
                 for (YoloDetector.Detection d : dets) {
                     Log.i(TAG, String.format("det %s %.2f (%.3f,%.3f,%.3f,%.3f)",
                             d.className, d.score, d.x1, d.y1, d.x2, d.y2));

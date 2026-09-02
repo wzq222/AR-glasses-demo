@@ -95,6 +95,8 @@ public class MainActivity extends AppCompatActivity {
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
     private Button btnVoice;
+    private Button btnDetectLoop;
+    private Button btnPhoneDetect;
     private TextView tvDetectStatus;
     private TextView tvDetectConf;
     private TextView tvDetectPlaceholder;
@@ -108,6 +110,11 @@ public class MainActivity extends AppCompatActivity {
     private CheckBox cbVoice;
     private CheckBox cbAlarm;
 
+    private ActivityResultLauncher<String> mPickImageLauncher;
+    private ActivityResultLauncher<Uri> mTakePictureLauncher;
+    private Uri mCaptureUri;
+    private ActivityResultLauncher<Uri> mPhoneDetectLauncher;
+    private Uri mPhoneDetectUri;
     private final ExecutorService mOcrExecutor = Executors.newSingleThreadExecutor();
 
     private MeterTts mTts;
@@ -175,6 +182,8 @@ public class MainActivity extends AppCompatActivity {
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
         btnVoice = findViewById(R.id.btnVoice);
+        btnDetectLoop = findViewById(R.id.btnDetectLoop);
+        btnPhoneDetect = findViewById(R.id.btnPhoneDetect);
         tvDetectStatus = findViewById(R.id.tvDetectStatus);
         tvDetectConf = findViewById(R.id.tvDetectConf);
         tvDetectPlaceholder = findViewById(R.id.tvDetectPlaceholder);
@@ -182,18 +191,11 @@ public class MainActivity extends AppCompatActivity {
         detectOverlay = findViewById(R.id.detectOverlay);
         seekDetectConf = findViewById(R.id.seekDetectConf);
 
-        seekDetectConf.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                if (!fromUser) return;
-                float conf = progress / 100f;
-                tvDetectConf.setText(String.format(java.util.Locale.US, "%.2f", conf));
-                com.ar.glass.vision.YoloDetectorHolder.setConfThreshold(conf);
-            }
-
-            @Override public void onStartTrackingTouch(SeekBar bar) {}
-            @Override public void onStopTrackingTouch(SeekBar bar) {}
-        });
+        // 紧固件/防松标记检测使用固定高召回阈值，不支持手动调节
+        seekDetectConf.setEnabled(false);
+        tvDetectConf.setText("固定高召回阈值");
+        btnMeterRecognize = findViewById(R.id.btnMeterRecognize);
+        btnCameraRecognize = findViewById(R.id.btnCameraRecognize);
         btnRecords = findViewById(R.id.btnRecords);
         btnThreshold = findViewById(R.id.btnThreshold);
         cbVoice = findViewById(R.id.cbVoice);
@@ -202,6 +204,8 @@ public class MainActivity extends AppCompatActivity {
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+        btnDetectLoop.setOnClickListener(v -> startSingleDetect());
+        btnPhoneDetect.setOnClickListener(v -> launchPhoneDetectionCamera());
         btnVoice.setOnTouchListener((v, event) -> {
             if (mVoiceController == null) return false;
             switch (event.getAction()) {
@@ -220,6 +224,27 @@ public class MainActivity extends AppCompatActivity {
         btnRecords.setOnClickListener(v ->
                 startActivity(new Intent(this, MeterRecordsActivity.class)));
         btnThreshold.setOnClickListener(v -> showThresholdDialog());
+
+        // 万用表读数识别：现场拍照 → 云端识别
+        mTakePictureLauncher = registerForActivityResult(
+                new ActivityResultContracts.TakePicture(),
+                success -> {
+                    if (success && mCaptureUri != null) {
+                        recognizeMeterFromUri(mCaptureUri);
+                    }
+                });
+        btnCameraRecognize.setOnClickListener(v -> captureMeter());
+
+        // 手机拍照检测：本机拍照 → 紧固件/防松标记检测
+        mPhoneDetectLauncher = registerForActivityResult(
+                new ActivityResultContracts.TakePicture(),
+                success -> {
+                    if (success && mPhoneDetectUri != null) {
+                        detectPhonePhoto(mPhoneDetectUri);
+                    } else {
+                        resetPhoneDetectButton();
+                    }
+                });
 
         setControlsEnabled(false);
     }
@@ -637,6 +662,101 @@ public class MainActivity extends AppCompatActivity {
     private void resetDetectLoopUi() {
         if (tvDetectStatus != null) {
             tvDetectStatus.setText("蓝牙已断开，请重新连接后再拍照检测");
+        }
+    }
+
+    /** 单张检测：拍照 → 同步一张 → YOLO → 预览（连拍逻辑已停用） */
+    private void startSingleDetect() {
+        Log.i("GlassLog", "🔘 [UI] 用户点击单张检测: btnEnabled=" + btnDetectLoop.isEnabled()
+                + " bleConnected=" + AppState.getInstance().isBleConnected
+                + " service=" + (mBleService != null)
+                + " singleActive=" + (mBleService != null && mBleService.isSingleShotActive()));
+        if (mBleService == null) {
+            Log.i("GlassLog", "🔘 [UI] 拒绝: BLE服务未绑定");
+            Toast.makeText(this, "BLE服务未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!AppState.getInstance().isBleConnected) {
+            Log.i("GlassLog", "🔘 [UI] 拒绝: 蓝牙未连接眼镜");
+            Toast.makeText(this, "请等待蓝牙连接眼镜", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        btnDetectLoop.setEnabled(false);
+        btnDetectLoop.setText("⏳ 拍照同步检测中…");
+        tvDetectStatus.setText("流程：眼镜拍照 → 传输到手机 → 防松标记检测 → 显示预览");
+        mBleService.startSingleShotDetection();
+        Log.i("GlassLog", "🔘 [UI] 服务已接受单张检测: singleActive=" + mBleService.isSingleShotActive());
+        if (!mBleService.isSingleShotActive()) {
+            // 服务拒绝启动（如上一张同步中），立即复位按钮，避免永久禁用
+            Log.i("GlassLog", "🔘 [UI] 服务拒绝启动，复位按钮");
+            resetSingleDetectButton();
+        }
+    }
+
+    /** 单张检测完成后复位按钮 */
+    private void resetSingleDetectButton() {
+        btnDetectLoop.setEnabled(true);
+        btnDetectLoop.setText("👓 眼镜拍照检测");
+    }
+
+    /** 手机独立检测入口：无需连接眼镜，调用系统相机拍原图。 */
+    private void launchPhoneDetectionCamera() {
+        try {
+            File captureFile = new File(getCacheDir(),
+                    "fastener_capture_" + System.currentTimeMillis() + ".jpg");
+            mPhoneDetectUri = FileProvider.getUriForFile(
+                    this, FILE_PROVIDER_AUTHORITY, captureFile);
+            btnPhoneDetect.setEnabled(false);
+            btnPhoneDetect.setText("📷 等待手机拍照…");
+            mPhoneDetectLauncher.launch(mPhoneDetectUri);
+        } catch (Exception e) {
+            Log.e(TAG, "启动手机检测相机失败", e);
+            resetPhoneDetectButton();
+            Toast.makeText(this, "无法启动手机相机：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void detectPhonePhoto(Uri uri) {
+        btnPhoneDetect.setText("⏳ 正在检测防松标记…");
+        tvDetectStatus.setText("手机照片已获取，正在执行全图防松标记检测");
+        mOcrExecutor.execute(() -> {
+            Bitmap bitmap = null;
+            try {
+                byte[] bytes = readBytesFromUri(uri);
+                bitmap = bytes == null ? null : decodeBytes(bytes, 2560);
+                if (bitmap == null) {
+                    throw new IllegalStateException("手机照片解码失败");
+                }
+                com.ar.glass.vision.MarkedPointDetectorHolder.Result marked =
+                        com.ar.glass.vision.MarkedPointDetectorHolder.detect(this, bitmap);
+                long elapsed = Math.round(marked.latencyMillis);
+                EventBus.getDefault().post(new EventMsg(
+                        EventMsg.MSG_DETECT_RESULT,
+                        marked.detections.size(),
+                        new com.ar.glass.vision.DetectResult(
+                                bitmap,
+                                marked.detections,
+                                bitmap.getWidth(),
+                                bitmap.getHeight(),
+                                elapsed,
+                                "手机拍照")));
+                bitmap = null; // ownership transferred to the preview UI
+            } catch (Throwable error) {
+                if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+                EventBus.getDefault().post(new EventMsg(
+                        EventMsg.MSG_DETECT_RESULT,
+                        new com.ar.glass.vision.DetectResult(
+                                error.getMessage() == null ? "手机照片检测失败" : error.getMessage())));
+            } finally {
+                runOnUiThread(this::resetPhoneDetectButton);
+            }
+        });
+    }
+
+    private void resetPhoneDetectButton() {
+        if (btnPhoneDetect != null) {
+            btnPhoneDetect.setEnabled(true);
+            btnPhoneDetect.setText("📱 手机拍照检测");
         }
     }
 
