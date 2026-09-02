@@ -24,8 +24,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.ar.glass.R;
 import com.ar.glass.vision.MeterReading;
 import com.ar.glass.vision.Vision;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.YoloDetector;
-import com.ar.glass.vision.YoloDetectorHolder;
 import com.ar.glass.vision.cloud.MeterCloudOcr;
 
 import java.io.File;
@@ -191,11 +191,10 @@ public class ImageViewerActivity extends AppCompatActivity {
         return result;
     }
 
-    /** YOLO 检测：返回目标清单文本（类别 × 置信度），并在图片上绘制检测框 */
+    /** YOLO 检测（防松标记模型）：返回目标清单文本（类别 × 置信度），并在图片上绘制检测框 */
     private String doYoloDetect(String path) {
-        YoloDetector detector = YoloDetectorHolder.get(getApplicationContext());
-        if (detector == null || !detector.isReady()) {
-            String reason = YoloDetectorHolder.getInitError();
+        if (!MarkedPointDetectorHolder.isReady(getApplicationContext())) {
+            String reason = MarkedPointDetectorHolder.getInitializationError();
             mAnnotatedBitmap = null;
             return "模型加载失败\n\n" + (reason != null && !reason.isEmpty() ? reason : "详见 logcat");
         }
@@ -205,8 +204,18 @@ public class ImageViewerActivity extends AppCompatActivity {
             return "照片解码失败";
         }
         long t0 = System.currentTimeMillis();
-        List<YoloDetector.Detection> dets = detector.detect(bitmap);
-        long ms = System.currentTimeMillis() - t0;
+        List<YoloDetector.Detection> dets;
+        long ms;
+        try {
+            MarkedPointDetectorHolder.Result marked =
+                    MarkedPointDetectorHolder.detect(getApplicationContext(), bitmap);
+            dets = marked != null ? marked.detections : null;
+            ms = System.currentTimeMillis() - t0;
+        } catch (Exception e) {
+            if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+            mAnnotatedBitmap = null;
+            return "检测失败：" + e.getMessage();
+        }
 
         // 在原图内存副本上绘制检测框（不写磁盘，磁盘原图保持不变）
         mAnnotatedBitmap = drawDetections(bitmap, dets);

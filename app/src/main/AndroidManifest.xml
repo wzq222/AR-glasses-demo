@@ -77,6 +77,11 @@
             android:name=".ui.MeterRecordsActivity"
             android:screenOrientation="portrait" />
 
+        <!-- 手机摄像头实时检测 -->
+        <activity
+            android:name=".ui.LiveDetectActivity"
+            android:screenOrientation="portrait" />
+
         <!-- 后台任务领取与SOP逐步执行 -->
         <activity
             android:name=".sop.SopActivity"

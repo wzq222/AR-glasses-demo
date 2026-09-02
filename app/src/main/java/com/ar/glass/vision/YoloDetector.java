@@ -120,6 +120,10 @@ public final class YoloDetector {
         mConfThreshold = v;
     }
 
+    public float getConfThreshold() {
+        return mConfThreshold;
+    }
+
     public void release() {
         if (mSession != null) {
             try { mSession.close(); } catch (Exception ignored) {}

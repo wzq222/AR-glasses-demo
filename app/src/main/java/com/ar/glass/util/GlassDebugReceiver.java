@@ -98,6 +98,15 @@ public class GlassDebugReceiver extends BroadcastReceiver {
                 log("已请求关闭热点");
                 break;
             }
+            case "netdiag": {
+                // 网络诊断：WiFi/热点/P2P/接口/ARP 完整状态
+                new Thread(() -> {
+                    String report = com.ar.glass.util.NetworkDiagnostics.collect(app);
+                    Log.i(TAG, report);
+                    log(report.replace("\n", "\n🛠 "));
+                }).start();
+                break;
+            }
             case "setap": {
                 // 保存外部 AP 配置（手机与眼镜同连一台路由器）：--es ssid SS --es pwd PP
                 String ssid = intent.getStringExtra("ssid");

@@ -37,6 +37,7 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.RadioButton;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -94,9 +95,12 @@ public class MainActivity extends AppCompatActivity {
     private Button btnSyncPhotos;
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
+    private Button btnNetDiag;
     private Button btnVoice;
     private Button btnDetectLoop;
     private Button btnPhoneDetect;
+    private Button btnLiveDetect;
+    private Button btnGalleryDetect;
     private Button btnSopTasks;
     private TextView tvDetectStatus;
     private TextView tvDetectConf;
@@ -115,6 +119,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<Uri> mTakePictureLauncher;
     private Uri mCaptureUri;
     private ActivityResultLauncher<Uri> mPhoneDetectLauncher;
+    private ActivityResultLauncher<String> mGalleryDetectLauncher;
     private Uri mPhoneDetectUri;
     private final ExecutorService mOcrExecutor = Executors.newSingleThreadExecutor();
 
@@ -182,9 +187,12 @@ public class MainActivity extends AppCompatActivity {
         btnSyncPhotos = findViewById(R.id.btnSyncFiles);
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
+        btnNetDiag = findViewById(R.id.btnNetDiag);
         btnVoice = findViewById(R.id.btnVoice);
         btnDetectLoop = findViewById(R.id.btnDetectLoop);
         btnPhoneDetect = findViewById(R.id.btnPhoneDetect);
+        btnLiveDetect = findViewById(R.id.btnLiveDetect);
+        btnGalleryDetect = findViewById(R.id.btnGalleryDetect);
         btnSopTasks = findViewById(R.id.btnSopTasks);
         tvDetectStatus = findViewById(R.id.tvDetectStatus);
         tvDetectConf = findViewById(R.id.tvDetectConf);
@@ -192,10 +200,10 @@ public class MainActivity extends AppCompatActivity {
         ivDetectPreview = findViewById(R.id.ivDetectPreview);
         detectOverlay = findViewById(R.id.detectOverlay);
         seekDetectConf = findViewById(R.id.seekDetectConf);
-
-        // 紧固件/防松标记检测使用固定高召回阈值，不支持手动调节
+        // 紧固件/防松标记检测使用固定高召回阈值（唯一模型路径）
         seekDetectConf.setEnabled(false);
         tvDetectConf.setText("固定高召回阈值");
+
         btnRecords = findViewById(R.id.btnRecords);
         btnThreshold = findViewById(R.id.btnThreshold);
         cbVoice = findViewById(R.id.cbVoice);
@@ -204,8 +212,21 @@ public class MainActivity extends AppCompatActivity {
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+        btnNetDiag.setOnClickListener(v -> {
+            // 网络诊断：完整状态写入运行日志（展开日志区查看），并自动展开
+            appendLog(com.ar.glass.util.NetworkDiagnostics.collect(this));
+            if (!mLogExpanded) {
+                mLogExpanded = true;
+                tvLog.setVisibility(View.VISIBLE);
+                ((TextView) findViewById(R.id.tvLogToggle)).setText("▼ 运行日志（点击收起）");
+            }
+            Toast.makeText(this, "网络诊断已写入运行日志", Toast.LENGTH_SHORT).show();
+        });
         btnDetectLoop.setOnClickListener(v -> startSingleDetect());
         btnPhoneDetect.setOnClickListener(v -> launchPhoneDetectionCamera());
+        btnLiveDetect.setOnClickListener(v -> startActivity(
+                new Intent(this, LiveDetectActivity.class)));
+        btnGalleryDetect.setOnClickListener(v -> mGalleryDetectLauncher.launch("image/*"));
         btnSopTasks.setOnClickListener(v ->
                 startActivity(new Intent(this, com.ar.glass.sop.SopActivity.class)));
         btnVoice.setOnTouchListener((v, event) -> {
@@ -244,6 +265,19 @@ public class MainActivity extends AppCompatActivity {
                         detectPhonePhoto(mPhoneDetectUri);
                     } else {
                         resetPhoneDetectButton();
+                    }
+                });
+
+        // 相册选图检测：按当前模型检测所选照片
+        mGalleryDetectLauncher = registerForActivityResult(
+                new ActivityResultContracts.GetContent(),
+                uri -> {
+                    if (uri != null) {
+                        btnGalleryDetect.setEnabled(false);
+                        btnGalleryDetect.setText("⏳ 检测中…");
+                        detectPhonePhoto(uri);
+                        btnGalleryDetect.setEnabled(true);
+                        btnGalleryDetect.setText("🖼 相册选图检测");
                     }
                 });
 
@@ -711,7 +745,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void detectPhonePhoto(Uri uri) {
         btnPhoneDetect.setText("⏳ 正在检测防松标记…");
-        tvDetectStatus.setText("手机照片已获取，正在执行全图防松标记检测");
+        tvDetectStatus.setText("手机照片已获取，正在按当前模型检测");
         mOcrExecutor.execute(() -> {
             Bitmap bitmap = null;
             try {
@@ -720,15 +754,18 @@ public class MainActivity extends AppCompatActivity {
                 if (bitmap == null) {
                     throw new IllegalStateException("手机照片解码失败");
                 }
+                List<com.ar.glass.vision.YoloDetector.Detection> dets;
+                long elapsed;
                 com.ar.glass.vision.MarkedPointDetectorHolder.Result marked =
                         com.ar.glass.vision.MarkedPointDetectorHolder.detect(this, bitmap);
-                long elapsed = Math.round(marked.latencyMillis);
+                dets = marked.detections;
+                elapsed = Math.round(marked.latencyMillis);
                 EventBus.getDefault().post(new EventMsg(
                         EventMsg.MSG_DETECT_RESULT,
-                        marked.detections.size(),
+                        dets.size(),
                         new com.ar.glass.vision.DetectResult(
                                 bitmap,
-                                marked.detections,
+                                dets,
                                 bitmap.getWidth(),
                                 bitmap.getHeight(),
                                 elapsed,

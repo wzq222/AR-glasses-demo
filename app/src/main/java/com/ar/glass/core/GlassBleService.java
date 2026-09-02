@@ -313,6 +313,8 @@ public class GlassBleService extends Service {
 
     // ===== 检测循环/单张检测状态（yolo-fastener 合并恢复） =====
     private volatile boolean mDetectLoopActive = false;
+    /** 最近一次 P2P 扫描发现的设备（网络诊断用） */
+    private volatile Collection<WifiP2pDevice> mLastP2pDevices;
     private volatile boolean mSingleShotActive = false;
     private volatile boolean mDetectNextScheduled = false;
     private static final long DETECT_LOOP_INTERVAL_MS = 2600;
@@ -1327,6 +1329,20 @@ public class GlassBleService extends Service {
         if (mWifiP2pManager == null || mWifiP2pChannel == null || mP2pConnecting) return;
         mWifiP2pManager.requestPeers(mWifiP2pChannel, peers -> {
             Collection<WifiP2pDevice> list = peers.getDeviceList();
+            mLastP2pDevices = list;
+            // 网络诊断：打印全部发现的 P2P 设备明细（眼镜 P2P 名称与预期不匹配时是关键线索）
+            if (!list.isEmpty()) {
+                StringBuilder sb = new StringBuilder("📡 [P2P发现] 共 " + list.size() + " 台:");
+                for (WifiP2pDevice d : list) {
+                    sb.append("\n    ").append(d.deviceName)
+                            .append(" MAC=").append(d.deviceAddress)
+                            .append(" status=").append(d.status);
+                }
+                postLog(sb.toString());
+            } else {
+                postLog("📡 [P2P发现] 本轮未发现任何 P2P 设备（目标名称="
+                        + computeGlassesWifiSsid() + "）");
+            }
             for (WifiP2pDevice device : list) {
                 if (matchesGlassesP2p(device)) {
                     postLog("✅ 发现眼镜 P2P 设备: " + device.deviceName);
@@ -1335,6 +1351,27 @@ public class GlassBleService extends Service {
                 }
             }
         });
+    }
+
+    /** 网络诊断：P2P 状态快照（供 NetworkDiagnostics 调用） */
+    public String p2pDiagnosticSnapshot() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[P2P] manager=").append(mWifiP2pManager != null ? "已初始化" : "未初始化")
+                .append(" receiver=").append(mWifiP2pReceiverRegistered ? "已注册" : "未注册")
+                .append(" connecting=").append(mP2pConnecting).append("\n");
+        Collection<WifiP2pDevice> peers = mLastP2pDevices;
+        if (peers == null || peers.isEmpty()) {
+            sb.append("[P2P] 最近一次扫描：未发现任何设备（眼镜 P2P 未开启/名称不匹配/系统封锁）\n");
+        } else {
+            sb.append("[P2P] 最近一次扫描发现 ").append(peers.size()).append(" 台:\n");
+            for (WifiP2pDevice d : peers) {
+                sb.append("    ").append(d.deviceName)
+                        .append(" MAC=").append(d.deviceAddress)
+                        .append(" status=").append(d.status)
+                        .append(matchesGlassesP2p(d) ? " ←匹配眼镜" : "").append("\n");
+            }
+        }
+        return sb.toString();
     }
 
     private boolean matchesGlassesP2p(WifiP2pDevice device) {
@@ -2004,7 +2041,7 @@ public class GlassBleService extends Service {
         mMainHandler.postDelayed(mDetectNextRoundRunnable, DETECT_LOOP_INTERVAL_MS);
     }
 
-    /** 对最新同步照片跑防松标记检测（新 YOLO 紧固件模型），结果（含预览图）通过 MSG_DETECT_RESULT 发往 UI。 */
+    /** 对最新同步照片跑防松标记检测（统一使用紧固件模型），结果（含预览图）通过 MSG_DETECT_RESULT 发往 UI。 */
     private void detectLatestPhotoWithYolo() {
         new Thread(() -> {
             try {

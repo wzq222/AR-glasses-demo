@@ -131,15 +131,33 @@
                         <TextView android:id="@+id/tvBatteryStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="-" android:textSize="14sp" android:textColor="#333333"/>
                     </LinearLayout>
 
-                    <Button
-                        android:id="@+id/btnSelectDevice"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="🔍 选择眼镜设备"
-                        android:textSize="14sp"
-                        android:backgroundTint="#2196F3"
-                        android:textColor="@android:color/white"
-                        android:layout_marginTop="4dp"/>
+                        android:orientation="horizontal"
+                        android:layout_marginTop="4dp">
+
+                        <Button
+                            android:id="@+id/btnSelectDevice"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🔍 选择眼镜设备"
+                            android:textSize="14sp"
+                            android:backgroundTint="#2196F3"
+                            android:textColor="@android:color/white"/>
+
+                        <Button
+                            android:id="@+id/btnNetDiag"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:text="🌐 网络诊断"
+                            android:textSize="14sp"
+                            android:backgroundTint="#00897B"
+                            android:textColor="@android:color/white"/>
+                    </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
@@ -259,6 +277,34 @@
                         android:backgroundTint="#FF5722"
                         android:textColor="@android:color/white"/>
 
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp">
+
+                        <Button
+                            android:id="@+id/btnLiveDetect"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="📱 实时检测"
+                            android:textSize="14sp"
+                            android:backgroundTint="#7B1FA2"
+                            android:textColor="@android:color/white"/>
+
+                        <Button
+                            android:id="@+id/btnGalleryDetect"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:text="🖼 相册选图检测"
+                            android:textSize="14sp"
+                            android:backgroundTint="#455A64"
+                            android:textColor="@android:color/white"/>
+                    </LinearLayout>
+
                     <Button
                         android:id="@+id/btnPhoneDetect"
                         android:layout_width="match_parent"
@@ -268,6 +314,40 @@
                         android:textSize="14sp"
                         android:backgroundTint="#1976D2"
                         android:textColor="@android:color/white"/>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp"
+                        android:background="#F5F5F5"
+                        android:padding="6dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="检测模型:"
+                            android:textSize="13sp"
+                            android:textColor="#333333"
+                            android:layout_gravity="center_vertical"/>
+
+                        <RadioButton
+                            android:id="@+id/radioFastener"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🔩 紧固件防松"
+                            android:textSize="13sp"
+                            android:checked="true"/>
+
+                        <RadioButton
+                            android:id="@+id/radioGeneral"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🔍 通用螺丝"
+                            android:textSize="13sp"/>
+                    </LinearLayout>
 
                     <TextView
                         android:layout_width="match_parent"

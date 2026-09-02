@@ -15,3 +15,6 @@ local.properties
 
 # Gradle lock files
 .LCK*
+
+# legacy merged sub-project (kept on disk, excluded from repo)
+Android_YOLO/
