@@ -39,11 +39,14 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import com.ar.glass.R;
 import com.ar.glass.core.AppState;
@@ -74,6 +77,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private static final int PERMISSION_REQUEST_CODE = 100;
+    private static final int CAMERA_REQUEST_CODE = 200;
+    private static final String FILE_PROVIDER_AUTHORITY = "com.ar.glass.fileprovider";
 
     private TextView tvBleStatus;
     private TextView tvSystemStatus;
@@ -459,6 +464,12 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "请授予所有权限以正常使用", Toast.LENGTH_LONG).show();
             }
             checkLocationAndStartService();
+        } else if (requestCode == CAMERA_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                launchCamera();
+            } else {
+                Toast.makeText(this, "需要相机权限才能拍照识别", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
