@@ -1,7 +1,6 @@
 package com.ar.glass.vision.realtime;
 
 import android.content.Context;
-import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 
 import ai.onnxruntime.NodeInfo;
@@ -13,6 +12,7 @@ import ai.onnxruntime.OrtSession;
 import ai.onnxruntime.TensorInfo;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -36,11 +36,23 @@ public final class OnnxFastenerDetector implements FastenerDetector {
     private String outputName;
     private String initializationError;
     private boolean closed;
+    /** 输出通道数（4+类别数）与候选数；0 表示形状动态、以首次推理实际值为准 */
+    private int outputChannels;
+    private int outputCandidates;
 
     public OnnxFastenerDetector(Context context) {
-        if (context == null) {
+        this(readAssetBytes(context), false, "模型未打包：" + MODEL_ASSET_NAME);
+    }
+
+    /** 从用户选择的模型文件加载（宽松形状校验，更换模型入口使用） */
+    public OnnxFastenerDetector(File modelFile) {
+        this(readFileBytes(modelFile), true, "模型文件读取失败");
+    }
+
+    private OnnxFastenerDetector(byte[] modelBytes, boolean custom, String missingModelError) {
+        if (modelBytes == null) {
             inputWorkspace = null;
-            initializationError = "模型初始化失败";
+            initializationError = missingModelError;
             return;
         }
 
@@ -49,7 +61,6 @@ public final class OnnxFastenerDetector implements FastenerDetector {
         OrtSession candidateSession = null;
         try {
             environment = OrtEnvironment.getEnvironment();
-            byte[] modelBytes = readAsset(context.getAssets(), MODEL_ASSET_NAME);
             try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
                 options.setIntraOpNumThreads(InferenceThreadPolicy.intraOpThreads());
                 candidateSession = environment.createSession(modelBytes, options);
@@ -57,19 +68,58 @@ public final class OnnxFastenerDetector implements FastenerDetector {
 
             inputName = requireUniqueName(candidateSession.getInputNames(), "input");
             outputName = requireUniqueName(candidateSession.getOutputNames(), "output");
-            validateModelShapes(
-                    tensorShape(candidateSession.getInputInfo(), inputName),
-                    tensorShape(candidateSession.getOutputInfo(), outputName));
+            long[] inputShape = tensorShape(candidateSession.getInputInfo(), inputName);
+            long[] outputShape = tensorShape(candidateSession.getOutputInfo(), outputName);
+            if (custom) {
+                validateCustomModelShapes(inputShape, outputShape);
+                outputChannels = (int) outputShape[1];
+                outputCandidates = (int) outputShape[2];
+            } else {
+                validateModelShapes(inputShape, outputShape);
+                outputChannels = OUTPUT_CHANNELS;
+                outputCandidates = OUTPUT_CANDIDATES;
+            }
             session = candidateSession;
-        } catch (IOException exception) {
-            closeQuietly(candidateSession);
-            initializationError = "模型未打包：" + MODEL_ASSET_NAME;
         } catch (IllegalArgumentException exception) {
             closeQuietly(candidateSession);
             initializationError = "模型尺寸或输入输出不兼容";
         } catch (OrtException | LinkageError | RuntimeException exception) {
             closeQuietly(candidateSession);
             initializationError = "模型初始化失败";
+        }
+    }
+
+    private static byte[] readAssetBytes(Context context) {
+        if (context == null) {
+            return null;
+        }
+        try {
+            return readStream(context.getAssets().open(MODEL_ASSET_NAME));
+        } catch (IOException exception) {
+            return null;
+        }
+    }
+
+    private static byte[] readFileBytes(File modelFile) {
+        if (modelFile == null || !modelFile.exists() || modelFile.length() <= 0) {
+            return null;
+        }
+        try {
+            return readStream(new java.io.FileInputStream(modelFile));
+        } catch (IOException exception) {
+            return null;
+        }
+    }
+
+    private static byte[] readStream(InputStream input) throws IOException {
+        try (InputStream in = input;
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] chunk = new byte[32 * 1024];
+            int count;
+            while ((count = in.read(chunk)) != -1) {
+                output.write(chunk, 0, count);
+            }
+            return output.toByteArray();
         }
     }
 
@@ -108,6 +158,7 @@ public final class OnnxFastenerDetector implements FastenerDetector {
 
         List<Detection> detections = YoloPostprocessor.process(
                 prediction,
+                prediction.length,
                 bitmap.getWidth(),
                 bitmap.getHeight(),
                 transform.getScale(),
@@ -150,6 +201,23 @@ public final class OnnxFastenerDetector implements FastenerDetector {
                 "output");
     }
 
+    /**
+     * 自定义模型宽松契约：输入固定 [1,3,640,640]（预处理工作区固定 640），
+     * 输出 [1, C, N]（C=4+类别数 ≥5，N>0；N 为动态维度时允许 -1/0）。
+     */
+    public static void validateCustomModelShapes(long[] inputShape, long[] outputShape) {
+        validateShape(inputShape, new long[]{1, 3, INPUT_SIZE, INPUT_SIZE}, "input");
+        if (outputShape == null || outputShape.length != 3 || outputShape[0] != 1) {
+            throw new IllegalArgumentException("output tensor shape is missing or invalid");
+        }
+        if (outputShape[1] != -1 && outputShape[1] < 5) {
+            throw new IllegalArgumentException("output channel count is incompatible");
+        }
+        if (outputShape[2] == 0) {
+            throw new IllegalArgumentException("output tensor shape is invalid");
+        }
+    }
+
     private static void validateShape(long[] actual, long[] expected, String label) {
         if (actual == null || actual.length != expected.length) {
             throw new IllegalArgumentException(label + " tensor shape is missing or invalid");
@@ -176,19 +244,7 @@ public final class OnnxFastenerDetector implements FastenerDetector {
         return ((TensorInfo) node.getInfo()).getShape();
     }
 
-    private static byte[] readAsset(AssetManager assets, String assetName) throws IOException {
-        try (InputStream input = assets.open(assetName);
-                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] chunk = new byte[32 * 1024];
-            int count;
-            while ((count = input.read(chunk)) != -1) {
-                output.write(chunk, 0, count);
-            }
-            return output.toByteArray();
-        }
-    }
-
-    private static float[][] extractPrediction(
+    private float[][] extractPrediction(
             OrtSession.Result output, String outputName) throws OrtException {
         Optional<OnnxValue> value = output.get(outputName);
         if (!value.isPresent()) {
@@ -203,13 +259,18 @@ public final class OnnxFastenerDetector implements FastenerDetector {
             throw new IllegalArgumentException("model output batch is incompatible");
         }
         float[][] prediction = batches[0];
-        if (prediction.length != OUTPUT_CHANNELS) {
+        if (prediction.length < 5 || (outputChannels > 0 && prediction.length != outputChannels)) {
             throw new IllegalArgumentException("model output channel count is incompatible");
         }
         for (float[] row : prediction) {
-            if (row == null || row.length != OUTPUT_CANDIDATES) {
+            if (row == null || row.length == 0
+                    || (outputCandidates > 0 && row.length != outputCandidates)) {
                 throw new IllegalArgumentException("model output candidate count is incompatible");
             }
+        }
+        if (outputChannels == 0) {
+            outputChannels = prediction.length;
+            outputCandidates = prediction[0].length;
         }
         return prediction;
     }

@@ -68,4 +68,24 @@ public final class GlassBleServiceBridge {
     public static String bleProgress() {
         return GlassBleService.debugBleProgress();
     }
+
+    /** 手动注入眼镜 IP 并触发照片列表拉取（模拟器/无蓝牙调试场景） */
+    public static void setGlassesIp(String ip) {
+        GlassBleService.debugSetGlassesIp(ip);
+    }
+
+    /** BLE 直拉眼镜最近照片缩略图（oudmon cmd=0xFD，落地后本地检测） */
+    public static void thumbGet() {
+        GlassBleService.debugThumbGet();
+    }
+
+    /** YOLO 模式拍照（回传落地后自动本地检测） */
+    public static void takePhotoDetect() {
+        GlassBleService.debugTakePhotoDetect();
+    }
+
+    /** 直连上次成功连接的眼镜（跳过设备选择），返回结果描述 */
+    public static String reconnectLast() {
+        return GlassBleService.debugReconnectLast();
+    }
 }

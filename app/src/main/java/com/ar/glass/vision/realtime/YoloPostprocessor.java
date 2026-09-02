@@ -44,8 +44,53 @@ public final class YoloPostprocessor {
             float padY,
             float confidenceThreshold,
             float nmsIouThreshold) {
+        return process(
+                prediction,
+                OUTPUT_ROWS,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                confidenceThreshold,
+                nmsIouThreshold);
+    }
+
+    /** 动态通道版本：outputRows = 4 + 类别数（≥5），兼容用户更换的自定义 YOLO 模型 */
+    public static List<Detection> process(
+            float[][] prediction,
+            int outputRows,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY) {
+        return process(
+                prediction,
+                outputRows,
+                originalWidth,
+                originalHeight,
+                scale,
+                padX,
+                padY,
+                DEFAULT_CONFIDENCE_THRESHOLD,
+                DEFAULT_NMS_IOU_THRESHOLD);
+    }
+
+    /** 动态通道版本：outputRows = 4 + 类别数（≥5），兼容用户更换的自定义 YOLO 模型 */
+    public static List<Detection> process(
+            float[][] prediction,
+            int outputRows,
+            int originalWidth,
+            int originalHeight,
+            float scale,
+            float padX,
+            float padY,
+            float confidenceThreshold,
+            float nmsIouThreshold) {
         int candidateCount = validateArguments(
                 prediction,
+                outputRows,
                 originalWidth,
                 originalHeight,
                 scale,
@@ -61,7 +106,7 @@ public final class YoloPostprocessor {
                         return prediction[row][column];
                     }
                 },
-                OUTPUT_ROWS,
+                outputRows,
                 candidateCount,
                 originalWidth,
                 originalHeight,
@@ -283,6 +328,7 @@ public final class YoloPostprocessor {
 
     private static int validateArguments(
             float[][] prediction,
+            int outputRows,
             int originalWidth,
             int originalHeight,
             float scale,
@@ -290,8 +336,9 @@ public final class YoloPostprocessor {
             float padY,
             float confidenceThreshold,
             float nmsIouThreshold) {
-        if (prediction == null || prediction.length != OUTPUT_ROWS) {
-            throw new IllegalArgumentException("prediction must contain 6 rows");
+        if (prediction == null || outputRows < 5 || prediction.length != outputRows) {
+            throw new IllegalArgumentException(
+                    "prediction must contain " + outputRows + " rows");
         }
         if (prediction[0] == null) {
             throw new IllegalArgumentException("prediction rows must not be null");

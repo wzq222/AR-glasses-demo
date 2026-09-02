@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 手机摄像头实时检测：CameraX ImageAnalysis 逐帧送检（节流），预览 + 检测框叠加 + FPS。
- * 检测模型跟随 DetectionRouter（紧固件防松标记 / 通用螺丝检测）。
+ * 检测模型跟随 MarkedPointDetectorHolder（内置紧固件防松模型，或用户更换的自定义模型）。
  */
 public class LiveDetectActivity extends AppCompatActivity {
 

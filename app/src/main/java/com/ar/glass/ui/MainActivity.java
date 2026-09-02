@@ -37,7 +37,6 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.RadioButton;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -56,6 +55,7 @@ import com.ar.glass.record.MeterRecordStore;
 import com.ar.glass.util.EventMsg;
 import com.ar.glass.util.MeterTts;
 import com.ar.glass.vision.MeterReading;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.ThresholdAlarm;
 import com.ar.glass.vision.ThresholdConfig;
 import com.ar.glass.vision.Vision;
@@ -68,6 +68,7 @@ import org.greenrobot.eventbus.ThreadMode;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -102,6 +103,8 @@ public class MainActivity extends AppCompatActivity {
     private Button btnLiveDetect;
     private Button btnGalleryDetect;
     private Button btnSopTasks;
+    private Button btnChangeModel;
+    private TextView tvModelName;
     private TextView tvDetectStatus;
     private TextView tvDetectConf;
     private TextView tvDetectPlaceholder;
@@ -120,6 +123,7 @@ public class MainActivity extends AppCompatActivity {
     private Uri mCaptureUri;
     private ActivityResultLauncher<Uri> mPhoneDetectLauncher;
     private ActivityResultLauncher<String> mGalleryDetectLauncher;
+    private ActivityResultLauncher<String[]> mModelPickerLauncher;
     private Uri mPhoneDetectUri;
     private final ExecutorService mOcrExecutor = Executors.newSingleThreadExecutor();
 
@@ -194,6 +198,9 @@ public class MainActivity extends AppCompatActivity {
         btnLiveDetect = findViewById(R.id.btnLiveDetect);
         btnGalleryDetect = findViewById(R.id.btnGalleryDetect);
         btnSopTasks = findViewById(R.id.btnSopTasks);
+        btnChangeModel = findViewById(R.id.btnChangeModel);
+        tvModelName = findViewById(R.id.tvModelName);
+        updateModelNameUI();
         tvDetectStatus = findViewById(R.id.tvDetectStatus);
         tvDetectConf = findViewById(R.id.tvDetectConf);
         tvDetectPlaceholder = findViewById(R.id.tvDetectPlaceholder);
@@ -229,6 +236,13 @@ public class MainActivity extends AppCompatActivity {
         btnGalleryDetect.setOnClickListener(v -> mGalleryDetectLauncher.launch("image/*"));
         btnSopTasks.setOnClickListener(v ->
                 startActivity(new Intent(this, com.ar.glass.sop.SopActivity.class)));
+        // 更换模型：点击选择 ONNX 模型文件并热加载；长按恢复内置模型
+        btnChangeModel.setOnClickListener(v ->
+                mModelPickerLauncher.launch(new String[]{"*/*"}));
+        btnChangeModel.setOnLongClickListener(v -> {
+            confirmRestoreDefaultModel();
+            return true;
+        });
         btnVoice.setOnTouchListener((v, event) -> {
             if (mVoiceController == null) return false;
             switch (event.getAction()) {
@@ -281,7 +295,123 @@ public class MainActivity extends AppCompatActivity {
                     }
                 });
 
+        // 更换模型：选择模型文件 → 校验加载 → 热替换检测器
+        mModelPickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.OpenDocument(),
+                uri -> {
+                    if (uri != null) {
+                        loadCustomModel(uri);
+                    }
+                });
+
         setControlsEnabled(false);
+    }
+
+    // ==================== 更换检测模型 ====================
+
+    private void loadCustomModel(Uri uri) {
+        btnChangeModel.setEnabled(false);
+        appendLog("📂 正在加载模型文件...");
+        new Thread(() -> {
+            String error = null;
+            String displayName = "自定义模型";
+            try {
+                displayName = queryDisplayName(uri);
+                // ① 拷贝到临时文件
+                File incoming = new File(getCacheDir(), "incoming_model.onnx");
+                try (InputStream in = getContentResolver().openInputStream(uri);
+                     FileOutputStream out = new FileOutputStream(incoming)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                // ② 试加载校验，不通过则不替换当前模型
+                com.ar.glass.vision.realtime.OnnxFastenerDetector probe =
+                        new com.ar.glass.vision.realtime.OnnxFastenerDetector(incoming);
+                if (!probe.isReady()) {
+                    error = probe.getInitializationError();
+                    probe.close();
+                    incoming.delete();
+                } else {
+                    probe.close();
+                    // ③ 替换生效文件并热重载
+                    File target = MarkedPointDetectorHolder.getCustomModelFile(this);
+                    if (target.exists()) target.delete();
+                    if (!incoming.renameTo(target)) {
+                        error = "模型文件替换失败";
+                    } else {
+                        error = MarkedPointDetectorHolder.reload(this);
+                        if (error == null) {
+                            getPreferences(MODE_PRIVATE).edit()
+                                    .putString("custom_model_name", displayName).apply();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                error = "模型文件读取失败: " + e.getMessage();
+            }
+            final String err = error;
+            final String name = displayName;
+            runOnUiThread(() -> {
+                btnChangeModel.setEnabled(true);
+                if (err == null) {
+                    updateModelNameUI();
+                    appendLog("✅ 模型已更换: " + name);
+                    Toast.makeText(this, "模型已加载: " + name, Toast.LENGTH_SHORT).show();
+                } else {
+                    appendLog("❌ 模型加载失败: " + err);
+                    Toast.makeText(this, "模型加载失败: " + err, Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
+    }
+
+    private void confirmRestoreDefaultModel() {
+        if (!MarkedPointDetectorHolder.isCustomModelActive(this)) {
+            Toast.makeText(this, "当前已是内置模型", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("恢复内置模型")
+                .setMessage("放弃当前自定义模型，恢复内置紧固件防松模型？")
+                .setPositiveButton("恢复", (d, w) -> new Thread(() -> {
+                    String err = MarkedPointDetectorHolder.restoreDefault(this);
+                    runOnUiThread(() -> {
+                        if (err == null) {
+                            updateModelNameUI();
+                            appendLog("✅ 已恢复内置紧固件防松模型");
+                            Toast.makeText(this, "已恢复内置模型", Toast.LENGTH_SHORT).show();
+                        } else {
+                            appendLog("❌ 恢复内置模型失败: " + err);
+                            Toast.makeText(this, "恢复失败: " + err, Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }).start())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void updateModelNameUI() {
+        if (MarkedPointDetectorHolder.isCustomModelActive(this)) {
+            String name = getPreferences(MODE_PRIVATE)
+                    .getString("custom_model_name", "自定义模型");
+            tvModelName.setText("📦 " + name + "（长按恢复内置）");
+        } else {
+            tvModelName.setText("🔩 紧固件防松（内置）");
+        }
+    }
+
+    private String queryDisplayName(Uri uri) {
+        try (android.database.Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String name = c.getString(idx);
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            }
+        } catch (Exception ignored) {}
+        return "自定义模型";
     }
 
     private void initVoiceController() {

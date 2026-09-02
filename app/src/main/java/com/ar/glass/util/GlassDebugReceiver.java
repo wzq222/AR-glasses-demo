@@ -173,6 +173,70 @@ public class GlassDebugReceiver extends BroadcastReceiver {
                 new Thread(() -> log("probe " + ip + " -> " + probe(ip))).start();
                 break;
             }
+            case "setip": {
+                String ip = intent.getStringExtra("ip");
+                if (ip == null) { log("缺少 --es ip"); break; }
+                GlassBleServiceBridge.setGlassesIp(ip);
+                log("setip: 已注入眼镜 IP " + ip + "，触发照片列表拉取");
+                break;
+            }
+            case "watch": {
+                // 热点客户端监控：30 秒内每 3 秒采样邻居表，报告新增设备（抓「眼镜连上热点」瞬间）
+                new Thread(() -> {
+                    log("watch: 开始监控邻居表 30s（请让眼镜此刻连接热点）...");
+                    java.util.Set<String> known = new java.util.HashSet<>();
+                    for (int i = 0; i < 10; i++) {
+                        for (String n : com.ar.glass.util.NetworkDiagnostics.readNeighbors()) {
+                            if (known.add(n)) log("👀 [watch] 新设备: " + n);
+                        }
+                        try { Thread.sleep(3000); } catch (Exception ignored) {}
+                    }
+                    log("watch: 结束，共发现 " + known.size() + " 个邻居"
+                            + (known.isEmpty() ? "（眼镜未连上热点）" : ""));
+                }).start();
+                break;
+            }
+            case "thumbget": {
+                // BLE 直拉缩略图 → 本地检测（oudmon cmd=0xFD 协议，无需 WiFi/配网）
+                new Thread(() -> {
+                    GlassBleServiceBridge.thumbGet();
+                    log("thumbget: 已发起缩略图拉取");
+                }).start();
+                break;
+            }
+            case "photodetect": {
+                // YOLO 模式拍照：回传落地后自动本地检测
+                new Thread(() -> {
+                    GlassBleServiceBridge.takePhotoDetect();
+                    log("photodetect: 已发起 YOLO 模式拍照");
+                }).start();
+                break;
+            }
+            case "setmode": {
+                // 回传模式切换：--es m auto|p2p|ap|thumb（防硬件不支持自动降级）
+                String m = intent.getStringExtra("m");
+                if (m == null || !("auto,p2p,ap,thumb".contains(m))) {
+                    log("缺少/非法 --es m（auto|p2p|ap|thumb）");
+                    break;
+                }
+                app.getSharedPreferences("debug", Context.MODE_PRIVATE).edit()
+                        .putString("transfer_mode", m).apply();
+                log("回传模式已设为 " + m + "（auto=优先上次成功模式，超时自动降级：p2p/ap → thumb）");
+                break;
+            }
+            case "mode": {
+                String cur = app.getSharedPreferences("debug", Context.MODE_PRIVATE)
+                        .getString("transfer_mode", "auto");
+                String last = app.getSharedPreferences("debug", Context.MODE_PRIVATE)
+                        .getString("last_ok_mode", "无");
+                log("回传模式=" + cur + "，上次成功=" + last + "（降级链：p2p/ap → thumb，BLE直拉无需WiFi）");
+                break;
+            }
+            case "connect": {
+                // 直连上次成功连接的眼镜（跳过设备选择对话框）
+                new Thread(() -> log("connect: " + GlassBleServiceBridge.reconnectLast())).start();
+                break;
+            }
             case "photo": {
                 new Thread(() -> {
                     GlassBleServiceBridge.takePhoto();

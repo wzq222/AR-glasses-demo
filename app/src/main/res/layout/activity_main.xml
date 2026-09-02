@@ -321,32 +321,36 @@
                         android:orientation="horizontal"
                         android:layout_marginTop="6dp"
                         android:background="#F5F5F5"
-                        android:padding="6dp">
+                        android:padding="6dp"
+                        android:gravity="center_vertical">
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="检测模型:"
                             android:textSize="13sp"
-                            android:textColor="#333333"
-                            android:layout_gravity="center_vertical"/>
+                            android:textColor="#333333"/>
 
-                        <RadioButton
-                            android:id="@+id/radioFastener"
+                        <TextView
+                            android:id="@+id/tvModelName"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="🔩 紧固件防松"
+                            android:layout_marginStart="8dp"
+                            android:text="🔩 紧固件防松（内置）"
                             android:textSize="13sp"
-                            android:checked="true"/>
+                            android:textColor="#333333"
+                            android:singleLine="true"
+                            android:ellipsize="middle"/>
 
-                        <RadioButton
-                            android:id="@+id/radioGeneral"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="🔍 通用螺丝"
-                            android:textSize="13sp"/>
+                        <Button
+                            android:id="@+id/btnChangeModel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:minWidth="88dp"
+                            android:text="📂 更换模型"
+                            android:textSize="12sp"
+                            android:layout_marginStart="8dp"/>
                     </LinearLayout>
 
                     <TextView
