@@ -21,6 +21,10 @@ def bundledVisionModels = [
         'src/main/assets/marked-point-verifier.onnx': [
                 size: 6089246L,
                 sha256: 'FED197A11134DD4358B70EFF64086C050DDECC9B2C484E72AAEB102E4BA563CD'
+        ],
+        'src/main/assets/witness-roi.onnx': [
+                size: 5458941L,
+                sha256: '6D42E0D6C5785866DC65077FCD4D5E6EED576689431CA5C3E6649A280A5880BA'
         ]
 ]
 if (markedPointVerifierNnapi && markedPointVerifierXnnpack) {

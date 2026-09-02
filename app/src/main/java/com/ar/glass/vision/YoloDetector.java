@@ -43,8 +43,26 @@ public final class YoloDetector {
         public final float score;
         public final int classId;
         public final String className;
+        /** Optional assistive witness-line result; coordinates are normalized to the full image. */
+        public final String witnessTriage;
+        public final float witnessAngleDegrees;
+        public final float[] witnessPoints;
 
         Detection(float x1, float y1, float x2, float y2, float score, int classId, String className) {
+            this(x1, y1, x2, y2, score, classId, className, null, Float.NaN, null);
+        }
+
+        Detection(
+                float x1,
+                float y1,
+                float x2,
+                float y2,
+                float score,
+                int classId,
+                String className,
+                String witnessTriage,
+                float witnessAngleDegrees,
+                float[] witnessPoints) {
             this.x1 = x1;
             this.y1 = y1;
             this.x2 = x2;
@@ -52,6 +70,9 @@ public final class YoloDetector {
             this.score = score;
             this.classId = classId;
             this.className = className;
+            this.witnessTriage = witnessTriage;
+            this.witnessAngleDegrees = witnessAngleDegrees;
+            this.witnessPoints = witnessPoints == null ? null : witnessPoints.clone();
         }
     }
 
