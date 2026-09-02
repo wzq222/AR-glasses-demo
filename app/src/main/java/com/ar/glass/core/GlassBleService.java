@@ -311,6 +311,26 @@ public class GlassBleService extends Service {
     /** WiFi 回传进行中（热点/外部AP）：抑制 P2P 扫描重试，避免框架竞争 */
     private volatile boolean mWifiTransferActive = false;
 
+    // ===== 检测循环/单张检测状态（yolo-fastener 合并恢复） =====
+    private volatile boolean mDetectLoopActive = false;
+    private volatile boolean mSingleShotActive = false;
+    private volatile boolean mDetectNextScheduled = false;
+    private static final long DETECT_LOOP_INTERVAL_MS = 2600;
+    private final Runnable mDetectFallbackRunnable = new Runnable() {
+        @Override
+        public void run() {
+            // 拍照事件超时未到 → 主动触发一次同步兜底
+            if (mDetectLoopActive && !mSyncActive) {
+                postLog("⏱️ 拍照事件超时，兜底触发同步");
+                startPhotoSync();
+            }
+        }
+    };
+    private final Runnable mDetectNextRoundRunnable = () -> {
+        if (!mDetectLoopActive) return;
+        takePhoto();
+    };
+
     /** P2P 扫描失败重试（reason=0 多为框架忙，退避后重扫） */
     private final Runnable mP2pScanRetryRunnable = () -> {
         if (!mSyncActive) return;

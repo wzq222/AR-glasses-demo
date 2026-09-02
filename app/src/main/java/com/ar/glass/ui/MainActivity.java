@@ -194,8 +194,6 @@ public class MainActivity extends AppCompatActivity {
         // 紧固件/防松标记检测使用固定高召回阈值，不支持手动调节
         seekDetectConf.setEnabled(false);
         tvDetectConf.setText("固定高召回阈值");
-        btnMeterRecognize = findViewById(R.id.btnMeterRecognize);
-        btnCameraRecognize = findViewById(R.id.btnCameraRecognize);
         btnRecords = findViewById(R.id.btnRecords);
         btnThreshold = findViewById(R.id.btnThreshold);
         cbVoice = findViewById(R.id.cbVoice);
@@ -225,7 +223,7 @@ public class MainActivity extends AppCompatActivity {
                 startActivity(new Intent(this, MeterRecordsActivity.class)));
         btnThreshold.setOnClickListener(v -> showThresholdDialog());
 
-        // 万用表读数识别：现场拍照 → 云端识别
+        // 万用表读数识别：现场拍照 → 云端识别（入口由照片路由/相册触发）
         mTakePictureLauncher = registerForActivityResult(
                 new ActivityResultContracts.TakePicture(),
                 success -> {
@@ -233,7 +231,6 @@ public class MainActivity extends AppCompatActivity {
                         recognizeMeterFromUri(mCaptureUri);
                     }
                 });
-        btnCameraRecognize.setOnClickListener(v -> captureMeter());
 
         // 手机拍照检测：本机拍照 → 紧固件/防松标记检测
         mPhoneDetectLauncher = registerForActivityResult(
@@ -667,10 +664,7 @@ public class MainActivity extends AppCompatActivity {
 
     /** 单张检测：拍照 → 同步一张 → YOLO → 预览（连拍逻辑已停用） */
     private void startSingleDetect() {
-        Log.i("GlassLog", "🔘 [UI] 用户点击单张检测: btnEnabled=" + btnDetectLoop.isEnabled()
-                + " bleConnected=" + AppState.getInstance().isBleConnected
-                + " service=" + (mBleService != null)
-                + " singleActive=" + (mBleService != null && mBleService.isSingleShotActive()));
+        Log.i("GlassLog", "🔘 [UI] 用户点击单张检测: bleConnected=" + AppState.getInstance().isBleConnected);
         if (mBleService == null) {
             Log.i("GlassLog", "🔘 [UI] 拒绝: BLE服务未绑定");
             Toast.makeText(this, "BLE服务未就绪", Toast.LENGTH_SHORT).show();
@@ -684,13 +678,8 @@ public class MainActivity extends AppCompatActivity {
         btnDetectLoop.setEnabled(false);
         btnDetectLoop.setText("⏳ 拍照同步检测中…");
         tvDetectStatus.setText("流程：眼镜拍照 → 传输到手机 → 防松标记检测 → 显示预览");
-        mBleService.startSingleShotDetection();
-        Log.i("GlassLog", "🔘 [UI] 服务已接受单张检测: singleActive=" + mBleService.isSingleShotActive());
-        if (!mBleService.isSingleShotActive()) {
-            // 服务拒绝启动（如上一张同步中），立即复位按钮，避免永久禁用
-            Log.i("GlassLog", "🔘 [UI] 服务拒绝启动，复位按钮");
-            resetSingleDetectButton();
-        }
+        // 分流拍照：YOLO 检测模式（防松标记模型），同步完成后自动检测并复位按钮
+        mBleService.takePhotoFor(GlassBleService.CAPTURE_MODE_YOLO);
     }
 
     /** 单张检测完成后复位按钮 */
@@ -824,6 +813,30 @@ public class MainActivity extends AppCompatActivity {
         Intent intent = new Intent(this, GalleryActivity.class);
         intent.putExtra(GalleryActivity.EXTRA_MODE, mode);
         startActivity(intent);
+    }
+
+    /** 现场拍照识别：检查 CAMERA 权限后启动系统相机。 */
+    private void captureMeter() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST_CODE);
+            return;
+        }
+        launchCamera();
+    }
+
+    /** 启动系统相机，照片写入缓存临时文件（FileProvider content URI）。 */
+    private void launchCamera() {
+        try {
+            File captureFile = new File(getCacheDir(),
+                    "meter_capture_" + System.currentTimeMillis() + ".jpg");
+            mCaptureUri = FileProvider.getUriForFile(this, FILE_PROVIDER_AUTHORITY, captureFile);
+            mTakePictureLauncher.launch(mCaptureUri);
+        } catch (Exception e) {
+            Log.e(TAG, "启动相机失败", e);
+            Toast.makeText(this, "无法启动相机：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void recognizeMeterFromUri(Uri uri) {
