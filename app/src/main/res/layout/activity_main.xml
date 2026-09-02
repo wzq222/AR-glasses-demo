@@ -180,7 +180,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="按住按钮对着眼镜说话，松手后云端识别；说“拍照”即可触发拍照并自动识别二维码，结果通过眼镜播报"
+                        android:text="按住按钮对着眼镜说话，松手后云端识别。语音指令：“二维码拍照”→识别二维码；“对齐拍照”→YOLO检测；“万用表拍照”→读数识别；“拍照”→仅存原图库。结果通过眼镜播报"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="8dp"/>
@@ -210,14 +210,13 @@
                         android:textColor="#333333"
                         android:layout_marginBottom="10dp"/>
 
-                    <Button
-                        android:id="@+id/btnDetectLoop"
+                    <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="📷 单张检测"
-                        android:textSize="14sp"
-                        android:backgroundTint="#FF5722"
-                        android:textColor="@android:color/white"/>
+                        android:text="语音说“对齐拍照”：眼镜拍照 → 照片传到手机 → YOLO 检测 → 显示预览框并播报"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginBottom="4dp"/>
 
                     <!-- 检测预览：照片 fitCenter 完整显示 + 检测框叠加（fitCenter 同步映射） -->
                     <FrameLayout
@@ -286,7 +285,7 @@
                         android:id="@+id/tvDetectStatus"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="点上方按钮：眼镜拍一张 → 照片传到手机 → YOLO 检测 → 显示预览框"
+                        android:text="语音说“对齐拍照”即可触发检测；也可在“图片浏览”卡片从相册选图检测"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="6dp"/>
@@ -316,26 +315,19 @@
                         android:textColor="#333333"
                         android:layout_marginBottom="10dp"/>
 
-                    <LinearLayout
+                    <Button
+                        android:id="@+id/btnGalleryOriginal"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-
-                        <Button
-                            android:id="@+id/btnGalleryOriginal"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="📷 原图库"
-                            android:textSize="14sp"
-                            android:backgroundTint="#4CAF50"
-                            android:textColor="@android:color/white"/>
-                    </LinearLayout>
+                        android:text="📷 原图库"
+                        android:textSize="14sp"
+                        android:backgroundTint="#4CAF50"
+                        android:textColor="@android:color/white"/>
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="原图库：眼镜传输的原始照片"
+                        android:text="原图库：眼镜传输的原始照片（语音拍照均自动存入），支持从手机相册导入；点开图片长按可做 二维码 / YOLO / 万用表 检测"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="8dp"/>
@@ -374,6 +366,87 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:max="100"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 万用表巡检卡片 -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔧 万用表巡检"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="语音说“万用表拍照”：眼镜拍照 → 照片自动同步 → 云端识别读数与挡位；也可在“图片浏览”卡片从相册选图做读数识别"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginBottom="6dp"/>
+
+                    <CheckBox
+                        android:id="@+id/cbVoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🔊 语音播报读数"
+                        android:textSize="14sp"
+                        android:textColor="#333333"
+                        android:checked="true"
+                        android:layout_marginTop="6dp"/>
+
+                    <CheckBox
+                        android:id="@+id/cbAlarm"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🚨 阈值报警"
+                        android:textSize="14sp"
+                        android:textColor="#333333"
+                        android:checked="true"
+                        android:layout_marginTop="2dp"/>
+
+                    <Button
+                        android:id="@+id/btnThreshold"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="⚙️ 阈值设置"
+                        android:textSize="14sp"
+                        android:backgroundTint="#795548"
+                        android:textColor="@android:color/white"
+                        android:layout_marginTop="6dp"/>
+
+                    <Button
+                        android:id="@+id/btnRecords"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="📋 巡检台账（查看/导出）"
+                        android:textSize="14sp"
+                        android:backgroundTint="#3F51B5"
+                        android:textColor="@android:color/white"
+                        android:layout_marginTop="6dp"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="识别结果自动保存到台账（时间/读数/单位/挡位/原照片），可导出 CSV/Excel；语音播报让巡检时不用低头看手机"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="8dp"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 

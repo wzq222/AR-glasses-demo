@@ -30,7 +30,6 @@ import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
-import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Binder;
@@ -207,8 +206,19 @@ public class GlassBleService extends Service {
     // 眼镜上报的照片列表（用于选择性导入）
     private final List<String> mPhotoList = new ArrayList<>();
 
-    // 拍照自动识别：收到 type=1 拍照事件后自动同步并识别最新照片
-    private volatile boolean mAutoRecognize = false;
+    // ===== 拍照分流模式：决定同步完成后照片交给哪个识别链路 =====
+    /** 手动同步（UI 按钮）：弹照片勾选框，由用户选择导入 */
+    public static final int CAPTURE_MODE_MANUAL = 0;
+    /** 普通拍照（语音“拍照”/眼镜按键）：自动导入原图库，不做任何识别 */
+    public static final int CAPTURE_MODE_PLAIN = 1;
+    /** 二维码拍照（语音“二维码拍照”）：导入后识别最新照片二维码 */
+    public static final int CAPTURE_MODE_QR = 2;
+    /** 对齐拍照（语音“对齐拍照”）：导入后对最新照片做 YOLO 检测 */
+    public static final int CAPTURE_MODE_YOLO = 3;
+    /** 万用表拍照（语音“万用表拍照”）：导入后对最新照片做读数识别 */
+    public static final int CAPTURE_MODE_METER = 4;
+
+    private volatile int mCaptureMode = CAPTURE_MODE_MANUAL;
     private long mAutoSyncCooldownUntil = 0;
 
     // 拍照自动识别 mAutoSyncRunnable 声明于 mMainHandler 之后
@@ -275,71 +285,22 @@ public class GlassBleService extends Service {
         }
     };
 
-    // ===== 连拍检测循环（眼镜拍照 → 自动同步 → 手机 YOLO → 播报 → 下一轮） =====
-    /** 连拍循环已停用（保留代码备用）；当前使用单张检测流程 */
-    private volatile boolean mDetectLoopActive = false;
-    /** 单张检测进行中：拍照 → 同步一张 → YOLO → 预览 */
-    private volatile boolean mSingleShotActive = false;
-    /** 防止重复调度下一轮 */
-    private volatile boolean mDetectNextScheduled = false;
+    // ===== 照片同步流程状态 =====
     /** 同步流程进行中标志（防止拍照事件与兜底同时触发重复同步） */
     private volatile boolean mSyncActive = false;
-    /** 下一轮拍照延时：需大于 AUTO_SYNC_COOLDOWN_MS，且给眼镜退出导入模式留时间 */
-    private static final long DETECT_LOOP_INTERVAL_MS = 2600;
-    /** 拍照后等待事件超时：超时未收到拍照事件则主动同步（部分固件不回报 type=1 事件） */
-    private static final long DETECT_EVENT_TIMEOUT_MS = 12000;
-    /** 同步卡死判定：超过该时长仍未完成则强制重置（任何状态机卡死都能自愈） */
-    private static final long SYNC_STUCK_MS = 15000;
     /** 本轮同步开始时刻（用于卡死判定） */
     private volatile long mSyncStartMs = 0;
-    /** 兜底：拍照后无事件、或同步流程卡死时，强制重置并重新同步眼镜里已拍的照片 */
-    private final Runnable mDetectFallbackRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (!mDetectLoopActive) return;
-            boolean syncStuck = mSyncActive
-                    && System.currentTimeMillis() - mSyncStartMs > SYNC_STUCK_MS;
-            if (mSyncActive && !syncStuck) {
-                // 同步刚开始不久，再等一轮检查
-                mMainHandler.postDelayed(this, DETECT_EVENT_TIMEOUT_MS);
-                return;
-            }
-            if (syncStuck) {
-                postLog("🔁 同步卡死(" + SYNC_STUCK_MS / 1000 + "s)，强制重置");
-                finishSync(0);
-            }
-            postLog("🔁 主动触发照片同步");
-            mAutoRecognize = true;
-            startPhotoSync();
-            // 继续周期检查，直到本轮同步完成
-            mMainHandler.postDelayed(this, DETECT_EVENT_TIMEOUT_MS);
-        }
-    };
-    private final Runnable mDetectNextRoundRunnable = () -> {
-        mDetectNextScheduled = false;
-        if (mDetectLoopActive && AppState.getInstance().isBleConnected) {
-            postLog("🔁 检测循环：触发下一轮拍照");
-            mSyncActive = false; // 上轮已结束，允许本轮兜底触发
-            takePhoto();
-            // 兜底：拍照事件超时则主动同步
-            mMainHandler.removeCallbacks(mDetectFallbackRunnable);
-            mMainHandler.postDelayed(mDetectFallbackRunnable, DETECT_EVENT_TIMEOUT_MS);
-        }
-    };
 
-    /** 收到拍照事件（type=1）后 800ms 自动触发同步；周期兜底检查继续守护，防同步卡死 */
+    /** 收到拍照事件（type=1）后 800ms 自动触发同步（按当前拍照分流模式导入/识别） */
     private final Runnable mAutoSyncRunnable = () -> {
         if (!AppState.getInstance().isBleConnected) {
-            postLog("⚠️ 蓝牙未连接，跳过自动识别");
+            postLog("⚠️ 蓝牙未连接，跳过自动同步");
             return;
         }
-        mAutoRecognize = true;
-        postLog("🔄 自动同步并识别最新照片...");
+        postLog("🔄 自动同步最新照片...");
         startPhotoSync();
     };
 
-    /** 同步总超时：P2P/WiFi 一直连不上时释放流程，让检测循环可以继续下一轮 */
-    private static final long SYNC_TIMEOUT_MS = 30000;
     private final Runnable mSyncTimeoutRunnable = () -> {
         if (mSyncActive) {
             postLog("⚠️ 照片同步超时（30s，请确认手机 WiFi 已开启）");
@@ -454,6 +415,7 @@ public class GlassBleService extends Service {
         }
 
         @Override
+        @SuppressWarnings("deprecation")
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             onBleDataReceived(characteristic.getUuid(), characteristic.getValue());
         }
@@ -499,14 +461,14 @@ public class GlassBleService extends Service {
         if (s != null) s.stopHotspot();
     }
 
-    /** 调试用：拍照后经 BLE 直传拉取照片 */
+    /** 调试用：拍照后经 BLE 直传拉取照片（走 YOLO 检测分流） */
     public static void debugBleGet() {
         GlassBleService s = sDebugInstance;
         if (s == null) return;
-        s.mSingleShotActive = true;
+        s.mCaptureMode = CAPTURE_MODE_YOLO;
         s.takePhoto();
         s.mMainHandler.postDelayed(() -> {
-            if (!s.mSingleShotActive) return;
+            if (s.mCaptureMode != CAPTURE_MODE_YOLO) return;
             s.postLog("🛠 [BLE直传] 请求推送照片...");
             s.startBleTransfer();
         }, 4000);
@@ -896,6 +858,7 @@ public class GlassBleService extends Service {
 
     // ========== 协议 ==========
 
+    @SuppressWarnings("deprecation")
     private boolean enableNotification(BluetoothGattCharacteristic ch) {
         if (ch == null || mBluetoothGatt == null) return false;
         try {
@@ -951,6 +914,7 @@ public class GlassBleService extends Service {
      * 连续调用 writeCharacteristic 会导致后续返回 false（即“写入串口失败”）。
      * 这里每次只发一帧，间隔 SERIAL_WRITE_INTERVAL_MS 后再发下一帧。
      */
+    @SuppressWarnings("deprecation")
     private void processSerialWriteQueue() {
         if (mSerialWriting) return;
         byte[] frame;
@@ -1141,16 +1105,50 @@ public class GlassBleService extends Service {
 
     // ========== 外部 API（供 MainActivity 调用） ==========
 
-    /**
-     * 一键同步照片：BLE 通知眼镜开启照片同步（进入照片导入模式）→ 手机通过 WiFi Direct
-     * 连接眼镜 → 通过 HTTP 拉取照片列表 → 用户勾选后选择性下载。
-     */
+    /** 一键同步照片：BLE 通知眼镜开启照片同步（进入照片导入模式）→ 手机通过 WiFi Direct
+     * 连接眼镜 → 通过 HTTP 拉取照片列表 → 用户勾选后选择性下载。 */
     public void syncPhotos() {
         if (!AppState.getInstance().isBleConnected) {
             toast("请先等待蓝牙连接眼镜");
             return;
         }
+        mCaptureMode = CAPTURE_MODE_MANUAL; // 手动同步：弹照片勾选框
         startPhotoSync();
+    }
+
+    /**
+     * 带分流模式的拍照：拍照 → 同步到手机原图库 → 按模式识别。
+     * @param mode {@link #CAPTURE_MODE_PLAIN} 仅存原图库 / {@link #CAPTURE_MODE_QR} 二维码 /
+     *             {@link #CAPTURE_MODE_YOLO} YOLO 检测 / {@link #CAPTURE_MODE_METER} 万用表读数
+     */
+    public void takePhotoFor(int mode) {
+        if (!AppState.getInstance().isBleConnected) {
+            toast("请先等待蓝牙连接眼镜");
+            return;
+        }
+        if (mSyncActive) {
+            toast("上一张还在同步中，请稍候");
+            return;
+        }
+        mCaptureMode = mode;
+        postLog("📸 拍照（模式=" + modeName(mode) + "）...");
+        takePhoto();
+        // 4 秒后走「同步到手机」管线兜底（部分固件不回报拍照事件）
+        mMainHandler.postDelayed(() -> {
+            if (mSyncActive || mCaptureMode != mode) return;
+            postLog("📷 未收到拍照事件，主动同步照片");
+            startPhotoSync();
+        }, 4000);
+    }
+
+    public static String modeName(int mode) {
+        switch (mode) {
+            case CAPTURE_MODE_QR: return "二维码识别";
+            case CAPTURE_MODE_YOLO: return "YOLO检测";
+            case CAPTURE_MODE_METER: return "万用表读数";
+            case CAPTURE_MODE_PLAIN: return "存原图库";
+            default: return "手动同步";
+        }
     }
 
     /** 拍照命令：官方“耳机模式”下需先确保相机开启（action=74 {2,1,1}），再发拍照（action=65 {2,1,1}） */
@@ -1274,6 +1272,7 @@ public class GlassBleService extends Service {
         filter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         mWifiP2pReceiver = new BroadcastReceiver() {
             @Override
+            @SuppressWarnings("deprecation")
             public void onReceive(Context context, Intent intent) {
                 String action = intent == null ? null : intent.getAction();
                 if (action == null) return;
@@ -1499,8 +1498,8 @@ public class GlassBleService extends Service {
                 postLog("📥 下载缩略图 " + success + "/" + total + ": " + n);
             }
         }
-        if (mAutoRecognize) {
-            // 自动模式：下载完直接全部导入，不弹勾选框
+        if (mCaptureMode != CAPTURE_MODE_MANUAL) {
+            // 语音拍照分流模式：下载完直接全部导入，不弹勾选框
             postLog("📥 缩略图下载完成 " + success + "/" + total + "，自动导入全部照片");
             finalizeImport(names);
         } else {
@@ -1606,7 +1605,6 @@ public class GlassBleService extends Service {
         // 热点回传路径收尾：关闭手机热点
         mHotspotTransferActive = false;
         mWifiTransferActive = false;
-        mGlassesApTransferActive = false;
         EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
         stopHotspot();
         AppState.getInstance().isSocketConnected = false;
@@ -1617,208 +1615,49 @@ public class GlassBleService extends Service {
             postLog("ℹ️ 已通知眼镜退出照片导入模式");
         });
         EventBus.getDefault().post(new EventMsg(EventMsg.MSG_SYNC_COMPLETE, count));
-        if (mAutoRecognize) {
-            mAutoRecognize = false;
+
+        // 拍照分流：同步结束后按模式把最新照片交给对应识别链路
+        int mode = mCaptureMode;
+        mCaptureMode = CAPTURE_MODE_MANUAL; // 本轮结束即复位，避免影响下一次拍照
+        if (mode != CAPTURE_MODE_MANUAL) {
             mAutoSyncCooldownUntil = System.currentTimeMillis() + AUTO_SYNC_COOLDOWN_MS;
-            if (count > 0) {
+        }
+        if (count <= 0) {
+            if (mode == CAPTURE_MODE_QR || mode == CAPTURE_MODE_YOLO || mode == CAPTURE_MODE_METER) {
+                postLog("⚠️ " + modeName(mode) + "：未获取到照片（P2P/网络未就绪）");
+                if (mode == CAPTURE_MODE_YOLO) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
+                            new com.ar.glass.vision.DetectResult("未获取到照片")));
+                }
+            }
+            return;
+        }
+        switch (mode) {
+            case CAPTURE_MODE_QR:
                 recognizeLatestPhoto();
-            } else {
-                postLog("ℹ️ 本次无新照片，跳过识别");
-            }
-        }
-        // 单张检测：本轮同步结束 → YOLO 检测最新照片 → 预览（不循环）
-        if (mSingleShotActive) {
-            mSingleShotActive = false;
-            if (count > 0) {
+                break;
+            case CAPTURE_MODE_YOLO:
                 detectLatestPhotoWithYolo();
-            } else {
-                postLog("📷 单张检测：未获取到照片（P2P/网络未就绪）");
-                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
-                        new com.ar.glass.vision.DetectResult("未获取到照片")));
-            }
-        }
-        // 检测循环：本轮同步结束 → YOLO 检测最新照片 → 调度下一轮拍照
-        if (mDetectLoopActive) {
-            if (count > 0) {
-                detectLatestPhotoWithYolo();
-            }
-            scheduleNextDetectRound();
+                break;
+            case CAPTURE_MODE_METER:
+                dispatchMeterRecognition();
+                break;
+            case CAPTURE_MODE_PLAIN:
+            default:
+                postLog("📷 照片已存入原图库（未做识别）");
+                break;
         }
     }
 
-    // ===== 连拍检测循环 =====
-
-    /** 开启连拍检测循环（已停用：改用 startSingleShotDetection 单张流程） */
-    public void startDetectionLoop() {
-        if (!AppState.getInstance().isBleConnected) {
-            toast("请先等待蓝牙连接眼镜");
+    /** 万用表分流：把最新照片路径发给 UI 层做云端读数识别 */
+    private void dispatchMeterRecognition() {
+        File latest = findLatestPhoto();
+        if (latest == null) {
+            postLog("⚠️ 万用表识别：未找到照片");
             return;
         }
-        mDetectLoopActive = true;
-        mSyncActive = false;
-        postLog("🚀 连拍检测循环已开启");
-        takePhoto();
-        mMainHandler.removeCallbacks(mDetectFallbackRunnable);
-        mMainHandler.postDelayed(mDetectFallbackRunnable, DETECT_EVENT_TIMEOUT_MS);
-    }
-
-    /** 单张检测：拍照 → 等待 4s（不依赖拍照事件）→ 强制同步 → YOLO → 预览 */
-    public void startSingleShotDetection() {
-        Log.i("GlassLog", "📷 [SVC] startSingleShotDetection 进入: bleConnected="
-                + AppState.getInstance().isBleConnected
-                + " syncActive=" + mSyncActive
-                + " singleActive=" + mSingleShotActive
-                + " systemReady=" + AppState.getInstance().isSystemReady);
-        if (!AppState.getInstance().isBleConnected) {
-            Log.i("GlassLog", "📷 [SVC] 拒绝: 蓝牙未连接");
-            toast("请先等待蓝牙连接眼镜");
-            return;
-        }
-        if (mSyncActive) {
-            Log.i("GlassLog", "📷 [SVC] 拒绝: 上一张同步仍在进行（已持续 "
-                    + (System.currentTimeMillis() - mSyncStartMs) + "ms）");
-            toast("上一张还在同步中，请稍候");
-            return;
-        }
-        mSingleShotActive = true;
-        mAutoRecognize = false; // 不走旧自动识别链路，由单张流程接管
-        postLog("📷 单张检测：拍照...");
-        takePhoto();
-        // 4 秒后走原有「同步到手机」管线（照片导入模式 → WiFi连接 → 拉取 → 检测）
-        mMainHandler.postDelayed(() -> {
-            if (!mSingleShotActive) return;
-            postLog("📷 单张检测：走原有同步管线");
-            startPhotoSync();
-        }, 4000);
-    }
-
-    // ===== 眼镜 AP 回传（cs_opap 让眼镜开热点，手机 STA 连入：官方链路，手机侧无厂商限制） =====
-
-    private boolean mGlassesApTransferActive = false;
-    private int mApScanRound = 0;
-    private static final int AP_SCAN_ROUNDS = 30; // ×2s = 60s 发现窗口
-
-    private void startGlassesApTransfer() {
-        initCmdSender();
-        mSyncActive = true;
-        mSyncStartMs = System.currentTimeMillis();
-        mMainHandler.removeCallbacks(mSyncTimeoutRunnable);
-        mMainHandler.postDelayed(mSyncTimeoutRunnable, HOTSPOT_SYNC_TIMEOUT_MS);
-        mWifiTransferActive = true;
-        mGlassesApTransferActive = true;
-        postLog("📡 [眼镜AP] 请求眼镜开启热点（cs_opap）...");
-        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -2, "眼镜AP：请求开启热点..."));
-        mCmdSender.requestServerOpenHotspot();
-        mMainHandler.postDelayed(() -> {
-            if (mGlassesApTransferActive && mCmdSender != null) {
-                postLog("📤 [眼镜AP] cs_opap 重发");
-                mCmdSender.requestServerOpenHotspot();
-            }
-        }, 3000);
-        mApScanRound = 0;
-        pollScanForGlassesAp();
-    }
-
-    /** 轮询 WiFi 扫描结果，等待眼镜 AP 出现 */
-    private void pollScanForGlassesAp() {
-        if (!mGlassesApTransferActive) return;
-        mApScanRound++;
-        if (mApScanRound > AP_SCAN_ROUNDS) {
-            postLog("⚠️ [眼镜AP] 60s 未发现眼镜热点，回退 BLE 直传");
-            mGlassesApTransferActive = false;
-            startBleTransfer();
-            return;
-        }
-        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if (wm == null || !wm.isWifiEnabled()) {
-            postLog("⚠️ [眼镜AP] 手机 WiFi 未开启，无法发现眼镜热点，回退 BLE 直传");
-            mGlassesApTransferActive = false;
-            startBleTransfer();
-            return;
-        }
-        try {
-            if (Build.VERSION.SDK_INT < 28) wm.startScan();
-        } catch (Exception ignored) {}
-        String target = computeGlassesWifiSsid();
-        for (android.net.wifi.ScanResult r : wm.getScanResults()) {
-            if (target.equals(r.SSID)) {
-                boolean open = r.capabilities == null || !r.capabilities.contains("WPA")
-                        && !r.capabilities.contains("WEP");
-                postLog("🎯 [眼镜AP] 发现热点: " + target + (open ? "（开放）" : "（加密）"));
-                connectGlassesAp(target, open);
-                return;
-            }
-        }
-        if (mApScanRound % 5 == 0) {
-            postLog("🔍 [眼镜AP] 第" + mApScanRound + "轮扫描，目标 SSID=" + target);
-        }
-        mMainHandler.postDelayed(this::pollScanForGlassesAp, 2000);
-    }
-
-    /** 连接眼镜 AP（密码：SharedPreferences gap_pwd，默认空=开放网络） */
-    private void connectGlassesAp(String ssid, boolean open) {
-        String pwd = open ? "" : getSharedPreferences("debug", MODE_PRIVATE)
-                .getString("gap_pwd", "");
-        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -2, "眼镜AP：连接中 " + ssid));
-        com.xy.ksdk.api.wifi.WifiConnector.getInstance().init(getApplicationContext(),
-                new com.xy.ksdk.api.wifi.WifiConnector.WifiListener() {
-                    @Override
-                    public void onWifiConnectResult(long code, boolean ok) {
-                        mMainHandler.post(() -> {
-                            if (!mGlassesApTransferActive) return;
-                            if (ok) {
-                                postLog("✅ [眼镜AP] 已连接: " + ssid + "，等待 DHCP 后扫描网段");
-                                EventBus.getDefault().post(new EventMsg(
-                                        EventMsg.MSG_TRANSFER_PROGRESS, -2, "眼镜AP：已连接，查找眼镜..."));
-                                mMainHandler.postDelayed(() -> {
-                                    if (!mGlassesApTransferActive) return;
-                                    String ip = scanSubnetForGlasses();
-                                    if (ip != null) {
-                                        postLog("🎯 [眼镜AP] 发现眼镜: " + ip);
-                                        mGlassesApTransferActive = false;
-                                        onGlassesIpObtained(ip);
-                                    } else {
-                                        postLog("🔍 [眼镜AP] 网段未发现眼镜，继续扫描...");
-                                        mMainHandler.postDelayed(() -> {
-                                            if (!mGlassesApTransferActive) return;
-                                            String ip2 = scanSubnetForGlasses();
-                                            if (ip2 != null) {
-                                                mGlassesApTransferActive = false;
-                                                onGlassesIpObtained(ip2);
-                                            } else {
-                                                postLog("⚠️ [眼镜AP] 网段持续未发现眼镜，回退 BLE 直传");
-                                                mGlassesApTransferActive = false;
-                                                startBleTransfer();
-                                            }
-                                        }, 3000);
-                                    }
-                                }, 2000);
-                            } else {
-                                postLog("⚠️ [眼镜AP] 连接失败 code=" + code + "，回退 BLE 直传");
-                                mGlassesApTransferActive = false;
-                                startBleTransfer();
-                            }
-                        });
-                    }
-
-                    @Override
-                    public void onWifiConnectTimeout() {
-                        mMainHandler.post(() -> {
-                            if (!mGlassesApTransferActive) return;
-                            postLog("⚠️ [眼镜AP] 连接超时，回退 BLE 直传");
-                            mGlassesApTransferActive = false;
-                            startBleTransfer();
-                        });
-                    }
-                });
-        WifiConnectorHolder.connect(ssid, pwd);
-    }
-
-    /** WifiConnector 连接静态转发（避免匿名类捕获this的线程问题） */
-    private static final class WifiConnectorHolder {
-        static void connect(String ssid, String pwd) {
-            com.xy.ksdk.api.wifi.WifiConnector.getInstance().connect(ssid, pwd);
-        }
+        postLog("� 万用表读数识别: " + latest.getName());
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_METER_RECOGNIZE, latest.getAbsolutePath()));
     }
 
     // ===== BLE 直传（ksdk 文件协议：cs_asfl 请求 → FileMessage 分块 → cs_flts 确认） =====
@@ -1876,69 +1715,31 @@ public class GlassBleService extends Service {
         startHotspotTransfer();
     };
 
-    /** BLE 文件接收完成：复位单张流程并走 YOLO 检测（与 WiFi 链路收尾解耦） */
+    /** BLE 文件接收完成：按当前分流模式识别（与 WiFi 链路收尾解耦） */
     private void onBleFileReceived(File file) {
         mBleTransferActive = false;
         mMainHandler.removeCallbacks(mBleTransferTimeoutRunnable);
         EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
-        if (mSingleShotActive) {
-            mSingleShotActive = false;
-            mSyncActive = false;
-            postLog("📷 [BLE直传] 收到照片，开始检测: " + file.getName());
-            detectLatestPhotoWithYolo();
+        int mode = mCaptureMode;
+        mCaptureMode = CAPTURE_MODE_MANUAL;
+        if (mode == CAPTURE_MODE_MANUAL) return;
+        mSyncActive = false;
+        postLog("📷 [BLE直传] 收到照片: " + file.getName() + "（" + modeName(mode) + "）");
+        switch (mode) {
+            case CAPTURE_MODE_QR:
+                recognizeLatestPhoto();
+                break;
+            case CAPTURE_MODE_METER:
+                dispatchMeterRecognition();
+                break;
+            case CAPTURE_MODE_PLAIN:
+                postLog("📷 照片已存入原图库（未做识别）");
+                break;
+            case CAPTURE_MODE_YOLO:
+            default:
+                detectLatestPhotoWithYolo();
+                break;
         }
-    }
-
-    // ===== 外部 AP 回传（手机与眼镜同连一台普通路由器：普通 WiFi STA 不受 MIUI P2P/热点限制，最稳定） =====
-
-    /** 外部 AP 配置是否可用：APP 内已配置 SSID/密码，且手机当前正连着这个 WiFi */
-    private boolean isExternalApReady() {
-        String ssid = extApSsid();
-        String pwd = getSharedPreferences("debug", MODE_PRIVATE).getString("ext_ap_pwd", "");
-        if (ssid == null || ssid.isEmpty() || pwd == null || pwd.isEmpty()) return false;
-        String current = currentWifiSsid();
-        return current != null && current.equals(ssid);
-    }
-
-    private String extApSsid() {
-        return getSharedPreferences("debug", MODE_PRIVATE).getString("ext_ap_ssid", "");
-    }
-
-    /** 当前连接的 WiFi SSID（去引号；取不到返回 null） */
-    private String currentWifiSsid() {
-        try {
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wm == null || !wm.isWifiEnabled()) return null;
-            @SuppressWarnings("deprecation")
-            String raw = wm.getConnectionInfo().getSSID();
-            if (raw == null || raw.contains("unknown ssid")) return null;
-            return raw.replace("\"", "").trim();
-        } catch (Throwable e) {
-            return null;
-        }
-    }
-
-    /** 外部 AP 回传：BLE 配网让眼镜 STA 连入同一台路由器 → 网段发现 → 复用拉取/检测链路 */
-    private void startExternalApTransfer() {
-        mSyncActive = true;
-        mSyncStartMs = System.currentTimeMillis();
-        mMainHandler.removeCallbacks(mSyncTimeoutRunnable);
-        mMainHandler.postDelayed(mSyncTimeoutRunnable, HOTSPOT_SYNC_TIMEOUT_MS);
-        mWifiTransferActive = true;   // 抑制 P2P 扫描，避免框架竞争
-        mHotspotTransferActive = true; // 复用轮询与收尾逻辑
-        String ssid = extApSsid();
-        String pwd = getSharedPreferences("debug", MODE_PRIVATE).getString("ext_ap_pwd", "");
-        postLog("📡 [外部AP] 配网眼镜接入 SSID=" + ssid + "（手机已在网内）");
-        initCmdSender();
-        mCmdSender.sendWifiSTA(ssid, pwd);
-        mMainHandler.postDelayed(() -> {
-            if (mHotspotTransferActive && mCmdSender != null) {
-                Log.i("GlassLog", "📤 [KSDK] [外部AP] 配网命令重发");
-                mCmdSender.sendWifiSTA(ssid, pwd);
-            }
-        }, 3000);
-        mHotspotScanRound = 0;
-        pollArpForGlasses();
     }
 
     // ===== 热点配网回传（LocalOnlyHotspot + BLE 配网 + ARP 发现，绕开 P2P 封锁） =====
@@ -2006,6 +1807,7 @@ public class GlassBleService extends Service {
         try {
             wm.startLocalOnlyHotspot(new WifiManager.LocalOnlyHotspotCallback() {
                 @Override
+                @SuppressWarnings("deprecation")
                 public void onStarted(WifiManager.LocalOnlyHotspotReservation reservation) {
                     mHotspotReservation = reservation;
                     try {
@@ -2151,33 +1953,11 @@ public class GlassBleService extends Service {
     /** 关闭热点并释放 reservation */
     private void stopHotspot() {
         if (mHotspotReservation != null) {
-            try { mHotspotReservation.close(); } catch (Exception ignored) {}
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try { mHotspotReservation.close(); } catch (Exception ignored) {}
+            }
             mHotspotReservation = null;
         }
-    }
-
-    public boolean isSingleShotActive() {
-        return mSingleShotActive;
-    }
-
-    /** 停止连拍检测循环 */
-    public void stopDetectionLoop() {
-        if (!mDetectLoopActive) return;
-        mDetectLoopActive = false;
-        mMainHandler.removeCallbacks(mDetectNextRoundRunnable);
-        mMainHandler.removeCallbacks(mDetectFallbackRunnable);
-        mDetectNextScheduled = false;
-        postLog("⏹️ 连拍检测循环已停止");
-    }
-
-    public boolean isDetectionLoopActive() {
-        return mDetectLoopActive;
-    }
-
-    private void scheduleNextDetectRound() {
-        if (!mDetectLoopActive || mDetectNextScheduled) return;
-        mDetectNextScheduled = true;
-        mMainHandler.postDelayed(mDetectNextRoundRunnable, DETECT_LOOP_INTERVAL_MS);
     }
 
     /** 对最新同步照片跑 YOLO 检测，结果（含预览图）通过 MSG_DETECT_RESULT 事件发往 UI */
@@ -2185,8 +1965,16 @@ public class GlassBleService extends Service {
         new Thread(() -> {
             try {
                 if (!YoloDetectorHolder.isReady()) {
-                    postLog("⚠️ YOLO 引擎未就绪（模型加载失败）");
-                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("模型加载失败")));
+                    // 懒加载引擎：首次调用时加载模型；失败则上报具体原因
+                    YoloDetectorHolder.get(getApplicationContext());
+                }
+                if (!YoloDetectorHolder.isReady()) {
+                    String reason = YoloDetectorHolder.getInitError();
+                    String msg = (reason != null && !reason.isEmpty())
+                            ? ("模型加载失败：" + reason)
+                            : "模型加载失败";
+                    postLog("⚠️ YOLO 引擎未就绪（" + msg + "）");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult(msg)));
                     return;
                 }
                 File latest = findLatestPhoto();
@@ -2232,7 +2020,7 @@ public class GlassBleService extends Service {
         }
     }
 
-    /** 收到拍照事件（type=1）后自动触发同步识别，带防抖和冷却期避免同步流程触发的事件导致死循环 */
+    /** 收到拍照事件（type=1）后自动触发同步（按拍照分流模式），带防抖和冷却期避免同步流程触发的事件导致死循环 */
     private void onPhotoCaptured(int seq) {
         // 序号为 0 表示模式切换（进入/退出导入模式），并非真实拍照，直接忽略
         if (seq == 0) {
@@ -2244,9 +2032,13 @@ public class GlassBleService extends Service {
             return;
         }
         postLog("📸 检测到拍照事件（照片序号=" + seq + "）");
-        if (mAutoRecognize) {
-            postLog("ℹ️ 正在自动同步中，忽略本次拍照事件");
+        if (mSyncActive) {
+            postLog("ℹ️ 正在同步中，忽略本次拍照事件");
             return;
+        }
+        // 非语音分流拍照（如眼镜按键）：仅自动导入原图库，不做识别
+        if (mCaptureMode == CAPTURE_MODE_MANUAL) {
+            mCaptureMode = CAPTURE_MODE_PLAIN;
         }
         mMainHandler.removeCallbacks(mAutoSyncRunnable);
         mMainHandler.postDelayed(mAutoSyncRunnable, 800);

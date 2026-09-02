@@ -18,6 +18,7 @@ public class EventMsg {
     public static final int MSG_BATTERY_UPDATE = 107;       // 眼镜电量更新（arg1=电量0-100，arg2=1表示充电中）
     public static final int MSG_DETECT_RESULT = 108;        // YOLO 检测结果（arg1=目标数，-1=失败；obj=List<YoloDetector.Detection>）
     public static final int MSG_TRANSFER_PROGRESS = 109;    // 回传进度（arg1=0-100 百分比，-1=结束隐藏；obj=描述文本）
+    public static final int MSG_METER_RECOGNIZE = 110;      // 请求万用表读数识别（obj=照片文件路径）
 
     public EventMsg(int what, int arg1, int arg2) {
         this.what = what;

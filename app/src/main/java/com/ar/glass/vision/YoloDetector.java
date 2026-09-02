@@ -128,11 +128,32 @@ public final class YoloDetector {
         sInstance = null;
     }
 
-    /** 把 assets 里的模型复制到 filesDir（ONNX Runtime 需要文件路径或字节数组，这里用字节数组亦可，但缓存便于复用） */
+    /** 把 assets 里的模型复制到 filesDir（ONNX Runtime 需要文件路径或字节数组，但缓存便于复用） */
     private File ensureModelFile(Context context) {
         try {
             File out = new File(context.getFilesDir(), CACHED_MODEL);
-            if (out.exists() && out.length() > 0) return out;
+            // 校验缓存完整性：缓存大小与 assets 中模型不一致（如旧版/损坏/拷贝中断）时重新拷贝
+            long assetLen = -1;
+            try {
+                android.content.res.AssetFileDescriptor afd = context.getAssets().openFd(MODEL_ASSET);
+                assetLen = afd.getLength();
+                afd.close();
+            } catch (Exception ignored) {
+                // 部分 aapt 压缩资源 openFd 会失败，退化为流式读取长度
+                try (InputStream is = context.getAssets().open(MODEL_ASSET)) {
+                    assetLen = 0;
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = is.read(buf)) > 0) assetLen += n;
+                } catch (Exception ignored2) {}
+            }
+            if (out.exists() && out.length() > 0 && (assetLen <= 0 || out.length() == assetLen)) {
+                return out;
+            }
+            if (out.exists()) {
+                Log.w(TAG, "cached model invalid (cached=" + out.length() + " asset=" + assetLen + ")，重新拷贝");
+                out.delete();
+            }
             InputStream is = context.getAssets().open(MODEL_ASSET);
             FileOutputStream fos = new FileOutputStream(out);
             byte[] buf = new byte[8192];

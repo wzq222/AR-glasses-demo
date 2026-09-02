@@ -86,7 +86,7 @@
             android:id="@+id/btnRecognize"
             android:layout_width="wrap_content"
             android:layout_height="40dp"
-            android:text="识别二维码"
+            android:text="🔍 检测"
             android:textSize="13sp"
             android:backgroundTint="#446600"
             android:textColor="@android:color/white"

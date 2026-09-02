@@ -1,6 +1,7 @@
 package com.ar.glass.vision;
 
 import android.content.Context;
+import android.util.Log;
 
 /**
  * YoloDetector 懒加载持有器：首次检测时才加载模型（约 1~3s），
@@ -8,8 +9,11 @@ import android.content.Context;
  */
 public final class YoloDetectorHolder {
 
+    private static final String TAG = "YoloDetectorHolder";
+
     private static volatile YoloDetector sDetector;
     private static volatile boolean sInitFailed = false;
+    private static volatile String sInitError;
     /** 引擎加载前的预存置信度阈值（UI 滑条先于首次检测时使用） */
     private static volatile float sPendingConf = 0.25f;
 
@@ -24,11 +28,15 @@ public final class YoloDetectorHolder {
                         sDetector = YoloDetector.get(context.getApplicationContext());
                         if (sDetector != null && sDetector.isReady()) {
                             sDetector.setConfThreshold(sPendingConf);
+                            sInitError = null;
                         } else {
                             sInitFailed = true;
+                            sInitError = "ONNX 会话创建失败（详见 logcat YoloDetector）";
                         }
                     } catch (Throwable e) {
                         sInitFailed = true;
+                        sInitError = e.getClass().getSimpleName() + ": " + e.getMessage();
+                        Log.e(TAG, "YoloDetector init failed", e);
                     }
                 }
             }
@@ -40,6 +48,19 @@ public final class YoloDetectorHolder {
     public static boolean isReady() {
         YoloDetector d = sDetector;
         return d != null && d.isReady();
+    }
+
+    /** 首次加载失败的原因（用于界面提示；成功或未尝试过返回 null） */
+    public static String getInitError() {
+        return sInitError;
+    }
+
+    /** 允许下一次 get() 重试加载（如清理缓存后） */
+    public static void reset() {
+        synchronized (YoloDetectorHolder.class) {
+            sInitFailed = false;
+            sInitError = null;
+        }
     }
 
     /** 设置置信度阈值：引擎未加载时先暂存，加载后自动应用 */
