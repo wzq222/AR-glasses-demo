@@ -16,6 +16,11 @@ public class AppState {
     public boolean isSystemReady = false;
     public boolean isSocketConnected = false;
 
+    /** 眼镜电量（0-100），-1 表示未知 */
+    public int batteryLevel = -1;
+    /** 眼镜是否充电中 */
+    public boolean isCharging = false;
+
     public String bleAddress;
     public String bleName;
 

@@ -24,9 +24,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
-import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Binder;
@@ -45,10 +48,15 @@ import androidx.core.content.ContextCompat;
 import com.ar.glass.R;
 import com.ar.glass.ui.MainActivity;
 import com.ar.glass.util.EventMsg;
+import com.ar.glass.vision.DetectResult;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
+import com.ar.glass.vision.Vision;
+import com.ar.glass.vision.YoloDetector;
 
 import org.greenrobot.eventbus.EventBus;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -63,6 +71,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.lang.reflect.Method;
 
 /**
  * 眼镜蓝牙服务 - CY01 原生 BLE 版本
@@ -108,6 +117,7 @@ public class GlassBleService extends Service {
     private static final int ACTION_GLASSES_BATTERY = 66;
     private static final int ACTION_DEVICE_INFO = 67;
     private static final int ACTION_DEVICE_HEART_BEAT = 69;
+    private static final int ACTION_CAMERA_STATUS = 74;
     private static final int ACTION_DEVICE_WEAR = 70;
     private static final int ACTION_DEVICE_WEAR_SUPPORT = 71;
     private static final int ACTION_DEVICE_DATA_REPORTING = 115;
@@ -136,6 +146,10 @@ public class GlassBleService extends Service {
     private static final long CONNECT_TIMEOUT_MS = 15000;
     private static final long INITIAL_RECONNECT_DELAY_MS = 3000;
     private static final long MAX_RECONNECT_DELAY_MS = 15000;
+    /** 自动同步结束后的冷却期，避免退出导入模式触发的 type=1 上报导致死循环 */
+    private static final long AUTO_SYNC_COOLDOWN_MS = 2000;
+    /** 单次 BLE 扫描持续时长，超时后自动重启，形成不停扫描的循环 */
+    private static final long SCAN_DURATION_MS = 8000;
 
     private final IBinder mBinder = new LocalBinder();
 
@@ -180,7 +194,16 @@ public class GlassBleService extends Service {
     private BluetoothGattCharacteristic mSerialNotifyChar;
 
     // 串口写队列（BLE GATT 同一时刻只允许一个未完成写操作，需串行发送）
-    private final LinkedList<byte[]> mSerialWriteQueue = new LinkedList<>();
+    // ===== 串口写队列：双优先级队列 + 栈式去重（实时性优先） =====
+    // urgent：控制命令（拍照/心跳/配网/电量等），永远优先于 bulk 发送
+    // bulk  ：KSDK 数据帧（文件确认/状态上报等），同命令覆盖旧帧、超限丢最旧
+    private final java.util.ArrayDeque<byte[]> mUrgentWriteQueue = new java.util.ArrayDeque<>();
+    private final java.util.ArrayDeque<byte[]> mBulkWriteQueue = new java.util.ArrayDeque<>();
+    /** bulk 帧入队时间戳（与 mBulkWriteQueue 同步），用于过期清理 */
+    private final java.util.ArrayDeque<Long> mBulkEnqueueTimes = new java.util.ArrayDeque<>();
+    private static final int MAX_BULK_QUEUE = 24;
+    /** bulk 指令最大等待时间：超过即视为过期丢弃（防指令风暴堆积） */
+    private static final long BULK_EXPIRE_MS = 15000;
     private volatile boolean mSerialWriting = false;
 
     // WiFi Direct (P2P) 连接（CY01 照片同步走 P2P + HTTP，而非普通 WiFi 热点）
@@ -193,7 +216,25 @@ public class GlassBleService extends Service {
     // 眼镜上报的照片列表（用于选择性导入）
     private final List<String> mPhotoList = new ArrayList<>();
 
+    // ===== 拍照分流模式：决定同步完成后照片交给哪个识别链路 =====
+    /** 手动同步（UI 按钮）：弹照片勾选框，由用户选择导入 */
+    public static final int CAPTURE_MODE_MANUAL = 0;
+    /** 普通拍照（语音“拍照”/眼镜按键）：自动导入原图库，不做任何识别 */
+    public static final int CAPTURE_MODE_PLAIN = 1;
+    /** 二维码拍照（语音“二维码拍照”）：导入后识别最新照片二维码 */
+    public static final int CAPTURE_MODE_QR = 2;
+    /** 对齐拍照（语音“对齐拍照”）：导入后对最新照片做 YOLO 检测 */
+    public static final int CAPTURE_MODE_YOLO = 3;
+    /** 万用表拍照（语音“万用表拍照”）：导入后对最新照片做读数识别 */
+    public static final int CAPTURE_MODE_METER = 4;
+
+    private volatile int mCaptureMode = CAPTURE_MODE_MANUAL;
+    private long mAutoSyncCooldownUntil = 0;
+
+    // 拍照自动识别 mAutoSyncRunnable 声明于 mMainHandler 之后
+
     // 周期重扫 P2P（眼镜可能在首次扫描后才开启 P2P，这里持续扫描直到连上）
+    // 注意：此处不能用 lambda，因为 run() 内需要 postDelayed 调度自身，匿名类才能引用 this
     private final Runnable mRediscoverP2pRunnable = new Runnable() {
         @Override
         public void run() {
@@ -212,6 +253,9 @@ public class GlassBleService extends Service {
     private ScanCallback mNativeScanCallback;
     private boolean mNativeScanning = false;
 
+    /** 当前 BLE 连接的设备（用于连接后触发经典蓝牙配对，让眼镜音频通道 A2DP/SCO 可用） */
+    private BluetoothDevice mBleDevice;
+
     private final Handler mMainHandler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(@NonNull Message msg) {
@@ -223,13 +267,16 @@ public class GlassBleService extends Service {
                 case MSG_SEND_HEARTBEAT:
                     if (AppState.getInstance().isBleConnected) {
                         writeSerial(ACTION_DEVICE_HEART_BEAT, new byte[]{4, 1});
+                        writeSerial(ACTION_GLASSES_BATTERY, new byte[]{0, 0}); // 周期查询电量，实时刷新
                     }
                     mMainHandler.sendEmptyMessageDelayed(MSG_SEND_HEARTBEAT, HEARTBEAT_SEND_INTERVAL);
                     break;
                 case MSG_RESTART_SCAN:
                     if (!AppState.getInstance().isBleConnected && !mConnecting) {
                         Log.d(TAG, "Restarting BLE scan...");
-                        startNativeScan();
+                        boolean scanOk = startNativeScan();
+                        // 持续扫描：扫描成功则到点自动重启，失败（如蓝牙未开）则短延迟重试，直到连接成功
+                        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, scanOk ? SCAN_DURATION_MS : 2000);
                     }
                     break;
                 case MSG_CONNECT_TIMEOUT:
@@ -248,6 +295,75 @@ public class GlassBleService extends Service {
         }
     };
 
+    // ===== 照片同步流程状态 =====
+    /** 同步流程进行中标志（防止拍照事件与兜底同时触发重复同步） */
+    private volatile boolean mSyncActive = false;
+    /** 本轮同步开始时刻（用于卡死判定） */
+    private volatile long mSyncStartMs = 0;
+
+    /** 收到拍照事件（type=1）后 800ms 自动触发同步（按当前拍照分流模式导入/识别） */
+    private final Runnable mAutoSyncRunnable = () -> {
+        if (!AppState.getInstance().isBleConnected) {
+            postLog("⚠️ 蓝牙未连接，跳过自动同步");
+            return;
+        }
+        postLog("🔄 自动同步最新照片...");
+        startPhotoSync();
+    };
+
+    /** 当前回传使用的模式（p2p/ap/thumb），用于超时降级与成功记忆 */
+    private String mActiveBackhaul = "p2p";
+
+    private final Runnable mSyncTimeoutRunnable = () -> {
+        if (!mSyncActive) return;
+        // P2P/热点超时 → 自动降级缩略图直拉（BLE，硬件兼容性最好），只降级一次
+        if ("thumb".equals(mActiveBackhaul)) {
+            postLog("⚠️ 照片同步超时（请确认手机 WiFi 已开启）");
+            finishSync(0);
+            return;
+        }
+        postLog("⚠️ " + mActiveBackhaul + " 回传超时，自动降级为缩略图直拉（BLE）...");
+        mActiveBackhaul = "thumb";
+        startThumbTransfer();
+    };
+
+    /** WiFi 回传进行中（热点/外部AP）：抑制 P2P 扫描重试，避免框架竞争 */
+    private volatile boolean mWifiTransferActive = false;
+
+    // ===== 检测循环/单张检测状态（yolo-fastener 合并恢复） =====
+    private volatile boolean mDetectLoopActive = false;
+    /** 最近一次 P2P 扫描发现的设备（网络诊断用） */
+    private volatile Collection<WifiP2pDevice> mLastP2pDevices;
+    private volatile boolean mSingleShotActive = false;
+    private volatile boolean mDetectNextScheduled = false;
+    private static final long DETECT_LOOP_INTERVAL_MS = 2600;
+    /** 实时性优先：同步超过该时长后新请求可抢占 */
+    private static final long SYNC_PREEMPT_MS = 12000;
+    /** 单槽 pending 请求（-1 无）：新请求覆盖旧挂起，同步结束后自动执行最新 */
+    private volatile int mPendingCaptureMode = -1;
+    private final Runnable mDetectFallbackRunnable = new Runnable() {
+        @Override
+        public void run() {
+            // 拍照事件超时未到 → 主动触发一次同步兜底
+            if (mDetectLoopActive && !mSyncActive) {
+                postLog("⏱️ 拍照事件超时，兜底触发同步");
+                startPhotoSync();
+            }
+        }
+    };
+    private final Runnable mDetectNextRoundRunnable = () -> {
+        if (!mDetectLoopActive) return;
+        takePhoto();
+    };
+
+    /** P2P 扫描失败重试（reason=0 多为框架忙，退避后重扫） */
+    private final Runnable mP2pScanRetryRunnable = () -> {
+        if (!mSyncActive) return;
+        if (mWifiTransferActive) return; // 热点/外部AP 回传期间不再重试 P2P
+        postLog("🔁 重试 P2P 扫描...");
+        startWifiP2p();
+    };
+
     private final BluetoothGattCallback mGattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
@@ -259,28 +375,29 @@ public class GlassBleService extends Service {
                 AppState.getInstance().isBleConnected = true;
                 lastHeartbeatTime = System.currentTimeMillis();
                 mReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+                // 持久化最近连接的眼镜，供调试命令 connect 直连使用
+                getSharedPreferences("debug", MODE_PRIVATE).edit()
+                        .putString("last_ble_name", AppState.getInstance().bleName)
+                        .putString("last_ble_addr", AppState.getInstance().bleAddress)
+                        .apply();
                 mMainHandler.removeMessages(MSG_CONNECT_TIMEOUT);
                 mMainHandler.removeMessages(MSG_RESTART_SCAN);
                 stopNativeScan();
                 updateNotification("已连接: " + AppState.getInstance().bleName);
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_CONNECT_STATE, 1));
                 postLog("✅ BLE已连接，稍后开始发现服务...");
+                // 连接成功后自动触发经典蓝牙配对，让眼镜音频通道（A2DP 播报 / SCO 录音）可用
+                triggerClassicBond();
                 // 参照官方：连接成功后稍作延迟再发现服务，避免过早操作导致连接不稳
-                mMainHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mBluetoothGatt != null && AppState.getInstance().isBleConnected) {
-                            if (!mBluetoothGatt.discoverServices()) {
-                                postLog("⚠️ discoverServices 返回 false，重试一次");
-                                mMainHandler.postDelayed(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        if (mBluetoothGatt != null) {
-                                            mBluetoothGatt.discoverServices();
-                                        }
-                                    }
-                                }, 1000);
-                            }
+                mMainHandler.postDelayed(() -> {
+                    if (mBluetoothGatt != null && AppState.getInstance().isBleConnected) {
+                        if (!mBluetoothGatt.discoverServices()) {
+                            postLog("⚠️ discoverServices 返回 false，重试一次");
+                            mMainHandler.postDelayed(() -> {
+                                if (mBluetoothGatt != null) {
+                                    mBluetoothGatt.discoverServices();
+                                }
+                            }, 1000);
                         }
                     }
                 }, 500);
@@ -336,12 +453,7 @@ public class GlassBleService extends Service {
                     postLog("✅ 串口数据通道通知已开启");
                     if (!mInitCommandsSent) {
                         mInitCommandsSent = true;
-                        mMainHandler.postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
-                                sendInitCommands();
-                            }
-                        }, 300);
+                        mMainHandler.postDelayed(GlassBleService.this::sendInitCommands, 300);
                     }
                 } else {
                     postLog("⚠️ 串口通知订阅失败 status=" + status);
@@ -353,6 +465,7 @@ public class GlassBleService extends Service {
         }
 
         @Override
+        @SuppressWarnings("deprecation")
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             onBleDataReceived(characteristic.getUuid(), characteristic.getValue());
         }
@@ -363,10 +476,82 @@ public class GlassBleService extends Service {
         }
     };
 
+    // ========== ADB 调试桥（GlassDebugReceiver → 静态入口） ==========
+
+    private static volatile GlassBleService sDebugInstance;
+
+    /** 调试用：暴露当前服务实例（未启动返回 null） */
+    public static GlassBleService debugInstance() { return sDebugInstance; }
+
+    /** 调试用：透传原始字节到 BLE 串口写队列（KSDK JSON 帧已是完整帧，直接入队） */
+    public static void debugWriteRaw(byte[] data) {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return;
+        s.enqueueWrite(data, false);
+        s.processSerialWriteQueue();
+    }
+
+    /** 调试用：触发拍照（含先开相机） */
+    public static void debugTakePhoto() {
+        GlassBleService s = sDebugInstance;
+        if (s != null) s.takePhoto();
+    }
+
+    /** 调试用：触发照片同步（P2P / 已连接直拉） */
+    public static void debugStartSync() {
+        GlassBleService s = sDebugInstance;
+        if (s != null) s.startPhotoSync();
+    }
+
+    /** 调试用：关闭热点 */
+    public static void debugStopHotspot() {
+        GlassBleService s = sDebugInstance;
+        if (s != null) s.stopHotspot();
+    }
+
+    /** 调试用：拍照后经 BLE 直传拉取照片（走 YOLO 检测分流） */
+    public static void debugBleGet() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return;
+        s.mCaptureMode = CAPTURE_MODE_YOLO;
+        s.takePhoto();
+        s.mMainHandler.postDelayed(() -> {
+            if (s.mCaptureMode != CAPTURE_MODE_YOLO) return;
+            s.postLog("🛠 [BLE直传] 请求推送照片...");
+            s.startBleTransfer();
+        }, 4000);
+    }
+
+    /** 调试用：请求眼镜文件列表（cs_sdfl） */
+    public static void debugBleList() {
+        GlassBleService s = sDebugInstance;
+        if (s != null) {
+            s.initBleTransport();
+            s.mBleTransport.requestFileList();
+        }
+    }
+
+    /** 调试用：BLE 文件接收进度 */
+    public static String debugBleProgress() {
+        GlassBleService s = sDebugInstance;
+        return s == null || s.mBleTransport == null ? "服务未就绪" : s.mBleTransport.progress();
+    }
+
+    /** 调试用：手动注入眼镜 IP（模拟器/无蓝牙场景），并触发照片列表拉取 */
+    public static void debugSetGlassesIp(String ip) {
+        GlassBleService s = sDebugInstance;
+        if (s != null) {
+            s.onGlassesIpObtained(ip);
+        } else {
+            Log.w("GlassDebug", "setip: 服务未就绪");
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
         Log.d(TAG, "GlassBleService onCreate");
+        sDebugInstance = this;
 
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("正在搜索AR眼镜..."));
@@ -374,11 +559,12 @@ public class GlassBleService extends Service {
         AppState.getInstance().isBleConnected = false;
         AppState.getInstance().isSystemReady = false;
 
-        collectBondedDevices();
         logScanDiagnostics();
         boolean scanOk = startNativeScan();
         postLog(scanOk ? "🔍 开始扫描BLE设备..." : "⚠️ 扫描启动失败！");
         postLog("💡 发现眼镜后，请点击「选择眼镜」进行连接");
+        // 启动持续扫描循环：不管初始扫描成败，都周期性地重扫，直到连接成功
+        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, SCAN_DURATION_MS);
 
         mMainHandler.sendEmptyMessageDelayed(MSG_CHECK_HEARTBEAT, 10000);
     }
@@ -386,6 +572,7 @@ public class GlassBleService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        sDebugInstance = null;
         mMainHandler.removeCallbacksAndMessages(null);
         stopNativeScan();
         cleanupWifiP2p();
@@ -498,8 +685,13 @@ public class GlassBleService extends Service {
                     @Override
                     public void onScanFailed(int errorCode) {
                         Log.e(TAG, "Native scan failed: " + errorCode);
-                        postLog("⚠️ 原生扫描失败: errorCode=" + errorCode);
                         mNativeScanning = false;
+                        if (errorCode == ScanCallback.SCAN_FAILED_ALREADY_STARTED) {
+                            return; // 已在扫描中，忽略
+                        }
+                        postLog("⚠️ 原生扫描失败: errorCode=" + errorCode);
+                        // 扫描失败后持续重试，不停止扫描
+                        mMainHandler.sendEmptyMessageDelayed(MSG_RESTART_SCAN, 2000);
                     }
                 };
             }
@@ -562,26 +754,34 @@ public class GlassBleService extends Service {
         }
     }
 
-    private void collectBondedDevices() {
+    /** 获取系统历史配对过的眼镜列表（已配对，含当前未开机的设备） */
+    public List<DeviceInfo> getPairedDevices() {
+        List<DeviceInfo> result = new ArrayList<>();
         try {
             BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
             BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
             if (adapter == null || !adapter.isEnabled()) {
-                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TOAST, "请先打开手机蓝牙"));
-                return;
+                return result;
             }
             for (BluetoothDevice device : adapter.getBondedDevices()) {
                 String name = device.getName();
                 String addr = device.getAddress();
-                Log.i(TAG, "Bonded device: " + name + " (" + addr + ")");
                 if (isTargetDevice(name)) {
-                    Log.i(TAG, ">>> Found bonded target: " + name);
-                    addDiscoveredDevice(name, addr, -127);
+                    result.add(new DeviceInfo(name, addr, -127));
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error checking bonded devices", e);
+            Log.e(TAG, "getPairedDevices error", e);
         }
+        return result;
+    }
+
+    /** 获取当前已连接的眼镜信息（未连接返回 null） */
+    public DeviceInfo getConnectedDevice() {
+        if (!AppState.getInstance().isBleConnected) return null;
+        String name = AppState.getInstance().bleName;
+        String addr = AppState.getInstance().bleAddress;
+        return new DeviceInfo(name != null ? name : "", addr != null ? addr : "", 0);
     }
 
     private boolean isTargetDevice(String deviceName) {
@@ -621,6 +821,7 @@ public class GlassBleService extends Service {
                 return;
             }
             BluetoothDevice device = adapter.getRemoteDevice(bleAddress);
+            mBleDevice = device;
             // 官方用 transport=TRANSPORT_LE 明确走 BLE，避免双模设备 TRANSPORT_AUTO 导致连接不稳
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 mBluetoothGatt = device.connectGatt(this, false, mGattCallback, BluetoothDevice.TRANSPORT_LE);
@@ -644,6 +845,32 @@ public class GlassBleService extends Service {
         }
     }
 
+    /**
+     * 触发经典蓝牙（BR/EDR）配对。
+     * 眼镜是双模设备：BLE 用于数据，经典蓝牙用于音频（A2DP 播报 / SCO 录音）。
+     * BLE 连接不会在系统蓝牙列表显示为已配对，需主动 createBond 弹配对框，
+     * 配对成功后音频通道才能路由到眼镜扬声器/麦克风。
+     */
+    private void triggerClassicBond() {
+        BluetoothDevice device = mBleDevice;
+        if (device == null) return;
+        try {
+            if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                postLog("✅ 经典蓝牙已配对，音频通道可用");
+                return;
+            }
+            // createBond 是 @hide API，用反射调用以兼容不同 SDK
+            Method createBond = device.getClass().getMethod("createBond");
+            createBond.setAccessible(true);
+            Object result = createBond.invoke(device);
+            String name = device.getName() != null ? device.getName() : device.getAddress();
+            postLog("🔗 请求经典蓝牙配对: " + name + " (result=" + result + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "triggerClassicBond error", e);
+            postLog("⚠️ 经典蓝牙配对请求失败: " + e.getMessage());
+        }
+    }
+
     private void onGattDisconnected() {
         if (!AppState.getInstance().isBleConnected && mBluetoothGatt == null) {
             return; // 已处理过
@@ -656,6 +883,7 @@ public class GlassBleService extends Service {
         mNusNotifyChar = null;
         mSerialWriteChar = null;
         mSerialNotifyChar = null;
+        mBleDevice = null;
 
         if (mBluetoothGatt != null) {
             try { mBluetoothGatt.close(); } catch (Exception ignored) {}
@@ -688,6 +916,7 @@ public class GlassBleService extends Service {
 
     // ========== 协议 ==========
 
+    @SuppressWarnings("deprecation")
     private boolean enableNotification(BluetoothGattCharacteristic ch) {
         if (ch == null || mBluetoothGatt == null) return false;
         try {
@@ -725,17 +954,83 @@ public class GlassBleService extends Service {
         writeSerial(ACTION_GLASSES_CONTROL, payload);
     }
 
-    /** 将帧加入串口写队列并触发发送 */
+    /** 将帧加入串口写队列并触发发送（0xBC 控制帧走 urgent 队列，实时性优先） */
     private void writeSerial(int action, byte[] payload) {
         if (mSerialWriteChar == null || mBluetoothGatt == null) {
             postLog("⚠️ 串口写特征未就绪");
             return;
         }
-        byte[] frame = buildSerialPacket(action, payload);
-        synchronized (mSerialWriteQueue) {
-            mSerialWriteQueue.add(frame);
-        }
+        enqueueWrite(buildSerialPacket(action, payload), true);
         processSerialWriteQueue();
+    }
+
+    /**
+     * 统一入队：urgent 帧直入高优先级队列；bulk 帧执行栈式去重（同命令覆盖旧帧）
+     * 与容量控制（超过 MAX_BULK_QUEUE 丢最旧），确保队列永远偏向最新请求。
+     */
+    private void enqueueWrite(byte[] frame, boolean urgent) {
+        synchronized (mUrgentWriteQueue) {
+            // 过期清理：bulk 队列中等待超过 15s 的指令视为过期，直接丢弃（防指令风暴堆积）
+            long now = System.currentTimeMillis();
+            boolean expired = false;
+            while (!mBulkEnqueueTimes.isEmpty()
+                    && now - mBulkEnqueueTimes.peekFirst() > BULK_EXPIRE_MS) {
+                mBulkWriteQueue.pollFirst();
+                mBulkEnqueueTimes.pollFirst();
+                expired = true;
+            }
+            if (expired) {
+                postLog("🧹 [队列] 清理过期 bulk 指令（等待超 15s），剩余 " + mBulkWriteQueue.size());
+            }
+            if (urgent) {
+                mUrgentWriteQueue.add(frame);
+                return;
+            }
+            // bulk 帧栈式去重：KSDK JSON 帧提取命令名（"C":"cs_xxx"），同命令保留最新
+            String cmdKey = ksdkCmdKey(frame);
+            if (cmdKey != null) {
+                boolean removed = mBulkWriteQueue.removeIf(f -> cmdKey.equals(ksdkCmdKey(f)));
+                if (removed) {
+                    // 冲突日志：新帧覆盖同命令旧帧
+                    mBulkEnqueueTimes.pollLast();
+                    postLog("⚔️ [队列] 指令冲突: " + cmdKey + " 旧帧被新帧覆盖");
+                }
+                // 优先级可配置：prio_<cmd>=urgent 可将特定 bulk 命令升级为 urgent
+                if ("urgent".equals(getSharedPreferences("debug", MODE_PRIVATE)
+                        .getString("prio_" + cmdKey, null))) {
+                    mUrgentWriteQueue.add(frame);
+                    return;
+                }
+            }
+            while (mBulkWriteQueue.size() >= MAX_BULK_QUEUE) {
+                mBulkWriteQueue.pollFirst(); // 丢最旧，保最新（栈语义）
+                mBulkEnqueueTimes.pollFirst();
+            }
+            mBulkWriteQueue.add(frame);
+            mBulkEnqueueTimes.addLast(now);
+            if (mBulkWriteQueue.size() >= MAX_BULK_QUEUE) {
+                postLog("⚠️ BLE bulk 队列已满（" + mBulkWriteQueue.size() + "），丢弃最旧帧");
+            }
+        }
+    }
+
+    /** 提取 KSDK JSON 帧的命令名（##0..{"C":"cs_xxx",...}$$），非 JSON 帧返回 null */
+    private static String ksdkCmdKey(byte[] frame) {
+        if (frame == null || frame.length < 8 || frame[0] != '#') return null;
+        String s = new String(frame, java.nio.charset.StandardCharsets.UTF_8);
+        int c = s.indexOf("\"C\":\"");
+        if (c < 0) return null;
+        int e = s.indexOf('"', c + 5);
+        return e < 0 ? null : s.substring(c + 5, e);
+    }
+
+    /** 从双队列取下一帧：urgent 全部优先于 bulk */
+    private byte[] pollWriteFrame() {
+        synchronized (mUrgentWriteQueue) {
+            byte[] f = mUrgentWriteQueue.poll();
+            if (f != null) return f;
+            return mBulkWriteQueue.poll();
+        }
     }
 
     /**
@@ -743,13 +1038,11 @@ public class GlassBleService extends Service {
      * 连续调用 writeCharacteristic 会导致后续返回 false（即“写入串口失败”）。
      * 这里每次只发一帧，间隔 SERIAL_WRITE_INTERVAL_MS 后再发下一帧。
      */
+    @SuppressWarnings("deprecation")
     private void processSerialWriteQueue() {
         if (mSerialWriting) return;
-        byte[] frame;
-        synchronized (mSerialWriteQueue) {
-            if (mSerialWriteQueue.isEmpty()) return;
-            frame = mSerialWriteQueue.poll();
-        }
+        byte[] frame = pollWriteFrame();
+        if (frame == null) return;
         if (mSerialWriteChar == null || mBluetoothGatt == null) {
             mSerialWriting = false;
             return;
@@ -828,8 +1121,11 @@ public class GlassBleService extends Service {
 
         if (UUID_SERIAL_NOTIFY.equals(uuid)) {
             logSerialFrame(data);
+            // 喂给 BLE 文件协议解析（XyCmd 自动跳过 0xBC 帧垃圾，识别 ##..$$ 文件帧）
+            mBleTransport.feed(data);
         } else if (UUID_NUS_NOTIFY.equals(uuid)) {
             postLog("📩 NUS数据: " + toHex(data, 16));
+            mBleTransport.feed(data);
         }
     }
 
@@ -844,15 +1140,203 @@ public class GlassBleService extends Service {
                     + ") 长度=" + len + " 数据=" + toHex(data, 32));
             // 解析眼镜通过 BLE 上报的 IP（数据上报 action=115，首字节 0x08 表示 IP）
             parseDataReporting(action, data);
+            // 解析电量上报（action=66）
+            parseBattery(action, data);
+            // 解析缩略图分块（action=253，厂商oudmon协议）
+            parseThumbnailChunk(action, data);
         } else {
             postLog("📩 串口原始数据: " + toHex(data, 32));
         }
     }
 
-    /** 解析 action=115（数据上报）帧：type=0x08 时携带眼镜 IP（4 字节，如 192.168.49.115） */
+    // ========== 缩略图 BLE 直取（厂商 oudmon 协议 cmd=0xFD，无需 WiFi） ==========
+
+    private ByteArrayOutputStream mThumbBuffer;
+    private int mThumbTotalPages = -1;
+    private long mThumbLastChunkAt = 0;
+    private static final long THUMB_PAGE_GAP_TIMEOUT_MS = 2500;
+    /** 全量回传标志：置位后照片列表拉取完成直接全部导入（不弹勾选框） */
+    private volatile boolean mAutoImportAll = false;
+
+    private void markBackhaulSuccess(String mode) {
+        mActiveBackhaul = mode;
+        getSharedPreferences("debug", MODE_PRIVATE).edit()
+                .putString("last_ok_mode", mode).apply();
+    }
+
+    private final Runnable mThumbGapTimeoutRunnable = () -> {
+        if (mThumbBuffer != null
+                && System.currentTimeMillis() - mThumbLastChunkAt >= THUMB_PAGE_GAP_TIMEOUT_MS) {
+            postLog("⚠️ [缩略图] 分页间隔超时，用已收到的 " + mThumbBuffer.size() + " 字节尝试组图");
+            finishThumbnail();
+        }
+    };
+
+    /** 请求缩略图：cmd=0xFD，payload=[0x01, 页码低, 页码高]（厂商 syncPictureThumbnails 同构） */
+    private void requestThumbnailPage(int page) {
+        byte[] payload = new byte[]{0x01, (byte) (page & 0xFF), (byte) ((page >> 8) & 0xFF)};
+        enqueueWrite(buildSerialPacket(ACTION_PICTURE_THUMBNAILS, payload), false);
+        processSerialWriteQueue();
+        postLog("📤 [缩略图] 请求第 " + page + " 页");
+    }
+
+    /** 通知线程收到缩略图分块：帧= [BC][FD][len2][crc16][payload]，payload=[?][总页2][当前页2][JPEG块...] */
+    private void parseThumbnailChunk(int action, byte[] data) {
+        if (action != ACTION_PICTURE_THUMBNAILS) return;
+        int payloadLen = (data[2] & 0xFF) | ((data[3] & 0xFF) << 8);
+        if (payloadLen < 5 || data.length < 6 + payloadLen) {
+            postLog("⚠️ [缩略图] 帧不完整 len=" + payloadLen);
+            return;
+        }
+        int total = (data[7] & 0xFF) | ((data[8] & 0xFF) << 8);
+        int page = (data[9] & 0xFF) | ((data[10] & 0xFF) << 8);
+        int jpegLen = payloadLen - 5;
+        if (jpegLen <= 0) {
+            postLog("⚠️ [缩略图] 空数据块 page=" + page);
+            return;
+        }
+        if (mThumbBuffer == null || page == 0) {
+            mThumbBuffer = new ByteArrayOutputStream();
+            mThumbTotalPages = total;
+        }
+        mThumbBuffer.write(data, 11, jpegLen);
+        mThumbLastChunkAt = System.currentTimeMillis();
+        postLog("📥 [缩略图] 分块 page=" + page + "/" + Math.max(total - 1, 0)
+                + " jpeg=" + jpegLen + "B 累计=" + mThumbBuffer.size() + "B");
+        if (total > 0 && page + 1 >= total) {
+            finishThumbnail();
+        } else {
+            mMainHandler.removeCallbacks(mThumbGapTimeoutRunnable);
+            mMainHandler.postDelayed(mThumbGapTimeoutRunnable, THUMB_PAGE_GAP_TIMEOUT_MS);
+        }
+    }
+
+    /** 组图落地到相册目录并触发本地检测 */
+    private void finishThumbnail() {
+        mMainHandler.removeCallbacks(mThumbGapTimeoutRunnable);
+        ByteArrayOutputStream buf = mThumbBuffer;
+        mThumbBuffer = null;
+        mThumbTotalPages = -1;
+        if (buf == null || buf.size() == 0) {
+            postLog("❌ [缩略图] 无有效数据");
+            return;
+        }
+        byte[] jpeg = buf.toByteArray();
+        try {
+            File out = new File(getPhotoDir(), "Thumb_" + System.currentTimeMillis() + ".jpg");
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                fos.write(jpeg);
+            }
+            postLog("✅ [缩略图] 已保存 " + out.getName() + "（" + jpeg.length + "B），开始本地检测");
+            markBackhaulSuccess("thumb");
+            // 与 onBleFileReceived 相同的模式路由：缩略图回传后按拍照意图识别
+            int mode = mCaptureMode;
+            mCaptureMode = CAPTURE_MODE_MANUAL;
+            if (mode == CAPTURE_MODE_QR) {
+                recognizeLatestPhoto();
+            } else if (mode == CAPTURE_MODE_METER) {
+                dispatchMeterRecognition();
+            } else {
+                detectLatestPhotoWithYolo();
+            }
+        } catch (Exception e) {
+            postLog("❌ [缩略图] 保存失败: " + e.getMessage());
+        }
+    }
+
+    /** 调试用：直接拉取眼镜最近一张照片的缩略图（无需拍照/配网） */
+    public static void debugThumbGet() {
+        GlassBleService s = sDebugInstance;
+        if (s != null) {
+            s.postLog("🛠 [缩略图] 发起 BLE 缩略图拉取...");
+            s.requestThumbnailPage(0);
+        } else {
+            Log.w("GlassDebug", "thumbget: 服务未就绪");
+        }
+    }
+
+    /** 调试用：YOLO 模式拍照（回传落地后自动本地检测） */
+    public static void debugTakePhotoDetect() {
+        GlassBleService s = sDebugInstance;
+        if (s != null) {
+            s.mCaptureMode = CAPTURE_MODE_YOLO;
+            s.postLog("🛠 [检测拍照] 模式=YOLO，拍照后回传将自动本地检测");
+            s.takePhoto();
+        } else {
+            Log.w("GlassDebug", "photodetect: 服务未就绪");
+        }
+    }
+
+    /** 调试用：直连上次成功连接的眼镜（跳过设备选择/扫描 UI） */
+    public static String debugReconnectLast() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return "服务未就绪";
+        if (AppState.getInstance().isBleConnected) return "已连接: " + AppState.getInstance().bleName;
+        android.content.SharedPreferences sp =
+                s.getSharedPreferences("debug", MODE_PRIVATE);
+        String addr = sp.getString("last_ble_addr", "");
+        String name = sp.getString("last_ble_name", "未知眼镜");
+        if (addr == null || addr.isEmpty()) return "无历史连接记录（请先在 APP 内连接一次）";
+        s.postLog("🛠 [直连] " + name + " (" + addr + ")");
+        s.connectToDevice(addr, name);
+        return "已发起连接: " + name;
+    }
+
+    /** 调试用：全量回传——拉取眼镜全部照片并自动导入原图库（含回传进度） */
+    public static String debugSyncAll() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return "服务未就绪";
+        if (!AppState.getInstance().isBleConnected) return "眼镜未连接（先执行 connect）";
+        if (s.mSyncActive) return "同步进行中，请稍候";
+        s.mAutoImportAll = true;
+        s.mCaptureMode = CAPTURE_MODE_MANUAL;
+        s.postLog("🛠 [全部回传] 拉取眼镜全部照片并自动导入...");
+        s.startPhotoSync();
+        return "已启动全部回传";
+    }
+
+    /** 调试用：清空原图库，返回删除的照片数量（UI 需二次确认） */
+    public static int debugClearPhotos() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return -1;
+        File dir = s.getPhotoDir();
+        File[] files = dir.listFiles();
+        int n = 0;
+        if (files != null) {
+            for (File f : files) {
+                if (f.isFile() && f.delete()) n++;
+            }
+        }
+        s.postLog("🧹 [原图库] 已清空 " + n + " 张照片");
+        return n;
+    }
+
+    /** 调试用：当前 BLE 写队列状态（urgent/bulk 数量），供指令冲突观察 */
+    public static String debugQueueStatus() {
+        GlassBleService s = sDebugInstance;
+        if (s == null) return "服务未就绪";
+        return "urgent=" + s.mUrgentWriteQueue.size() + " bulk=" + s.mBulkWriteQueue.size()
+                + " 过期阈值=" + (BULK_EXPIRE_MS / 1000) + "s";
+    }
+
+    /** 解析 action=66（电量）响应帧：payload[0]=电量，payload[1]=充电状态 */
+    private void parseBattery(int action, byte[] data) {
+        if (action != ACTION_GLASSES_BATTERY) return;
+        if (data.length < 8) return; // 6 字节帧头 + 至少 2 字节 payload
+        int battery = data[6] & 0xFF;
+        boolean charging = (data[7] & 0xFF) == 1;
+        AppState.getInstance().batteryLevel = battery;
+        AppState.getInstance().isCharging = charging;
+        postLog("🔋 眼镜电量: " + battery + "%" + (charging ? "（充电中）" : ""));
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_BATTERY_UPDATE, battery, charging ? 1 : 0));
+    }
+
+    /** 解析 action=115（数据上报）帧：type=0x08 时携带眼镜 IP；拍照等其它事件 type 不同 */
     private void parseDataReporting(int action, byte[] data) {
         if (action != ACTION_DEVICE_DATA_REPORTING) return;
-        if (data.length >= 11 && (data[6] & 0xFF) == 0x08) {
+        int type = data.length > 6 ? (data[6] & 0xFF) : -1;
+        postLog("📡 数据上报 type=" + type + " 完整=" + toHex(data, data.length));
+        if (data.length >= 11 && type == 0x08) {
             int a = data[7] & 0xFF;
             int b = data[8] & 0xFF;
             int c = data[9] & 0xFF;
@@ -860,6 +1344,9 @@ public class GlassBleService extends Service {
             String ip = a + "." + b + "." + c + "." + d;
             postLog("🎯 眼镜上报IP: " + ip);
             onGlassesIpObtained(ip);
+        } else if (type == 0x01 && data.length >= 8) {
+            // 拍照事件：data[7] 为照片序号
+            onPhotoCaptured(data[7] & 0xFF);
         }
     }
 
@@ -900,6 +1387,7 @@ public class GlassBleService extends Service {
     // ========== 日志 ==========
 
     private void postLog(String text) {
+        Log.i("GlassLog", text); // 同步写入 logcat，便于 adb 远程诊断
         mMainHandler.post(() -> EventBus.getDefault().post(new EventMsg(EventMsg.MSG_LOG, text)));
     }
 
@@ -909,17 +1397,86 @@ public class GlassBleService extends Service {
 
     // ========== 外部 API（供 MainActivity 调用） ==========
 
-    /**
-     * 一键同步照片：BLE 通知眼镜开启照片同步（进入照片导入模式）→ 手机通过 WiFi Direct
-     * 连接眼镜 → 通过 HTTP 拉取照片列表 → 用户勾选后选择性下载。
-     */
+    /** 一键同步照片：BLE 通知眼镜开启照片同步（进入照片导入模式）→ 手机通过 WiFi Direct
+     * 连接眼镜 → 通过 HTTP 拉取照片列表 → 用户勾选后选择性下载。 */
     public void syncPhotos() {
         if (!AppState.getInstance().isBleConnected) {
             toast("请先等待蓝牙连接眼镜");
             return;
         }
+        mCaptureMode = CAPTURE_MODE_MANUAL; // 手动同步：弹照片勾选框
         startPhotoSync();
     }
+
+    /**
+     * 带分流模式的拍照：拍照 → 同步到手机原图库 → 按模式识别。
+     * 实时性优先：同步进行中新请求不排队等待——
+     *   · 同步已持续 > SYNC_PREEMPT_MS（无进展）→ 抢占取消旧任务立即执行新请求
+     *   · 否则记入单槽 pending（新请求覆盖旧挂起），当前任务结束自动执行最新请求
+     * @param mode {@link #CAPTURE_MODE_PLAIN} 仅存原图库 / {@link #CAPTURE_MODE_QR} 二维码 /
+     *             {@link #CAPTURE_MODE_YOLO} YOLO 检测 / {@link #CAPTURE_MODE_METER} 万用表读数
+     */
+    public void takePhotoFor(int mode) {
+        if (!AppState.getInstance().isBleConnected) {
+            toast("请先等待蓝牙连接眼镜");
+            return;
+        }
+        if (mSyncActive) {
+            long elapsed = System.currentTimeMillis() - mSyncStartMs;
+            if (elapsed > SYNC_PREEMPT_MS) {
+                postLog("⚡ 实时性优先：当前同步已无进展 " + (elapsed / 1000) + "s，抢占执行新请求");
+                mPendingCaptureMode = mode;
+                finishSync(0); // 复位旧流程，finishSync 末尾自动执行 pending
+                return;
+            }
+            mPendingCaptureMode = mode; // 栈语义：新请求覆盖旧挂起
+            postLog("⏳ 同步进行中（" + (elapsed / 1000) + "s），已记录最新请求（覆盖旧挂起），完成后自动执行");
+            toast("已记录最新请求，当前任务完成后自动执行");
+            return;
+        }
+        doCaptureFor(mode);
+    }
+
+    private void doCaptureFor(int mode) {
+        mCaptureMode = mode;
+        postLog("📸 拍照（模式=" + modeName(mode) + "）...");
+        takePhoto();
+        // 4 秒后走「同步到手机」管线兜底（部分固件不回报拍照事件）
+        mMainHandler.postDelayed(() -> {
+            if (mSyncActive || mCaptureMode != mode) return;
+            postLog("📷 未收到拍照事件，主动同步照片");
+            startPhotoSync();
+        }, 4000);
+    }
+
+    public static String modeName(int mode) {
+        switch (mode) {
+            case CAPTURE_MODE_QR: return "二维码识别";
+            case CAPTURE_MODE_YOLO: return "YOLO检测";
+            case CAPTURE_MODE_METER: return "万用表读数";
+            case CAPTURE_MODE_PLAIN: return "存原图库";
+            default: return "手动同步";
+        }
+    }
+
+    /** 拍照命令：官方“耳机模式”下需先确保相机开启（action=74 {2,1,1}），再发拍照（action=65 {2,1,1}） */
+    public void takePhoto() {
+        if (!AppState.getInstance().isBleConnected) {
+            toast("请先等待蓝牙连接眼镜");
+            return;
+        }
+        postLog("📸 拍照：先开启相机...");
+        // 1. 开启相机（earphoneCameraStatusSetting(true,false) => action=74, payload={2,1,1}）
+        writeSerial(ACTION_CAMERA_STATUS, new byte[]{2, 1, 1});
+        // 2. 延时后发送拍照命令，给相机开启留出时间
+        mMainHandler.removeCallbacks(mTakePhotoRunnable);
+        mMainHandler.postDelayed(mTakePhotoRunnable, 600);
+    }
+
+    private final Runnable mTakePhotoRunnable = () -> {
+        postLog("📸 发送拍照命令...");
+        glassesControl(new byte[]{2, 1, 1});
+    };
 
     /**
      * 核心流程（CY01 照片同步走 WiFi Direct + HTTP，而非普通 WiFi 热点）：
@@ -929,6 +1486,31 @@ public class GlassBleService extends Service {
      * 4. 拉取照片列表，交由用户选择后下载
      */
     private void startPhotoSync() {
+        // 防重入：同步流程进行中忽略重复触发（拍照事件与检测循环兜底可能同时到达）
+        if (mSyncActive) {
+            postLog("ℹ️ 同步进行中，忽略重复触发");
+            return;
+        }
+        // 回传模式选择：auto=优先上次成功模式，默认 p2p；硬件不支持时自动降级
+        String mode = getSharedPreferences("debug", MODE_PRIVATE)
+                .getString("transfer_mode", "auto");
+        if ("auto".equals(mode)) {
+            mode = getSharedPreferences("debug", MODE_PRIVATE)
+                    .getString("last_ok_mode", "p2p");
+        }
+        mActiveBackhaul = mode;
+        if ("thumb".equals(mode)) {
+            postLog("🔄 回传模式=缩略图（BLE直拉，无需 WiFi）");
+            startThumbTransfer();
+            return;
+        }
+        if ("ap".equals(mode)) {
+            postLog("🔄 回传模式=热点（LocalOnlyHotspot）");
+            startHotspotTransfer();
+            return;
+        }
+        mSyncActive = true;
+        mSyncStartMs = System.currentTimeMillis();
         if (AppState.getInstance().serverIp != null
                 && !AppState.getInstance().serverIp.isEmpty()
                 && AppState.getInstance().isSocketConnected) {
@@ -937,12 +1519,23 @@ public class GlassBleService extends Service {
         }
 
         mP2pConnecting = false;
-        postLog("🔄 正在开启眼镜照片同步（WiFi Direct）...");
+        postLog("🔄 正在开启眼镜照片同步（WiFi Direct，30s 内失败将降级缩略图直拉）...");
         // 官方导入照片命令：glassesControl(new byte[]{2, 1, 4, 1})
+        // 注意：此处不要 removeGroup——它会触发 P2P 框架重置，随后的扫描会 reason=0 失败；
+        // 残留组的清理放在连接超时路径（mP2pConnectTimeoutRunnable）处理
         glassesControl(new byte[]{2, 1, 4, 1});
 
         // 等眼镜开启 P2P 后再扫描
-        mMainHandler.postDelayed(this::startWifiP2p, 2000);
+        mMainHandler.postDelayed(this::startWifiP2p, 1500);
+    }
+
+    /** 缩略图回传：BLE 直拉最近照片（不依赖任何 WiFi 能力，硬件兼容性最好） */
+    private void startThumbTransfer() {
+        mSyncActive = true;
+        mSyncStartMs = System.currentTimeMillis();
+        mMainHandler.removeCallbacks(mSyncTimeoutRunnable);
+        mMainHandler.postDelayed(mSyncTimeoutRunnable, 60000);
+        requestThumbnailPage(0);
     }
 
     /** 计算眼镜 WiFi/P2P 名称（设备名_MAC），用于 P2P 设备匹配 */
@@ -965,13 +1558,20 @@ public class GlassBleService extends Service {
     /** 初始化并启动 WiFi Direct 扫描 */
     private void startWifiP2p() {
         try {
+            // WiFi Direct 依赖手机 WiFi 开启（P2P 扫描失败 reason=0 的最常见原因）
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && !wm.isWifiEnabled()) {
+                postLog("⚠️ 手机 WiFi 未开启！WiFi Direct 需要 WiFi 打开才能工作，请下拉通知栏开启 WiFi");
+            }
             mWifiP2pManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
             if (mWifiP2pManager == null) {
                 postLog("⚠️ 设备不支持 WiFi Direct");
                 EventBus.getDefault().post(new EventMsg(EventMsg.MSG_WIFI_CONNECT_RESULT, 0));
                 return;
             }
-            mWifiP2pChannel = mWifiP2pManager.initialize(this, Looper.getMainLooper(), null);
+            if (mWifiP2pChannel == null) {
+                mWifiP2pChannel = mWifiP2pManager.initialize(this, Looper.getMainLooper(), null);
+            }
             registerWifiP2pReceiver();
             postLog("🔍 开始扫描眼镜 P2P 设备...");
             mWifiP2pManager.discoverPeers(mWifiP2pChannel, new WifiP2pManager.ActionListener() {
@@ -982,11 +1582,16 @@ public class GlassBleService extends Service {
 
                 @Override
                 public void onFailure(int reason) {
-                    postLog("⚠️ P2P 扫描失败: " + reason + "（请在系统 WiFi 设置中开启 WiFi Direct）");
+                    // reason=0 多为 P2P 框架忙/未就绪，3 秒后自动重试直到同步超时
+                    if (mWifiTransferActive) {
+                        // 热点/外部AP 回传期间跳过 P2P 重试，避免 WiFi 框架竞争（日志刷屏 reason=2 的根源）
+                        return;
+                    }
+                    postLog("⚠️ P2P 扫描失败: " + reason + "，3 秒后自动重试...");
+                    mMainHandler.removeCallbacks(mP2pScanRetryRunnable);
+                    mMainHandler.postDelayed(mP2pScanRetryRunnable, 3000);
                 }
             });
-            mMainHandler.removeCallbacks(mRediscoverP2pRunnable);
-            mMainHandler.postDelayed(mRediscoverP2pRunnable, 5000);
         } catch (Exception e) {
             Log.e(TAG, "startWifiP2p error", e);
             postLog("⚠️ 启动 P2P 失败: " + e.getMessage());
@@ -1002,16 +1607,28 @@ public class GlassBleService extends Service {
         filter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         mWifiP2pReceiver = new BroadcastReceiver() {
             @Override
+            @SuppressWarnings("deprecation")
             public void onReceive(Context context, Intent intent) {
                 String action = intent == null ? null : intent.getAction();
                 if (action == null) return;
-                if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
+                if (WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION.equals(action)) {
+                    int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
+                    postLog("📡 P2P 可用性: " + (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED
+                            ? "可用" : "不可用 state=" + state));
+                } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
                     onWifiP2pPeersChanged();
                 } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
+                    android.net.NetworkInfo netInfo = intent.getParcelableExtra(
+                            WifiP2pManager.EXTRA_NETWORK_INFO);
                     WifiP2pInfo info = intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_INFO);
-                    if (info != null && info.groupFormed) {
+                    boolean netConnected = netInfo != null && netInfo.isConnected();
+                    postLog("📡 P2P 连接状态变化: net=" + netConnected
+                            + " groupFormed=" + (info != null && info.groupFormed)
+                            + " owner=" + (info != null && info.groupOwnerAddress != null
+                            ? info.groupOwnerAddress.getHostAddress() : "null"));
+                    if (info != null && info.groupFormed && netConnected) {
                         onWifiP2pConnected(info);
-                    } else {
+                    } else if (!netConnected) {
                         mP2pConnecting = false;
                     }
                 }
@@ -1023,19 +1640,51 @@ public class GlassBleService extends Service {
 
     private void onWifiP2pPeersChanged() {
         if (mWifiP2pManager == null || mWifiP2pChannel == null || mP2pConnecting) return;
-        mWifiP2pManager.requestPeers(mWifiP2pChannel, new WifiP2pManager.PeerListListener() {
-            @Override
-            public void onPeersAvailable(WifiP2pDeviceList peers) {
-                Collection<WifiP2pDevice> list = peers.getDeviceList();
-                for (WifiP2pDevice device : list) {
-                    if (matchesGlassesP2p(device)) {
-                        postLog("✅ 发现眼镜 P2P 设备: " + device.deviceName);
-                        connectToP2pDevice(device);
-                        return;
-                    }
+        mWifiP2pManager.requestPeers(mWifiP2pChannel, peers -> {
+            Collection<WifiP2pDevice> list = peers.getDeviceList();
+            mLastP2pDevices = list;
+            // 网络诊断：打印全部发现的 P2P 设备明细（眼镜 P2P 名称与预期不匹配时是关键线索）
+            if (!list.isEmpty()) {
+                StringBuilder sb = new StringBuilder("📡 [P2P发现] 共 " + list.size() + " 台:");
+                for (WifiP2pDevice d : list) {
+                    sb.append("\n    ").append(d.deviceName)
+                            .append(" MAC=").append(d.deviceAddress)
+                            .append(" status=").append(d.status);
+                }
+                postLog(sb.toString());
+            } else {
+                postLog("📡 [P2P发现] 本轮未发现任何 P2P 设备（目标名称="
+                        + computeGlassesWifiSsid() + "）");
+            }
+            for (WifiP2pDevice device : list) {
+                if (matchesGlassesP2p(device)) {
+                    postLog("✅ 发现眼镜 P2P 设备: " + device.deviceName);
+                    connectToP2pDevice(device);
+                    return;
                 }
             }
         });
+    }
+
+    /** 网络诊断：P2P 状态快照（供 NetworkDiagnostics 调用） */
+    public String p2pDiagnosticSnapshot() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[P2P] manager=").append(mWifiP2pManager != null ? "已初始化" : "未初始化")
+                .append(" receiver=").append(mWifiP2pReceiverRegistered ? "已注册" : "未注册")
+                .append(" connecting=").append(mP2pConnecting).append("\n");
+        Collection<WifiP2pDevice> peers = mLastP2pDevices;
+        if (peers == null || peers.isEmpty()) {
+            sb.append("[P2P] 最近一次扫描：未发现任何设备（眼镜 P2P 未开启/名称不匹配/系统封锁）\n");
+        } else {
+            sb.append("[P2P] 最近一次扫描发现 ").append(peers.size()).append(" 台:\n");
+            for (WifiP2pDevice d : peers) {
+                sb.append("    ").append(d.deviceName)
+                        .append(" MAC=").append(d.deviceAddress)
+                        .append(" status=").append(d.status)
+                        .append(matchesGlassesP2p(d) ? " ←匹配眼镜" : "").append("\n");
+            }
+        }
+        return sb.toString();
     }
 
     private boolean matchesGlassesP2p(WifiP2pDevice device) {
@@ -1063,6 +1712,9 @@ public class GlassBleService extends Service {
                 @Override
                 public void onSuccess() {
                     postLog("📶 P2P 连接请求已发送");
+                    // 连接超时兜底：残留组导致的静默无响应，清除组后重试扫描
+                    mMainHandler.removeCallbacks(mP2pConnectTimeoutRunnable);
+                    mMainHandler.postDelayed(mP2pConnectTimeoutRunnable, P2P_CONNECT_TIMEOUT_MS);
                 }
 
                 @Override
@@ -1077,8 +1729,25 @@ public class GlassBleService extends Service {
         }
     }
 
+    /** P2P 连接超时：请求发出后一直无回调（多为残留组/眼镜端未响应），清组重试 */
+    private static final long P2P_CONNECT_TIMEOUT_MS = 12000;
+    private final Runnable mP2pConnectTimeoutRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!mSyncActive) return;
+            postLog("⚠️ P2P 连接 12s 无响应，清除残留组并重试...");
+            if (mWifiP2pManager != null && mWifiP2pChannel != null) {
+                try { mWifiP2pManager.removeGroup(mWifiP2pChannel, null); } catch (Exception ignored) {}
+                try { mWifiP2pManager.cancelConnect(mWifiP2pChannel, null); } catch (Exception ignored) {}
+                try { mWifiP2pManager.discoverPeers(mWifiP2pChannel, null); } catch (Exception ignored) {}
+            }
+            mP2pConnecting = false;
+        }
+    };
+
     private void onWifiP2pConnected(WifiP2pInfo info) {
         mP2pConnecting = false;
+        mMainHandler.removeCallbacks(mP2pConnectTimeoutRunnable);
         if (info == null || !info.groupFormed) {
             postLog("⚠️ P2P 未成功组网");
             return;
@@ -1096,6 +1765,7 @@ public class GlassBleService extends Service {
 
     private void cleanupWifiP2p() {
         mMainHandler.removeCallbacks(mRediscoverP2pRunnable);
+        mMainHandler.removeCallbacks(mP2pScanRetryRunnable);
         try {
             if (mWifiP2pReceiverRegistered && mWifiP2pReceiver != null) {
                 unregisterReceiver(mWifiP2pReceiver);
@@ -1129,7 +1799,7 @@ public class GlassBleService extends Service {
         new Thread(() -> {
             try {
                 // 参照官方：拿到 IP 后稍作延迟，等眼镜 HTTP 服务就绪
-                Thread.sleep(1500);
+                Thread.sleep(1000);
 
                 String[] files = null;
                 String fileBaseUrl = "";
@@ -1139,7 +1809,7 @@ public class GlassBleService extends Service {
                     config = httpGet("http://" + ip + "/files/media.config");
                     if (config == null || config.trim().isEmpty()) {
                         postLog("⚠️ media.config 未获取到(第" + attempt + "次)");
-                        if (attempt < 3) Thread.sleep(1000);
+                        if (attempt < 3) Thread.sleep(500);
                     }
                 }
 
@@ -1196,13 +1866,27 @@ public class GlassBleService extends Service {
             if (httpDownload(fileBaseUrl + n, out, n)) {
                 success++;
                 postLog("📥 下载缩略图 " + success + "/" + total + ": " + n);
+                if (total > 0) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                            success * 100 / total, "📥 回传中 " + success + "/" + total));
+                }
             }
         }
-        postLog("📥 缩略图下载完成 " + success + "/" + total + "，请选择要导入的照片");
-        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, names));
+        if (mCaptureMode != CAPTURE_MODE_MANUAL || mAutoImportAll) {
+            // 语音拍照分流/全部回传模式：下载完直接全部导入，不弹勾选框
+            postLog("📥 缩略图下载完成 " + success + "/" + total + "，自动导入全部照片");
+            boolean all = mAutoImportAll;
+            mAutoImportAll = false;
+            finalizeImport(names);
+            if (all) markBackhaulSuccess(mActiveBackhaul);
+        } else {
+            postLog("📥 缩略图下载完成 " + success + "/" + total + "，请选择要导入的照片");
+            EventBus.getDefault().post(new EventMsg(EventMsg.MSG_PHOTO_LIST, names));
+        }
     }
 
     /** 清空目录内容 */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private void clearDir(File dir) {
         if (dir == null || !dir.exists()) return;
         File[] files = dir.listFiles();
@@ -1213,6 +1897,7 @@ public class GlassBleService extends Service {
         }
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private File getTmpDir() {
         File dir = new File(getExternalFilesDir(null), "glass_media/tmp");
         if (!dir.exists()) dir.mkdirs();
@@ -1220,6 +1905,7 @@ public class GlassBleService extends Service {
     }
 
     /** 保留用户勾选的照片（移动到正式目录），删除未勾选的临时文件 */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     public void finalizeImport(List<String> selected) {
         final List<String> sel = (selected == null) ? new ArrayList<>() : selected;
         postLog("📥 保留 " + sel.size() + " 张照片...");
@@ -1249,6 +1935,7 @@ public class GlassBleService extends Service {
                     }
                 }
                 postLog("📥 照片导入完成: 保留 " + kept + " 张");
+                markBackhaulSuccess(mActiveBackhaul);
                 finishSync(kept);
             } catch (Exception e) {
                 Log.e(TAG, "finalizeImport error", e);
@@ -1259,6 +1946,7 @@ public class GlassBleService extends Service {
     }
 
     /** 移动文件（跨目录），renameTo 失败时降级为复制 */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private boolean moveFile(File src, File dst) {
         try {
             if (dst.exists()) dst.delete();
@@ -1290,6 +1978,21 @@ public class GlassBleService extends Service {
 
     /** 同步结束（成功或失败）：复位连接状态并清理 P2P，避免 UI 卡在“传输中” */
     private void finishSync(int count) {
+        mSyncActive = false;
+        mMainHandler.removeCallbacks(mSyncTimeoutRunnable);
+        // 实时性优先：立即调度挂起的最新请求（新覆盖旧；600ms 后执行，等收尾清理完成）
+        int pending = mPendingCaptureMode;
+        if (pending != -1) {
+            mPendingCaptureMode = -1;
+            final int pm = pending;
+            postLog("⚡ 实时性优先：执行挂起的最新请求（模式=" + modeName(pm) + "）");
+            mMainHandler.postDelayed(() -> doCaptureFor(pm), 600);
+        }
+        // 热点回传路径收尾：关闭手机热点
+        mHotspotTransferActive = false;
+        mWifiTransferActive = false;
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
+        stopHotspot();
         AppState.getInstance().isSocketConnected = false;
         mMainHandler.post(this::cleanupWifiP2p);
         // 通知眼镜退出照片导入模式，恢复正常拍照操作（官方 fileDownloadComplete 使用的命令）
@@ -1298,6 +2001,520 @@ public class GlassBleService extends Service {
             postLog("ℹ️ 已通知眼镜退出照片导入模式");
         });
         EventBus.getDefault().post(new EventMsg(EventMsg.MSG_SYNC_COMPLETE, count));
+
+        // 拍照分流：同步结束后按模式把最新照片交给对应识别链路
+        int mode = mCaptureMode;
+        mCaptureMode = CAPTURE_MODE_MANUAL; // 本轮结束即复位，避免影响下一次拍照
+        if (mode != CAPTURE_MODE_MANUAL) {
+            mAutoSyncCooldownUntil = System.currentTimeMillis() + AUTO_SYNC_COOLDOWN_MS;
+        }
+        if (count <= 0) {
+            if (mode == CAPTURE_MODE_QR || mode == CAPTURE_MODE_YOLO || mode == CAPTURE_MODE_METER) {
+                postLog("⚠️ " + modeName(mode) + "：未获取到照片（P2P/网络未就绪）");
+                if (mode == CAPTURE_MODE_YOLO) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
+                            new com.ar.glass.vision.DetectResult("未获取到照片")));
+                }
+            }
+            return;
+        }
+        switch (mode) {
+            case CAPTURE_MODE_QR:
+                recognizeLatestPhoto();
+                break;
+            case CAPTURE_MODE_YOLO:
+                detectLatestPhotoWithYolo();
+                break;
+            case CAPTURE_MODE_METER:
+                dispatchMeterRecognition();
+                break;
+            case CAPTURE_MODE_PLAIN:
+            default:
+                postLog("📷 照片已存入原图库（未做识别）");
+                break;
+        }
+    }
+
+    /** 万用表分流：把最新照片路径发给 UI 层做云端读数识别 */
+    private void dispatchMeterRecognition() {
+        File latest = findLatestPhoto();
+        if (latest == null) {
+            postLog("⚠️ 万用表识别：未找到照片");
+            return;
+        }
+        postLog("� 万用表读数识别: " + latest.getName());
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_METER_RECOGNIZE, latest.getAbsolutePath()));
+    }
+
+    // ===== BLE 直传（ksdk 文件协议：cs_asfl 请求 → FileMessage 分块 → cs_flts 确认） =====
+
+    private BleFileTransport mBleTransport;
+    private volatile boolean mBleTransferActive = false;
+
+    private void initBleTransport() {
+        if (mBleTransport != null) return;
+        mBleTransport = new BleFileTransport(new BleFileTransport.Callback() {
+            @Override
+            public void onLog(String msg) {
+                postLog(msg);
+            }
+
+            @Override
+            public void onFileReady(File file) {
+                mMainHandler.post(() -> onBleFileReceived(file));
+            }
+
+            @Override
+            public void onProgress(int percent, String info) {
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, percent, info));
+            }
+        });
+        mBleTransport.setWriter(data -> {
+            if (mSerialWriteChar == null || mBluetoothGatt == null) {
+                Log.w(TAG, "BLE transport write: 串口未就绪");
+                return;
+            }
+            enqueueWrite(data, false);
+            processSerialWriteQueue();
+        });
+    }
+
+    /** BLE 直传：请求眼镜把最新照片经 BLE 分块推送（无需任何 WiFi） */
+    private void startBleTransfer() {
+        initBleTransport();
+        mSyncActive = true;
+        mSyncStartMs = System.currentTimeMillis();
+        mBleTransferActive = true;
+        mBleTransport.requestFile(1); // ftype=1 照片（实测校正）
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -2, "BLE 直传：等待眼镜推送..."));
+        mMainHandler.removeCallbacks(mBleTransferTimeoutRunnable);
+        mMainHandler.postDelayed(mBleTransferTimeoutRunnable, 60000);
+    }
+
+    private final Runnable mBleTransferTimeoutRunnable = () -> {
+        if (!mBleTransferActive) return;
+        mBleTransferActive = false;
+        postLog("⚠️ [BLE直传] 60s 未收到文件，回退热点模式");
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -2, "BLE 超时，切换热点回传..."));
+        startHotspotTransfer();
+    };
+
+    /** BLE 文件接收完成：按当前分流模式识别（与 WiFi 链路收尾解耦） */
+    private void onBleFileReceived(File file) {
+        mBleTransferActive = false;
+        mMainHandler.removeCallbacks(mBleTransferTimeoutRunnable);
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
+        int mode = mCaptureMode;
+        mCaptureMode = CAPTURE_MODE_MANUAL;
+        if (mode == CAPTURE_MODE_MANUAL) return;
+        mSyncActive = false;
+        postLog("📷 [BLE直传] 收到照片: " + file.getName() + "（" + modeName(mode) + "）");
+        switch (mode) {
+            case CAPTURE_MODE_QR:
+                recognizeLatestPhoto();
+                break;
+            case CAPTURE_MODE_METER:
+                dispatchMeterRecognition();
+                break;
+            case CAPTURE_MODE_PLAIN:
+                postLog("📷 照片已存入原图库（未做识别）");
+                break;
+            case CAPTURE_MODE_YOLO:
+            default:
+                detectLatestPhotoWithYolo();
+                break;
+        }
+    }
+
+    // ===== 热点配网回传（LocalOnlyHotspot + BLE 配网 + ARP 发现，绕开 P2P 封锁） =====
+
+    private WifiManager.LocalOnlyHotspotReservation mHotspotReservation;
+    private String mHotspotSsid;
+    private String mHotspotPass;
+    private com.xy.ksdk.api.cmd.CmdSendManager mCmdSender;
+    private volatile boolean mHotspotTransferActive = false;
+    private int mHotspotScanRound = 0;
+    /** 热点模式下轮询网段的轮数（×2s 间隔，120 秒发现窗口） */
+    private static final int HOTSPOT_SCAN_ROUNDS = 60;
+    /** 热点路径同步总超时（放宽：配网+关联+拉取需要较长时间） */
+    private static final long HOTSPOT_SYNC_TIMEOUT_MS = 180000;
+
+    /** ksdk 命令桥接：cs_ JSON 命令复用现有 BLE 串口写队列 */
+    private void initCmdSender() {
+        if (mCmdSender != null) return;
+        try {
+            mCmdSender = com.xy.ksdk.api.cmd.CmdSendManager.getInstance();
+            mCmdSender.init(getApplicationContext());
+            mCmdSender.setBluetooth(new com.xy.ksdk.api.cmd.IBluetooth() {
+                @Override
+                public void write(byte[] data) {
+                    String text = new String(data);
+                    Log.i("GlassLog", "📤 [KSDK] 发送: " + text);
+                    if (mSerialWriteChar == null || mBluetoothGatt == null) {
+                        Log.i("GlassLog", "📤 [KSDK] 串口未就绪，丢弃");
+                        return;
+                    }
+                    enqueueWrite(data, false);
+                    processSerialWriteQueue();
+                }
+            });
+            postLog("✅ KSDK 命令桥接就绪");
+        } catch (Throwable e) {
+            Log.e(TAG, "initCmdSender error", e);
+            postLog("⚠️ KSDK 桥接失败: " + e.getMessage());
+        }
+    }
+
+    /** 热点回传：开热点 → BLE 配网让眼镜 STA 连入 → ARP 发现 → 复用拉取/检测链路 */
+    private void startHotspotTransfer() {
+        mSyncActive = true;
+        mSyncStartMs = System.currentTimeMillis();
+        mMainHandler.removeCallbacks(mSyncTimeoutRunnable);
+        mMainHandler.postDelayed(mSyncTimeoutRunnable, HOTSPOT_SYNC_TIMEOUT_MS);
+        if (Build.VERSION.SDK_INT < 26) {
+            postLog("⚠️ 系统低于 8.0 不支持热点模式，回退 P2P");
+            startPhotoSync();
+            return;
+        }
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null) {
+            postLog("⚠️ 无 WiFi 服务，回退 P2P");
+            startPhotoSync();
+            return;
+        }
+        mHotspotTransferActive = true;
+        mWifiTransferActive = true;
+        EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -2, "热点回传：配网中..."));
+        postLog("📡 正在开启手机热点...");
+        try {
+            wm.startLocalOnlyHotspot(new WifiManager.LocalOnlyHotspotCallback() {
+                @Override
+                @SuppressWarnings("deprecation")
+                public void onStarted(WifiManager.LocalOnlyHotspotReservation reservation) {
+                    mHotspotReservation = reservation;
+                    try {
+                        WifiConfiguration c = reservation.getWifiConfiguration();
+                        mHotspotSsid = c != null ? c.SSID : null;
+                        mHotspotPass = c != null ? c.preSharedKey : null;
+                    } catch (Throwable e) {
+                        Log.e(TAG, "hotspot config read error", e);
+                    }
+                    if (mHotspotSsid == null || mHotspotSsid.isEmpty()) {
+                        postLog("⚠️ 热点凭证读取失败，回退 P2P");
+                        stopHotspot();
+                        startPhotoSync();
+                        return;
+                    }
+                    postLog("📡 热点已开启 SSID=" + mHotspotSsid);
+                    // BLE 配网：发两次确保送达
+                    initCmdSender();
+                    mCmdSender.sendWifiSTA(mHotspotSsid, mHotspotPass);
+                    mMainHandler.postDelayed(() -> {
+                        if (mHotspotTransferActive && mCmdSender != null) {
+                            Log.i("GlassLog", "📤 [KSDK] 配网命令重发");
+                            mCmdSender.sendWifiSTA(mHotspotSsid, mHotspotPass);
+                        }
+                    }, 1500);
+                    // 轮询 ARP 等待眼镜接入
+                    mHotspotScanRound = 0;
+                    pollArpForGlasses();
+                }
+
+                @Override
+                public void onFailed(int reason) {
+                    postLog("⚠️ 热点启动失败 reason=" + reason + "，回退 P2P");
+                    mHotspotTransferActive = false;
+                    startPhotoSync();
+                }
+            }, mMainHandler);
+        } catch (Exception e) {
+            postLog("⚠️ 热点启动异常: " + e.getMessage() + "，回退 P2P");
+            mHotspotTransferActive = false;
+            startPhotoSync();
+        }
+    }
+
+    /** 周期扫描热点网段，等待眼镜 STA 接入后探测其 HTTP 服务 */
+    private void pollArpForGlasses() {
+        if (!mHotspotTransferActive) return;
+        mHotspotScanRound++;
+        if (mHotspotScanRound > HOTSPOT_SCAN_ROUNDS) {
+            postLog("⚠️ 热点模式 120s 未发现眼镜（配网可能失败），回退 P2P");
+            stopHotspot();
+            startPhotoSync();
+            return;
+        }
+        new Thread(() -> {
+            try {
+                String ip = scanSubnetForGlasses();
+                if (ip != null) {
+                    postLog("🎯 热点模式发现眼镜 IP: " + ip);
+                    // 注意：保留热点（传输正走热点网络），finishSync 时统一关闭
+                    mMainHandler.post(() -> onGlassesIpObtained(ip));
+                    return;
+                }
+            } catch (Throwable e) {
+                Log.e(TAG, "subnet scan error", e);
+            }
+            mMainHandler.postDelayed(this::pollArpForGlasses, 2000);
+        }).start();
+    }
+
+    /**
+     * 主动并发扫描热点 /24 网段（被动等 ARP 表不可靠——手机不主动通信时眼镜不会出现在表里）。
+     * 对网段内每个 IP 探测眼镜文件服务 /files/media.config，命中即返回。
+     */
+    private String scanSubnetForGlasses() {
+        // 1. 收集本机所有 site-local IPv4 网段（去重；热点网段接口名各厂商不同，不按名字识别）
+        java.util.LinkedHashSet<String> subnets = new java.util.LinkedHashSet<>();
+        java.util.HashSet<String> selfIps = new java.util.HashSet<>();
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> nifList =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (nifList.hasMoreElements()) {
+                java.net.NetworkInterface nif = nifList.nextElement();
+                if (!nif.isUp() || nif.isLoopback()) continue;
+                java.util.Enumeration<java.net.InetAddress> addrs = nif.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress a = addrs.nextElement();
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) {
+                        String ip = a.getHostAddress();
+                        selfIps.add(ip);
+                        subnets.add(ip.substring(0, ip.lastIndexOf('.') + 1));
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        if (subnets.isEmpty()) {
+            postLog("🔍 [网段扫描] 无本地 IPv4 网段，跳过本轮");
+            return null;
+        }
+        if (mHotspotScanRound % 10 == 1) {
+            postLog("🔍 [网段扫描] 第" + mHotspotScanRound + "轮，候选网段=" + subnets
+                    + " 本机IP=" + selfIps);
+        }
+
+        // 2. 逐网段并发探测
+        for (String base : subnets) {
+            java.util.concurrent.ExecutorService pool =
+                    java.util.concurrent.Executors.newFixedThreadPool(32);
+            java.util.List<java.util.concurrent.Future<String>> futures = new java.util.ArrayList<>();
+            for (int i = 1; i <= 254; i++) {
+                final String ip = base + i;
+                if (selfIps.contains(ip)) continue;
+                futures.add(pool.submit(() -> probeGlassesHttp(ip)));
+            }
+            String found = null;
+            for (java.util.concurrent.Future<String> f : futures) {
+                try {
+                    String r = f.get(3, java.util.concurrent.TimeUnit.SECONDS);
+                    if (r != null) { found = r; break; }
+                } catch (Exception ignored) {}
+            }
+            pool.shutdown();
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /** 探测某 IP 是否为眼镜文件服务 */
+    private String probeGlassesHttp(String ip) {
+        try {
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
+                    new java.net.URL("http://" + ip + "/files/media.config").openConnection();
+            conn.setConnectTimeout(600);
+            conn.setReadTimeout(600);
+            conn.setRequestMethod("GET");
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            if (code == 200) return ip; // 命中眼镜文件服务
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** 关闭热点并释放 reservation */
+    private void stopHotspot() {
+        if (mHotspotReservation != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try { mHotspotReservation.close(); } catch (Exception ignored) {}
+            }
+            mHotspotReservation = null;
+        }
+    }
+
+    public boolean isSingleShotActive() {
+        return mSingleShotActive;
+    }
+
+    /** 停止连拍检测循环 */
+    public void stopDetectionLoop() {
+        if (!mDetectLoopActive) return;
+        mDetectLoopActive = false;
+        mMainHandler.removeCallbacks(mDetectNextRoundRunnable);
+        mMainHandler.removeCallbacks(mDetectFallbackRunnable);
+        mDetectNextScheduled = false;
+        postLog("⏹️ 连拍检测循环已停止");
+    }
+
+    public boolean isDetectionLoopActive() {
+        return mDetectLoopActive;
+    }
+
+    private void scheduleNextDetectRound() {
+        if (!mDetectLoopActive || mDetectNextScheduled) return;
+        mDetectNextScheduled = true;
+        mMainHandler.postDelayed(mDetectNextRoundRunnable, DETECT_LOOP_INTERVAL_MS);
+    }
+
+    /** 对最新同步照片跑防松标记检测（统一使用紧固件模型），结果（含预览图）通过 MSG_DETECT_RESULT 发往 UI。 */
+    private void detectLatestPhotoWithYolo() {
+        new Thread(() -> {
+            try {
+                if (!MarkedPointDetectorHolder.isReady(getApplicationContext())) {
+                    String error = MarkedPointDetectorHolder.getInitializationError();
+                    postLog("⚠️ 防松标记模型未就绪: " + error);
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT,
+                            new DetectResult(error == null ? "防松标记模型加载失败" : error)));
+                    return;
+                }
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                        20, "🖼 查找照片..."));
+                File latest = findLatestPhoto();
+                if (latest == null) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
+                    postLog("⚠️ 未找到照片，无法检测");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("无照片")));
+                    return;
+                }
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                        40, "🖼 解码照片..."));
+                Bitmap bitmap = decodeForDetection(latest.getAbsolutePath());
+                if (bitmap == null) {
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult("照片解码失败")));
+                    return;
+                }
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS,
+                        70, "🧠 本地推理中（" + MarkedPointDetectorHolder.getBackendInfo() + "）..."));
+                MarkedPointDetectorHolder.Result marked = MarkedPointDetectorHolder.detect(
+                        getApplicationContext(), bitmap);
+                List<YoloDetector.Detection> dets = marked.detections;
+                long ms = Math.round(marked.latencyMillis);
+                postLog("🎯 防松标记检测: " + dets.size() + " 个检查点, 推理 " + ms
+                        + "ms (" + latest.getName() + ") 设备=" + MarkedPointDetectorHolder.getBackendInfo());
+                // bitmap 所有权交给 UI 作为预览图（UI 显示下一帧时回收）
+                DetectResult result = new DetectResult(bitmap, dets, bitmap.getWidth(), bitmap.getHeight(), ms, latest.getName());
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, dets.size(), result));
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
+            } catch (Throwable e) {
+                Log.e(TAG, "detectLatestPhotoWithYolo error", e);
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_TRANSFER_PROGRESS, -1, ""));
+                postLog("⚠️ YOLO 检测异常: " + e.getMessage());
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_DETECT_RESULT, new DetectResult(e.getMessage())));
+            }
+        }).start();
+    }
+
+    /** 检测用解码：限制最长边 1280 足够 640 输入，减少内存与推理耗时 */
+    private Bitmap decodeForDetection(String path) {
+        try {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, opts);
+            int sample = 1;
+            while (Math.max(opts.outWidth, opts.outHeight) / (sample * 2) >= 1280) sample *= 2;
+            opts.inSampleSize = sample;
+            opts.inJustDecodeBounds = false;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeFile(path, opts);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 收到拍照事件（type=1）后自动触发同步（按拍照分流模式），带防抖和冷却期避免同步流程触发的事件导致死循环 */
+    private void onPhotoCaptured(int seq) {
+        // 序号为 0 表示模式切换（进入/退出导入模式），并非真实拍照，直接忽略
+        if (seq == 0) {
+            postLog("ℹ️ 忽略模式切换事件（序号=0）");
+            return;
+        }
+        if (System.currentTimeMillis() < mAutoSyncCooldownUntil) {
+            postLog("ℹ️ 冷却期内忽略拍照事件（序号=" + seq + "）");
+            return;
+        }
+        postLog("📸 检测到拍照事件（照片序号=" + seq + "）");
+        if (mSyncActive) {
+            postLog("ℹ️ 正在同步中，忽略本次拍照事件");
+            return;
+        }
+        // 非语音分流拍照（如眼镜按键）：仅自动导入原图库，不做识别
+        if (mCaptureMode == CAPTURE_MODE_MANUAL) {
+            mCaptureMode = CAPTURE_MODE_PLAIN;
+        }
+        mMainHandler.removeCallbacks(mAutoSyncRunnable);
+        mMainHandler.postDelayed(mAutoSyncRunnable, 800);
+    }
+
+    /** 同步完成后，识别 photos 目录里最新一张照片中的二维码并发事件 */
+    private void recognizeLatestPhoto() {
+        new Thread(() -> {
+            try {
+                File latest = findLatestPhoto();
+                if (latest == null) {
+                    postLog("⚠️ 未找到照片，无法识别");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, ""));
+                    return;
+                }
+                postLog("🔍 正在识别最新照片: " + latest.getName());
+                Bitmap bitmap = decodeForRecognition(latest.getAbsolutePath());
+                final String result = Vision.get().decodeQrCode(bitmap);
+                if (bitmap != null) bitmap.recycle();
+                if (result == null || result.isEmpty()) {
+                    postLog("ℹ️ 最新照片中未识别到二维码");
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, ""));
+                } else {
+                    postLog("✅ 识别到二维码: " + result);
+                    EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, result));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "recognizeLatestPhoto error", e);
+                EventBus.getDefault().post(new EventMsg(EventMsg.MSG_QR_RESULT, ""));
+            }
+        }).start();
+    }
+
+    private File findLatestPhoto() {
+        File dir = getPhotoDir();
+        File[] files = dir.listFiles();
+        if (files == null) return null;
+        File latest = null;
+        long max = 0;
+        for (File f : files) {
+            if (f.isFile() && f.lastModified() > max) {
+                max = f.lastModified();
+                latest = f;
+            }
+        }
+        return latest;
+    }
+
+    private Bitmap decodeForRecognition(String path) {
+        try {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, opts);
+            int reqSize = 2500;
+            int sample = 1;
+            int max = Math.max(opts.outWidth, opts.outHeight);
+            while (max / sample > reqSize) sample *= 2;
+            opts.inSampleSize = sample;
+            opts.inJustDecodeBounds = false;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeFile(path, opts);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String[] splitLines(String s) {
@@ -1309,6 +2526,7 @@ public class GlassBleService extends Service {
         return list.toArray(new String[0]);
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private File getPhotoDir() {
         File dir = new File(getExternalFilesDir(null), "glass_media/photos");
         if (!dir.exists()) dir.mkdirs();

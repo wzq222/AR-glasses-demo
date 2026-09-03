@@ -14,6 +14,11 @@ public class EventMsg {
     public static final int MSG_SYNC_COMPLETE = 102;      // 文件同步完成
     public static final int MSG_LOG = 103;                // 仅追加到运行日志（不弹Toast）
     public static final int MSG_PHOTO_LIST = 105;          // 眼镜照片列表已获取（obj=List<String>）
+    public static final int MSG_QR_RESULT = 106;           // 二维码识别结果（obj=String，空串表示未识别到）
+    public static final int MSG_BATTERY_UPDATE = 107;       // 眼镜电量更新（arg1=电量0-100，arg2=1表示充电中）
+    public static final int MSG_DETECT_RESULT = 108;        // YOLO 检测结果（arg1=目标数，-1=失败；obj=List<YoloDetector.Detection>）
+    public static final int MSG_TRANSFER_PROGRESS = 109;    // 回传进度（arg1=0-100 百分比，-1=结束隐藏；obj=描述文本）
+    public static final int MSG_METER_RECOGNIZE = 110;      // 请求万用表读数识别（obj=照片文件路径）
 
     public EventMsg(int what, int arg1, int arg2) {
         this.what = what;

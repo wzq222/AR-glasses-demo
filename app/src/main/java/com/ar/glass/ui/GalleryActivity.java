@@ -1,10 +1,14 @@
 package com.ar.glass.ui;
 
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
@@ -19,11 +23,15 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.ar.glass.R;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -44,6 +52,10 @@ public class GalleryActivity extends AppCompatActivity {
     private TextView tvImageCount;
     private TextView tvEmpty;
     private Button btnBack;
+    private Button btnImport;
+
+    private final ActivityResultLauncher<String> importLauncher =
+            registerForActivityResult(new ActivityResultContracts.GetMultipleContents(), this::importImages);
 
     private File rootDir;
     private List<File> imageFiles = new ArrayList<>();
@@ -79,8 +91,10 @@ public class GalleryActivity extends AppCompatActivity {
         tvImageCount = findViewById(R.id.tvImageCount);
         tvEmpty = findViewById(R.id.tvEmpty);
         btnBack = findViewById(R.id.btnBack);
+        btnImport = findViewById(R.id.btnImport);
 
         btnBack.setOnClickListener(v -> finish());
+        btnImport.setOnClickListener(v -> importLauncher.launch("image/*"));
 
         gridImages.setOnItemClickListener((parent, view, position, id) -> {
             if (position >= 0 && position < imageFiles.size()) {
@@ -163,6 +177,87 @@ public class GalleryActivity extends AppCompatActivity {
         intent.putExtra("start_index", index);
         intent.putExtra("title", tvGalleryTitle.getText().toString());
         startActivity(intent);
+    }
+
+    /** 从手机相册导入图片到原图库 */
+    private void importImages(List<Uri> uris) {
+        if (uris == null || uris.isEmpty()) return;
+        if (rootDir == null) return;
+        if (!rootDir.exists() && !rootDir.mkdirs()) {
+            Toast.makeText(this, "无法创建照片目录", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        executor.execute(() -> {
+            int imported = 0;
+            for (Uri uri : uris) {
+                if (copyImageToPhotos(uri)) imported++;
+            }
+            final int count = imported;
+            mainHandler.post(() -> {
+                if (count > 0) {
+                    Toast.makeText(this, "已导入 " + count + " 张图片", Toast.LENGTH_SHORT).show();
+                    loadImages();
+                } else {
+                    Toast.makeText(this, "导入失败，请重试", Toast.LENGTH_SHORT).show();
+                }
+            });
+        });
+    }
+
+    private boolean copyImageToPhotos(Uri uri) {
+        try {
+            ContentResolver resolver = getContentResolver();
+            String name = queryDisplayName(resolver, uri);
+            if (name == null || name.isEmpty()) {
+                name = "import_" + System.currentTimeMillis() + ".jpg";
+            }
+            File out = uniqueFile(rootDir, name);
+            InputStream in = resolver.openInputStream(uri);
+            if (in == null) return false;
+            FileOutputStream outStream = new FileOutputStream(out);
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                outStream.write(buf, 0, len);
+            }
+            outStream.flush();
+            outStream.close();
+            in.close();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String queryDisplayName(ContentResolver resolver, Uri uri) {
+        Cursor cursor = null;
+        try {
+            cursor = resolver.query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) return cursor.getString(idx);
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+    }
+
+    /** 生成不重名的目标文件 */
+    private File uniqueFile(File dir, String name) {
+        File f = new File(dir, name);
+        if (!f.exists()) return f;
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String ext = dot > 0 ? name.substring(dot) : "";
+        int i = 1;
+        while (f.exists()) {
+            f = new File(dir, base + "_" + i + ext);
+            i++;
+        }
+        return f;
     }
 
     @Override

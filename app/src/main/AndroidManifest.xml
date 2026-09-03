@@ -72,6 +72,32 @@
             android:name=".ui.ImageViewerActivity"
             android:screenOrientation="portrait" />
 
+        <!-- 巡检台账 -->
+        <activity
+            android:name=".ui.MeterRecordsActivity"
+            android:screenOrientation="portrait" />
+
+        <!-- 手机摄像头实时检测 -->
+        <activity
+            android:name=".ui.LiveDetectActivity"
+            android:screenOrientation="portrait" />
+
+        <!-- 后台任务领取与SOP逐步执行 -->
+        <activity
+            android:name=".sop.SopActivity"
+            android:screenOrientation="portrait" />
+
+        <!-- 文件分享（导出台账 CSV/Excel） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.ar.glass.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- BLE前台服务 -->
         <service
             android:name=".core.GlassBleService"
@@ -85,6 +111,24 @@
         <activity
             android:name="com.xy.ota.view.ScanActivity"
             android:screenOrientation="portrait" />
+
+        <!-- YOLO 检测自测（无需眼镜：adb broadcast 触发本机照片检测） -->
+        <receiver
+            android:name=".util.DetectSelfTestReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ar.glass.DETECT_SELF_TEST" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ADB 调试控制接口（回传链路批量测试/验证） -->
+        <receiver
+            android:name=".util.GlassDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ar.glass.DEBUG" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

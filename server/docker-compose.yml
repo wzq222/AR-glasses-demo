@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - crrc_sop_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  crrc_sop_data:

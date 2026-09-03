@@ -2,6 +2,8 @@ package com.ar.glass.ui;
 
 import android.Manifest;
 import android.app.Dialog;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -10,6 +12,8 @@ import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -19,32 +23,56 @@ import android.provider.Settings;
 import android.util.Log;
 import android.util.LruCache;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import com.ar.glass.R;
 import com.ar.glass.core.AppState;
 import com.ar.glass.core.GlassBleService;
+import com.ar.glass.record.MeterRecordStore;
 import com.ar.glass.util.EventMsg;
+import com.ar.glass.util.MeterTts;
+import com.ar.glass.vision.MeterReading;
+import com.ar.glass.vision.MarkedPointDetectorHolder;
+import com.ar.glass.vision.ThresholdAlarm;
+import com.ar.glass.vision.ThresholdConfig;
+import com.ar.glass.vision.Vision;
+import com.ar.glass.vision.cloud.MeterCloudOcr;
+import com.ar.glass.voice.VoiceController;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -54,18 +82,65 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private static final int PERMISSION_REQUEST_CODE = 100;
+    private static final int CAMERA_REQUEST_CODE = 200;
+    private static final String FILE_PROVIDER_AUTHORITY = "com.ar.glass.fileprovider";
 
     private TextView tvBleStatus;
     private TextView tvSystemStatus;
     private TextView tvDeviceName;
+    private TextView tvBatteryStatus;
     private TextView tvLog;
+    /** 日志区是否展开（默认收起：日志全量记录在后台，前台仅进度条） */
+    private boolean mLogExpanded = false;
+    private View cardTransfer;
+    private TextView tvTransferStatus;
+    private ProgressBar pbTransfer;
 
     private Button btnSyncPhotos;
     private Button btnGalleryOriginal;
     private Button btnSelectDevice;
+    private Button btnNetDiag;
+    private Button btnVoice;
+    private Button btnDetectLoop;
+    private Button btnPhoneDetect;
+    private Button btnLiveDetect;
+    private Button btnGalleryDetect;
+    private Button btnSopTasks;
+    private Button btnChangeModel;
+    private Button btnClearGallery;
+    private Button btnPriority;
+    private Spinner spTransferMode;
+    private TextView tvModelName;
+    private TextView tvDetectStatus;
+    private TextView tvDetectConf;
+    private TextView tvDetectPlaceholder;
+    private ImageView ivDetectPreview;
+    private com.ar.glass.vision.ui.BoxOverlay detectOverlay;
+    private SeekBar seekDetectConf;
+    /** 当前显示的预览图（所有权在 Service/自测接收器 → UI，替换时回收旧图） */
+    private Bitmap mDetectPreview;
+    private Button btnRecords;
+    private Button btnThreshold;
+    private CheckBox cbVoice;
+    private CheckBox cbAlarm;
+
+    private ActivityResultLauncher<String> mPickImageLauncher;
+    private ActivityResultLauncher<Uri> mTakePictureLauncher;
+    private Uri mCaptureUri;
+    private ActivityResultLauncher<Uri> mPhoneDetectLauncher;
+    private ActivityResultLauncher<String> mGalleryDetectLauncher;
+    private ActivityResultLauncher<String[]> mModelPickerLauncher;
+    private Uri mPhoneDetectUri;
+    private final ExecutorService mOcrExecutor = Executors.newSingleThreadExecutor();
+
+    private MeterTts mTts;
+    private MeterRecordStore mStore;
+    private ThresholdConfig mThresholdConfig;
 
     private GlassBleService mBleService;
     private boolean mServiceBound = false;
+
+    private VoiceController mVoiceController;
 
     private StringBuilder logBuilder = new StringBuilder();
 
@@ -91,27 +166,419 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         initViews();
+        initVoiceController();
         checkPermissions();
         EventBus.getDefault().register(this);
 
-        appendLog("AR眼镜照片同步应用启动...");
+        mTts = new MeterTts(this);
+        mStore = MeterRecordStore.get(this);
+        mThresholdConfig = new ThresholdConfig(this);
+
+        appendLog("AR眼镜控制应用启动...");
     }
 
     private void initViews() {
         tvBleStatus = findViewById(R.id.tvBleStatus);
         tvSystemStatus = findViewById(R.id.tvSystemStatus);
         tvDeviceName = findViewById(R.id.tvDeviceName);
+        tvBatteryStatus = findViewById(R.id.tvBatteryStatus);
         tvLog = findViewById(R.id.tvLog);
+        cardTransfer = findViewById(R.id.cardTransfer);
+        tvTransferStatus = findViewById(R.id.tvTransferStatus);
+        pbTransfer = findViewById(R.id.pbTransfer);
+        // 日志区默认收起，点击标题展开/收起
+        TextView tvLogToggle = findViewById(R.id.tvLogToggle);
+        tvLogToggle.setOnClickListener(v -> {
+            mLogExpanded = !mLogExpanded;
+            tvLog.setVisibility(mLogExpanded ? View.VISIBLE : View.GONE);
+            tvLogToggle.setText(mLogExpanded ? "▼ 运行日志（点击收起）" : "▶ 运行日志（点击展开）");
+        });
 
         btnSyncPhotos = findViewById(R.id.btnSyncFiles);
         btnGalleryOriginal = findViewById(R.id.btnGalleryOriginal);
         btnSelectDevice = findViewById(R.id.btnSelectDevice);
+        btnNetDiag = findViewById(R.id.btnNetDiag);
+        btnVoice = findViewById(R.id.btnVoice);
+        btnDetectLoop = findViewById(R.id.btnDetectLoop);
+        btnPhoneDetect = findViewById(R.id.btnPhoneDetect);
+        btnLiveDetect = findViewById(R.id.btnLiveDetect);
+        btnGalleryDetect = findViewById(R.id.btnGalleryDetect);
+        btnSopTasks = findViewById(R.id.btnSopTasks);
+        btnChangeModel = findViewById(R.id.btnChangeModel);
+        btnClearGallery = findViewById(R.id.btnClearGallery);
+        btnPriority = findViewById(R.id.btnPriority);
+        tvModelName = findViewById(R.id.tvModelName);
+        updateModelNameUI();
+        // 回传模式选择（auto/p2p/ap/thumb）：与 ADB setmode 共用 transfer_mode 配置
+        spTransferMode = findViewById(R.id.spTransferMode);
+        if (spTransferMode != null) {
+            final String[] modes = {"auto（智能选择）", "p2p（WiFi直连）", "ap（热点）", "thumb（BLE缩略图）"};
+            final String[] modeKeys = {"auto", "p2p", "ap", "thumb"};
+            ArrayAdapter<String> modeAdapter = new ArrayAdapter<>(
+                    this, android.R.layout.simple_spinner_item, modes);
+            modeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            spTransferMode.setAdapter(modeAdapter);
+            String cur = getSharedPreferences("debug", MODE_PRIVATE)
+                    .getString("transfer_mode", "auto");
+            for (int i = 0; i < modeKeys.length; i++) {
+                if (modeKeys[i].equals(cur)) {
+                    spTransferMode.setSelection(i);
+                    break;
+                }
+            }
+            spTransferMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, android.view.View view, int position, long id) {
+                    String key = modeKeys[position];
+                    getSharedPreferences("debug", MODE_PRIVATE).edit()
+                            .putString("transfer_mode", key).apply();
+                    appendLog("⚙ 回传模式已设为: " + key);
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) {
+                }
+            });
+        }
+        tvDetectStatus = findViewById(R.id.tvDetectStatus);
+        tvDetectConf = findViewById(R.id.tvDetectConf);
+        tvDetectPlaceholder = findViewById(R.id.tvDetectPlaceholder);
+        ivDetectPreview = findViewById(R.id.ivDetectPreview);
+        detectOverlay = findViewById(R.id.detectOverlay);
+        seekDetectConf = findViewById(R.id.seekDetectConf);
+        // 紧固件/防松标记检测使用固定高召回阈值（唯一模型路径）
+        seekDetectConf.setEnabled(false);
+        tvDetectConf.setText("固定高召回阈值");
+
+        btnRecords = findViewById(R.id.btnRecords);
+        btnThreshold = findViewById(R.id.btnThreshold);
+        cbVoice = findViewById(R.id.cbVoice);
+        cbAlarm = findViewById(R.id.cbAlarm);
 
         btnSyncPhotos.setOnClickListener(v -> syncPhotos());
         btnGalleryOriginal.setOnClickListener(v -> openGallery(GalleryActivity.MODE_ORIGINAL));
         btnSelectDevice.setOnClickListener(v -> showDeviceDialog());
+        btnNetDiag.setOnClickListener(v -> {
+            // 网络诊断：完整状态写入运行日志（展开日志区查看），并自动展开
+            appendLog(com.ar.glass.util.NetworkDiagnostics.collect(this));
+            if (!mLogExpanded) {
+                mLogExpanded = true;
+                tvLog.setVisibility(View.VISIBLE);
+                ((TextView) findViewById(R.id.tvLogToggle)).setText("▼ 运行日志（点击收起）");
+            }
+            Toast.makeText(this, "网络诊断已写入运行日志", Toast.LENGTH_SHORT).show();
+        });
+        btnDetectLoop.setOnClickListener(v -> startSingleDetect());
+        btnPhoneDetect.setOnClickListener(v -> launchPhoneDetectionCamera());
+        btnLiveDetect.setOnClickListener(v -> startActivity(
+                new Intent(this, LiveDetectActivity.class)));
+        btnGalleryDetect.setOnClickListener(v -> mGalleryDetectLauncher.launch("image/*"));
+        btnSopTasks.setOnClickListener(v ->
+                startActivity(new Intent(this, com.ar.glass.sop.SopActivity.class)));
+        // 更换模型：点击选择 ONNX 模型文件并热加载；长按恢复内置模型
+        btnChangeModel.setOnClickListener(v ->
+                mModelPickerLauncher.launch(new String[]{"*/*"}));
+        btnChangeModel.setOnLongClickListener(v -> {
+            confirmRestoreDefaultModel();
+            return true;
+        });
+        // 清空原图库：二次确认后一键清除（权限与体验兼顾）
+        if (btnClearGallery != null) btnClearGallery.setOnClickListener(v -> confirmClearGallery());
+        // 指令优先级规则管理（管理员可配置：将 bulk 命令升级为 urgent 或恢复）
+        if (btnPriority != null) btnPriority.setOnClickListener(v -> showPriorityDialog());
+        btnVoice.setOnTouchListener((v, event) -> {
+            if (mVoiceController == null) return false;
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    appendLog("🎤 按住说话，松手识别...");
+                    mVoiceController.startCapture();
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    mVoiceController.stopCaptureAndRecognize();
+                    return true;
+            }
+            return false;
+        });
+
+        btnRecords.setOnClickListener(v ->
+                startActivity(new Intent(this, MeterRecordsActivity.class)));
+        btnThreshold.setOnClickListener(v -> showThresholdDialog());
+
+        // 万用表读数识别：现场拍照 → 云端识别（入口由照片路由/相册触发）
+        mTakePictureLauncher = registerForActivityResult(
+                new ActivityResultContracts.TakePicture(),
+                success -> {
+                    if (success && mCaptureUri != null) {
+                        recognizeMeterFromUri(mCaptureUri);
+                    }
+                });
+
+        // 手机拍照检测：本机拍照 → 紧固件/防松标记检测
+        mPhoneDetectLauncher = registerForActivityResult(
+                new ActivityResultContracts.TakePicture(),
+                success -> {
+                    if (success && mPhoneDetectUri != null) {
+                        detectPhonePhoto(mPhoneDetectUri);
+                    } else {
+                        resetPhoneDetectButton();
+                    }
+                });
+
+        // 相册选图检测：按当前模型检测所选照片
+        mGalleryDetectLauncher = registerForActivityResult(
+                new ActivityResultContracts.GetContent(),
+                uri -> {
+                    if (uri != null) {
+                        btnGalleryDetect.setEnabled(false);
+                        btnGalleryDetect.setText("⏳ 检测中…");
+                        detectPhonePhoto(uri);
+                        btnGalleryDetect.setEnabled(true);
+                        btnGalleryDetect.setText("🖼 相册选图检测");
+                    }
+                });
+
+        // 更换模型：选择模型文件 → 校验加载 → 热替换检测器
+        mModelPickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.OpenDocument(),
+                uri -> {
+                    if (uri != null) {
+                        loadCustomModel(uri);
+                    }
+                });
 
         setControlsEnabled(false);
+    }
+
+    // ==================== 更换检测模型 ====================
+
+    private void loadCustomModel(Uri uri) {
+        btnChangeModel.setEnabled(false);
+        appendLog("📂 正在加载模型文件...");
+        new Thread(() -> {
+            String error = null;
+            String displayName = "自定义模型";
+            try {
+                displayName = queryDisplayName(uri);
+                // ① 拷贝到临时文件
+                File incoming = new File(getCacheDir(), "incoming_model.onnx");
+                try (InputStream in = getContentResolver().openInputStream(uri);
+                     FileOutputStream out = new FileOutputStream(incoming)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                // ② 试加载校验，不通过则不替换当前模型
+                com.ar.glass.vision.realtime.OnnxFastenerDetector probe =
+                        new com.ar.glass.vision.realtime.OnnxFastenerDetector(incoming);
+                if (!probe.isReady()) {
+                    error = probe.getInitializationError();
+                    probe.close();
+                    incoming.delete();
+                } else {
+                    probe.close();
+                    // ③ 替换生效文件并热重载
+                    File target = MarkedPointDetectorHolder.getCustomModelFile(this);
+                    if (target.exists()) target.delete();
+                    if (!incoming.renameTo(target)) {
+                        error = "模型文件替换失败";
+                    } else {
+                        error = MarkedPointDetectorHolder.reload(this);
+                        if (error == null) {
+                            getPreferences(MODE_PRIVATE).edit()
+                                    .putString("custom_model_name", displayName).apply();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                error = "模型文件读取失败: " + e.getMessage();
+            }
+            final String err = error;
+            final String name = displayName;
+            runOnUiThread(() -> {
+                btnChangeModel.setEnabled(true);
+                if (err == null) {
+                    updateModelNameUI();
+                    appendLog("✅ 模型已更换: " + name);
+                    Toast.makeText(this, "模型已加载: " + name, Toast.LENGTH_SHORT).show();
+                } else {
+                    appendLog("❌ 模型加载失败: " + err);
+                    Toast.makeText(this, "模型加载失败: " + err, Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
+    }
+
+    private void confirmRestoreDefaultModel() {
+        if (!MarkedPointDetectorHolder.isCustomModelActive(this)) {
+            Toast.makeText(this, "当前已是内置模型", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("恢复内置模型")
+                .setMessage("放弃当前自定义模型，恢复内置紧固件防松模型？")
+                .setPositiveButton("恢复", (d, w) -> new Thread(() -> {
+                    String err = MarkedPointDetectorHolder.restoreDefault(this);
+                    runOnUiThread(() -> {
+                        if (err == null) {
+                            updateModelNameUI();
+                            appendLog("✅ 已恢复内置紧固件防松模型");
+                            Toast.makeText(this, "已恢复内置模型", Toast.LENGTH_SHORT).show();
+                        } else {
+                            appendLog("❌ 恢复内置模型失败: " + err);
+                            Toast.makeText(this, "恢复失败: " + err, Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }).start())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void updateModelNameUI() {
+        if (MarkedPointDetectorHolder.isCustomModelActive(this)) {
+            String name = getPreferences(MODE_PRIVATE)
+                    .getString("custom_model_name", "自定义模型");
+            tvModelName.setText("📦 " + name + "（长按恢复内置）");
+        } else {
+            tvModelName.setText("🔩 紧固件防松（内置）");
+        }
+    }
+
+    private String queryDisplayName(Uri uri) {
+        try (android.database.Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String name = c.getString(idx);
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            }
+        } catch (Exception ignored) {}
+        return "自定义模型";
+    }
+
+    /** 清空原图库：统计数量 → 二次确认 → 一键清除 */
+    private void confirmClearGallery() {
+        final File dir = new File(getExternalFilesDir(null), "glass_media/photos");
+        final int count;
+        File[] files = dir.listFiles();
+        int c = 0;
+        if (files != null) {
+            for (File f : files) if (f.isFile()) c++;
+        }
+        count = c;
+        if (count == 0) {
+            Toast.makeText(this, "原图库已是空的", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("清空原图库")
+                .setMessage("将永久删除原图库中的 " + count + " 张照片，此操作不可恢复。确定继续？")
+                .setPositiveButton("确定清空", (d, w) -> {
+                    int deleted = com.ar.glass.util.GlassBleServiceBridge.clearPhotos();
+                    appendLog("🧹 已清空原图库 " + deleted + " 张照片");
+                    Toast.makeText(this, "已清空 " + deleted + " 张照片", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 指令优先级规则管理：管理员可将指定 bulk 命令升级为 urgent（高优先）或恢复常规 */
+    private void showPriorityDialog() {
+        final android.content.SharedPreferences sp = getSharedPreferences("debug", MODE_PRIVATE);
+        final String[] cmds = {"cs_wfsta", "cs_opap", "cs_hrt", "cs_flts", "cs_sdfl", "cs_wfscan"};
+        final String[] labels = new String[cmds.length];
+        final boolean[] checked = new boolean[cmds.length];
+        StringBuilder sb = new StringBuilder("当前队列: " + com.ar.glass.util.GlassBleServiceBridge.queueStatus() + "\n\n勾选 = 升级为高优先级（urgent）：\n");
+        for (int i = 0; i < cmds.length; i++) {
+            boolean isUrgent = "urgent".equals(sp.getString("prio_" + cmds[i], null));
+            checked[i] = isUrgent;
+            labels[i] = cmds[i] + (isUrgent ? "（⚡高优先）" : "（常规）");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("指令优先级规则")
+                .setMessage(sb.toString())
+                .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
+                    String key = "prio_" + cmds[which];
+                    android.content.SharedPreferences.Editor ed = sp.edit();
+                    if (isChecked) ed.putString(key, "urgent");
+                    else ed.remove(key);
+                    ed.apply();
+                    appendLog("⚙ 优先级规则: " + cmds[which] + " => " + (isChecked ? "urgent" : "bulk"));
+                })
+                .setPositiveButton("完成", null)
+                .show();
+    }
+
+    private void initVoiceController() {
+        mVoiceController = new VoiceController(this, new VoiceController.Listener() {
+            @Override
+            public void onKeywordDetected(String keyword) {
+                appendLog("🎤 识别到关键词: " + keyword);
+                if (mBleService == null) {
+                    appendLog("⚠️ BLE服务未就绪，无法拍照");
+                    return;
+                }
+                // 语音分流：按识别文本选择拍照后的检测方式
+                int mode = classifyCaptureMode(keyword);
+                mBleService.takePhotoFor(mode);
+            }
+
+            @Override
+            public void onSpeechText(String text) {
+                appendLog("🎤 语音: " + text);
+            }
+
+            @Override
+            public void onListeningChanged(boolean listening) {
+                btnVoice.setText(listening ? "🔴 松开识别..." : "🎤 按住说话");
+            }
+
+            @Override
+            public void onError(String message) {
+                appendLog("⚠️ " + message);
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    /**
+     * 语音指令同音字容错表：ASR 常把指令词识别成同音/近音字（如“对齐”→“对其”）。
+     * 每行为一条指令的全部变体，命中任意一个即视为该指令。
+     * 新增指令时在此追加一行即可。
+     */
+    private static final String[][] VOICE_COMMAND_VARIANTS = {
+            // “对齐”duì qí：qi 音同音字
+            {"对齐", "对其", "对气", "对器", "对起", "对期", "对棋", "对企",
+                    "对汽", "对砌", "对启", "对七", "对妻", "对旗", "对骑", "对祈"},
+            // “二维码”èr wéi mǎ：wei 音同音字
+            {"二维码", "而维码", "二唯码", "二围码", "尔维码", "2维码"},
+            // “万用表”wàn yòng biǎo：yong 音同音字（“万能表”为常见口误）
+            {"万用表", "万永表", "万庸表", "万勇表", "万能表", "婉用表"},
+    };
+
+    /** text 是否包含 variants 中的任意词 */
+    private static boolean containsAny(String text, String[] variants) {
+        for (String v : variants) {
+            if (text.contains(v)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 语音指令分类：
+     * - “二维码拍照” → 拍照同步后识别二维码
+     * - “对齐拍照” → 拍照同步后 YOLO 检测
+     * - “万用表拍照” → 拍照同步后读数识别
+     * - 普通拍照 → 仅同步存入原图库
+     * 匹配时使用 {@link #VOICE_COMMAND_VARIANTS} 同音字容错。
+     */
+    private int classifyCaptureMode(String text) {
+        if (text == null) return GlassBleService.CAPTURE_MODE_PLAIN;
+        if (containsAny(text, VOICE_COMMAND_VARIANTS[1])) return GlassBleService.CAPTURE_MODE_QR;
+        if (containsAny(text, VOICE_COMMAND_VARIANTS[0])) return GlassBleService.CAPTURE_MODE_YOLO;
+        if (containsAny(text, VOICE_COMMAND_VARIANTS[2])) return GlassBleService.CAPTURE_MODE_METER;
+        return GlassBleService.CAPTURE_MODE_PLAIN;
     }
 
     private void checkPermissions() {
@@ -123,6 +590,7 @@ public class MainActivity extends AppCompatActivity {
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.INTERNET,
                     Manifest.permission.ACCESS_WIFI_STATE,
                     Manifest.permission.CHANGE_WIFI_STATE,
@@ -137,6 +605,7 @@ public class MainActivity extends AppCompatActivity {
                         Manifest.permission.ACCESS_FINE_LOCATION,
                         Manifest.permission.ACCESS_COARSE_LOCATION,
                         Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.RECORD_AUDIO,
                         Manifest.permission.INTERNET,
                         Manifest.permission.ACCESS_WIFI_STATE,
                         Manifest.permission.CHANGE_WIFI_STATE,
@@ -154,6 +623,7 @@ public class MainActivity extends AppCompatActivity {
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.WRITE_EXTERNAL_STORAGE,
                     Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.INTERNET,
                     Manifest.permission.ACCESS_WIFI_STATE,
                     Manifest.permission.CHANGE_WIFI_STATE,
@@ -208,12 +678,42 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
+    private boolean isBluetoothEnabled() {
+        try {
+            BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
+            return adapter != null && adapter.isEnabled();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void showBluetoothDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("⚠️ 需要开启蓝牙")
+                .setMessage("检测到手机蓝牙未开启，无法搜索到AR眼镜。\n\n请开启蓝牙，应用会自动继续搜索。")
+                .setPositiveButton("去开启蓝牙", (dialog, which) -> {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "请手动开启蓝牙", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("稍后", (dialog, which) -> {})
+                .show();
+    }
+
     private void checkLocationAndStartService() {
         if (!isLocationEnabled()) {
             appendLog("⚠️ 位置服务未开启，BLE扫描可能找不到设备");
             showLocationDialog();
         } else {
             appendLog("✅ 位置服务已开启");
+        }
+        // 检查蓝牙，未开启则弹窗提示（不阻塞服务启动，服务会持续扫描，开蓝牙后自动搜到）
+        if (!isBluetoothEnabled()) {
+            appendLog("⚠️ 手机蓝牙未开启");
+            showBluetoothDialog();
         }
         startAndBindBleService();
     }
@@ -250,6 +750,12 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "请授予所有权限以正常使用", Toast.LENGTH_LONG).show();
             }
             checkLocationAndStartService();
+        } else if (requestCode == CAMERA_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                launchCamera();
+            } else {
+                Toast.makeText(this, "需要相机权限才能拍照识别", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -267,8 +773,12 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     tvSystemStatus.setText("未就绪");
                     tvSystemStatus.setTextColor(getColor(android.R.color.holo_red_dark));
+                    tvBatteryStatus.setText("-");
+                    tvBatteryStatus.setTextColor(getColor(android.R.color.darker_gray));
                     appendLog("❌ BLE断开，正在重连...");
                     updateSyncButtonState(false);
+                    // 断连时终止检测循环并复位按钮
+                    resetDetectLoopUi();
                 }
                 break;
 
@@ -320,12 +830,191 @@ public class MainActivity extends AppCompatActivity {
                 }
                 break;
 
+            case EventMsg.MSG_TRANSFER_PROGRESS: {
+                int percent = msg.arg1;
+                String info = msg.obj != null ? (String) msg.obj : "";
+                if (percent == -1) {
+                    // 结束：隐藏进度卡片
+                    cardTransfer.setVisibility(View.GONE);
+                } else {
+                    cardTransfer.setVisibility(View.VISIBLE);
+                    tvTransferStatus.setText(info);
+                    if (percent == -2) {
+                        // 不确定进度（配网/等待中）：转圈
+                        pbTransfer.setIndeterminate(true);
+                    } else {
+                        pbTransfer.setIndeterminate(false);
+                        pbTransfer.setProgress(percent);
+                    }
+                }
+                break;
+            }
+
             case EventMsg.MSG_PHOTO_LIST:
                 Object listObj = msg.obj;
                 if (listObj instanceof List) {
                     showPhotoSelectDialog((List<String>) listObj);
                 }
                 break;
+
+            case EventMsg.MSG_QR_RESULT:
+                String qrText = (String) msg.obj;
+                showQrResultDialog(qrText);
+                break;
+
+            case EventMsg.MSG_METER_RECOGNIZE:
+                // 语音“万用表拍照”分流：对同步到原图库的最新照片做云端读数识别
+                String meterPath = (String) msg.obj;
+                if (meterPath != null) {
+                    recognizeMeterFromUri(Uri.fromFile(new File(meterPath)));
+                }
+                break;
+
+            case EventMsg.MSG_DETECT_RESULT: {
+                Object rObj = msg.obj;
+                if (!(rObj instanceof com.ar.glass.vision.DetectResult)) break;
+                renderDetectResult((com.ar.glass.vision.DetectResult) rObj);
+                break;
+            }
+
+            case EventMsg.MSG_BATTERY_UPDATE:
+                int battery = msg.arg1;
+                boolean charging = msg.arg2 == 1;
+                tvBatteryStatus.setText(battery + "%" + (charging ? " ⚡充电中" : ""));
+                tvBatteryStatus.setTextColor(getColor(battery < 20
+                        ? android.R.color.holo_red_dark : android.R.color.holo_green_dark));
+                break;
+        }
+    }
+
+    /** 渲染一轮 YOLO 检测结果：预览图 + 检测框叠加 + 语音播报（语音拍照与相册检测共用） */
+    private void renderDetectResult(com.ar.glass.vision.DetectResult r) {
+        if (!r.isSuccess()) {
+            tvDetectStatus.setText("检测失败（" + r.error + "）");
+            appendLog("⚠️ YOLO 检测失败: " + r.error);
+            return;
+        }
+        String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                .format(new java.util.Date());
+        int detections = r.detections != null ? r.detections.size() : 0;
+
+        // 预览图：所有权交接，替换时回收旧图
+        Bitmap old = mDetectPreview;
+        mDetectPreview = r.preview;
+        ivDetectPreview.setImageBitmap(r.preview);
+        tvDetectPlaceholder.setVisibility(View.GONE);
+        if (old != null && old != r.preview && !old.isRecycled()) old.recycle();
+
+        // 检测框叠加（fitCenter 精确映射）
+        detectOverlay.setResults(r.detections, r.frameW, r.frameH);
+
+        tvDetectStatus.setText("[" + time + "] " + r.fileName + " · 检测到 "
+                + detections + " 个目标 · 推理 " + r.inferMs + "ms\n"
+                + "计算设备: " + com.ar.glass.vision.MarkedPointDetectorHolder.getBackendInfo());
+        appendLog("🎯 [" + time + "] YOLO 检测到 " + detections + " 个目标 · "
+                + com.ar.glass.vision.MarkedPointDetectorHolder.getBackendInfo());
+        // 结果通过眼镜扬声器语音播报（TTS 走 A2DP 媒体通道）
+        if (mVoiceController != null) {
+            mVoiceController.speak(detections > 0
+                    ? ("检测到 " + detections + " 个目标")
+                    : "未检测到目标");
+        }
+    }
+
+    /** BLE 断开时复位检测状态提示 */
+    private void resetDetectLoopUi() {
+        if (tvDetectStatus != null) {
+            tvDetectStatus.setText("蓝牙已断开，请重新连接后再拍照检测");
+        }
+    }
+
+    /** 单张检测：拍照 → 同步一张 → YOLO → 预览（连拍逻辑已停用） */
+    private void startSingleDetect() {
+        Log.i("GlassLog", "🔘 [UI] 用户点击单张检测: bleConnected=" + AppState.getInstance().isBleConnected);
+        if (mBleService == null) {
+            Log.i("GlassLog", "🔘 [UI] 拒绝: BLE服务未绑定");
+            Toast.makeText(this, "BLE服务未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!AppState.getInstance().isBleConnected) {
+            Log.i("GlassLog", "🔘 [UI] 拒绝: 蓝牙未连接眼镜");
+            Toast.makeText(this, "请等待蓝牙连接眼镜", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        btnDetectLoop.setEnabled(false);
+        btnDetectLoop.setText("⏳ 拍照同步检测中…");
+        tvDetectStatus.setText("流程：眼镜拍照 → 传输到手机 → 防松标记检测 → 显示预览");
+        // 分流拍照：YOLO 检测模式（防松标记模型），同步完成后自动检测并复位按钮
+        mBleService.takePhotoFor(GlassBleService.CAPTURE_MODE_YOLO);
+    }
+
+    /** 单张检测完成后复位按钮 */
+    private void resetSingleDetectButton() {
+        btnDetectLoop.setEnabled(true);
+        btnDetectLoop.setText("👓 眼镜拍照检测");
+    }
+
+    /** 手机独立检测入口：无需连接眼镜，调用系统相机拍原图。 */
+    private void launchPhoneDetectionCamera() {
+        try {
+            File captureFile = new File(getCacheDir(),
+                    "fastener_capture_" + System.currentTimeMillis() + ".jpg");
+            mPhoneDetectUri = FileProvider.getUriForFile(
+                    this, FILE_PROVIDER_AUTHORITY, captureFile);
+            btnPhoneDetect.setEnabled(false);
+            btnPhoneDetect.setText("📷 等待手机拍照…");
+            mPhoneDetectLauncher.launch(mPhoneDetectUri);
+        } catch (Exception e) {
+            Log.e(TAG, "启动手机检测相机失败", e);
+            resetPhoneDetectButton();
+            Toast.makeText(this, "无法启动手机相机：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void detectPhonePhoto(Uri uri) {
+        btnPhoneDetect.setText("⏳ 正在检测防松标记…");
+        tvDetectStatus.setText("手机照片已获取，正在按当前模型检测");
+        mOcrExecutor.execute(() -> {
+            Bitmap bitmap = null;
+            try {
+                byte[] bytes = readBytesFromUri(uri);
+                bitmap = bytes == null ? null : decodeBytes(bytes, 2560);
+                if (bitmap == null) {
+                    throw new IllegalStateException("手机照片解码失败");
+                }
+                List<com.ar.glass.vision.YoloDetector.Detection> dets;
+                long elapsed;
+                com.ar.glass.vision.MarkedPointDetectorHolder.Result marked =
+                        com.ar.glass.vision.MarkedPointDetectorHolder.detect(this, bitmap);
+                dets = marked.detections;
+                elapsed = Math.round(marked.latencyMillis);
+                EventBus.getDefault().post(new EventMsg(
+                        EventMsg.MSG_DETECT_RESULT,
+                        dets.size(),
+                        new com.ar.glass.vision.DetectResult(
+                                bitmap,
+                                dets,
+                                bitmap.getWidth(),
+                                bitmap.getHeight(),
+                                elapsed,
+                                "手机拍照")));
+                bitmap = null; // ownership transferred to the preview UI
+            } catch (Throwable error) {
+                if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+                EventBus.getDefault().post(new EventMsg(
+                        EventMsg.MSG_DETECT_RESULT,
+                        new com.ar.glass.vision.DetectResult(
+                                error.getMessage() == null ? "手机照片检测失败" : error.getMessage())));
+            } finally {
+                runOnUiThread(this::resetPhoneDetectButton);
+            }
+        });
+    }
+
+    private void resetPhoneDetectButton() {
+        if (btnPhoneDetect != null) {
+            btnPhoneDetect.setEnabled(true);
+            btnPhoneDetect.setText("📱 手机拍照检测");
         }
     }
 
@@ -366,39 +1055,453 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** 弹窗显示二维码识别结果 */
+    private void showQrResultDialog(String qrText) {
+        if (qrText == null || qrText.isEmpty()) {
+            if (mVoiceController != null) {
+                mVoiceController.speak("未识别到二维码");
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("识别结果")
+                    .setMessage("未在最新照片中识别到二维码")
+                    .setPositiveButton("确定", null)
+                    .show();
+        } else {
+            if (mVoiceController != null) {
+                mVoiceController.speak("二维码内容 " + qrText);
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("二维码内容")
+                    .setMessage(qrText)
+                    .setPositiveButton("确定", null)
+                    .show();
+        }
+    }
+
     private void openGallery(String mode) {
         Intent intent = new Intent(this, GalleryActivity.class);
         intent.putExtra(GalleryActivity.EXTRA_MODE, mode);
         startActivity(intent);
     }
 
-    /** 显示已发现的眼镜设备列表，供用户手动选择连接 */
+    /** 现场拍照识别：检查 CAMERA 权限后启动系统相机。 */
+    private void captureMeter() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST_CODE);
+            return;
+        }
+        launchCamera();
+    }
+
+    /** 启动系统相机，照片写入缓存临时文件（FileProvider content URI）。 */
+    private void launchCamera() {
+        try {
+            File captureFile = new File(getCacheDir(),
+                    "meter_capture_" + System.currentTimeMillis() + ".jpg");
+            mCaptureUri = FileProvider.getUriForFile(this, FILE_PROVIDER_AUTHORITY, captureFile);
+            mTakePictureLauncher.launch(mCaptureUri);
+        } catch (Exception e) {
+            Log.e(TAG, "启动相机失败", e);
+            Toast.makeText(this, "无法启动相机：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void recognizeMeterFromUri(Uri uri) {
+        appendLog("🔍 正在云端识别万用表读数与挡位，请稍候...");
+
+        mOcrExecutor.execute(() -> {
+            byte[] originalBytes = readBytesFromUri(uri);
+            Bitmap bitmap = originalBytes != null ? decodeBytes(originalBytes, 2048) : null;
+
+            MeterReading reading = null;
+            String error = null;
+            if (bitmap != null) {
+                try {
+                    reading = Vision.get().readMeter(bitmap);
+                } catch (Exception e) {
+                    error = "识别异常：" + e.getMessage();
+                }
+                if ((reading == null || !reading.hasValue()) && error == null) {
+                    error = MeterCloudOcr.getLastError();
+                }
+            } else {
+                error = "图片解码失败";
+            }
+
+            // 识别成功 → 自动保存到巡检台账（含原照片）
+            if (reading != null && reading.hasValue()) {
+                mStore.add(reading, originalBytes);
+            }
+
+            final MeterReading fReading = reading;
+            final String fError = error;
+            runOnUiThread(() -> {
+                if (fReading != null && fReading.hasValue()) {
+                    String display = fReading.getDisplayText();
+                    String log = "✅ 识别结果: " + display
+                            + (fReading.gear.isEmpty() ? "" : "（挡位: " + fReading.gear + "）")
+                            + "，已保存到台账";
+                    if (cbAlarm != null && cbAlarm.isChecked()) {
+                        ThresholdAlarm.Result alarm = ThresholdAlarm.check(fReading, mThresholdConfig);
+                        if (alarm != null && alarm.isAlarm()) {
+                            log += "\n🚨 " + ThresholdAlarm.describe(alarm, fReading);
+                        }
+                    }
+                    appendLog(log);
+                    showMeterResultDialog(fReading);
+                    speakMeterReading(fReading);
+                } else {
+                    String msg = fError != null ? fError : "未识别到读数";
+                    appendLog("❌ " + msg);
+                    new AlertDialog.Builder(this)
+                            .setTitle("🔍 万用表读数")
+                            .setMessage("未识别到读数。\n\n" + msg
+                                    + "\n\n请确认：1) 图片为万用表/电压表屏幕照片；2) 数字清晰可见；3) 网络正常")
+                            .setPositiveButton("确定", null)
+                            .show();
+                }
+            });
+        });
+    }
+
+    /** 展示识别结果：读数 + 挡位 + 异常提示 + 阈值报警 + 保存状态。 */
+    private void showMeterResultDialog(MeterReading r) {
+        // 阈值报警判断
+        ThresholdAlarm.Result alarm = null;
+        if (cbAlarm != null && cbAlarm.isChecked()) {
+            alarm = ThresholdAlarm.check(r, mThresholdConfig);
+        }
+
+        StringBuilder msg = new StringBuilder();
+        msg.append("读数：").append(r.getDisplayText());
+        if (r.gear != null && !r.gear.isEmpty()) {
+            msg.append("\n挡位：").append(r.gear);
+        }
+        if (r.unit == null || r.unit.isEmpty()) {
+            String inferred = r.inferUnitFromGear();
+            if (!inferred.isEmpty()) {
+                msg.append("\n（单位按挡位推断为：").append(inferred).append("）");
+            }
+        }
+        if (r.warning != null && !r.warning.isEmpty()) {
+            msg.append("\n\n⚠️ ").append(r.warning);
+        }
+        if (alarm != null && alarm.isAlarm()) {
+            msg.append("\n\n🚨 ").append(ThresholdAlarm.describe(alarm, r));
+        }
+        msg.append("\n\n✅ 已自动保存到巡检台账");
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle("🔍 万用表读数")
+                .setMessage(msg.toString())
+                .setPositiveButton("确定", null);
+        b.setNegativeButton("查看台账", (d, w) ->
+                startActivity(new Intent(this, MeterRecordsActivity.class)));
+        b.show();
+    }
+
+    /** 阈值设置弹窗：按类别选择 → 配置上下限。 */
+    private void showThresholdDialog() {
+        final String[] labels = new String[ThresholdConfig.CATEGORIES.length];
+        for (int i = 0; i < ThresholdConfig.CATEGORIES.length; i++) {
+            ThresholdConfig.Bounds b = mThresholdConfig.getBounds(ThresholdConfig.CATEGORIES[i]);
+            labels[i] = ThresholdConfig.CATEGORIES[i] + describeBounds(b);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("⚙️ 阈值设置\n（选择量纲类别，读数超出上下限即报警）")
+                .setItems(labels, (d, w) -> showCategoryBoundsDialog(ThresholdConfig.CATEGORIES[w]))
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    /** 某类别上下限的简要描述，如 "（上限 36.0）"。 */
+    private String describeBounds(ThresholdConfig.Bounds b) {
+        if (b == null || (!b.upperEnabled && !b.lowerEnabled)) {
+            return "（未设置）";
+        }
+        StringBuilder sb = new StringBuilder("（");
+        if (b.upperEnabled) {
+            sb.append("上限 ").append(formatNum(b.upper));
+        }
+        if (b.lowerEnabled) {
+            if (b.upperEnabled) sb.append("，");
+            sb.append("下限 ").append(formatNum(b.lower));
+        }
+        sb.append("）");
+        return sb.toString();
+    }
+
+    /** 配置某类别的上下限。 */
+    private void showCategoryBoundsDialog(final String category) {
+        ThresholdConfig.Bounds cur = mThresholdConfig.getBounds(category);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(20);
+        container.setPadding(pad, dp(16), pad, dp(4));
+
+        final CheckBox cbUpper = new CheckBox(this);
+        cbUpper.setText("启用上限");
+        cbUpper.setChecked(cur.upperEnabled);
+        container.addView(cbUpper);
+
+        final EditText etUpper = new EditText(this);
+        etUpper.setHint("上限值（如 36.0）");
+        etUpper.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        if (cur.upperEnabled && !Double.isNaN(cur.upper)) {
+            etUpper.setText(formatNum(cur.upper));
+        }
+        container.addView(etUpper);
+
+        final CheckBox cbLower = new CheckBox(this);
+        cbLower.setText("启用下限");
+        cbLower.setChecked(cur.lowerEnabled);
+        cbLower.setPadding(0, dp(12), 0, 0);
+        container.addView(cbLower);
+
+        final EditText etLower = new EditText(this);
+        etLower.setHint("下限值（如 0.0）");
+        etLower.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        if (cur.lowerEnabled && !Double.isNaN(cur.lower)) {
+            etLower.setText(formatNum(cur.lower));
+        }
+        container.addView(etLower);
+
+        new AlertDialog.Builder(this)
+                .setTitle(category + " 阈值")
+                .setView(container)
+                .setPositiveButton("保存", (d, w) -> {
+                    boolean upperOn = cbUpper.isChecked();
+                    double upper = parseNum(etUpper.getText().toString());
+                    boolean lowerOn = cbLower.isChecked();
+                    double lower = parseNum(etLower.getText().toString());
+                    if (upperOn && Double.isNaN(upper)) {
+                        Toast.makeText(this, "请填写有效的上限值", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (lowerOn && Double.isNaN(lower)) {
+                        Toast.makeText(this, "请填写有效的下限值", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (upperOn && lowerOn && upper < lower) {
+                        Toast.makeText(this, "上限不能小于下限", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    mThresholdConfig.setBounds(category, upperOn, upper, lowerOn, lower);
+                    Toast.makeText(this, "已保存 " + category + " 阈值", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private static String formatNum(double d) {
+        if (Double.isNaN(d)) return "";
+        if (d == (long) d) return String.valueOf((long) d);
+        return String.valueOf(d);
+    }
+
+    private static double parseNum(String s) {
+        if (s == null) return Double.NaN;
+        String t = s.trim();
+        if (t.isEmpty()) return Double.NaN;
+        try {
+            return Double.parseDouble(t);
+        } catch (Exception e) {
+            return Double.NaN;
+        }
+    }
+
+    private int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** 语音播报识别结果（开关打开且 TTS 就绪时）。 */
+    private void speakMeterReading(MeterReading r) {
+        if (cbVoice == null || !cbVoice.isChecked() || mTts == null) {
+            return;
+        }
+        String text = r.getSpeechText();
+        if (cbAlarm != null && cbAlarm.isChecked()) {
+            ThresholdAlarm.Result alarm = ThresholdAlarm.check(r, mThresholdConfig);
+            if (alarm != null && alarm.isAlarm()) {
+                text = text + "，" + ThresholdAlarm.speechText(alarm);
+            }
+        }
+        mTts.speak(text);
+    }
+
+    /**
+     * 从 Uri 读取原始图片字节。
+     */
+    private byte[] readBytesFromUri(Uri uri) {
+        try {
+            InputStream is = getContentResolver().openInputStream(uri);
+            if (is == null) {
+                return null;
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                baos.write(buf, 0, n);
+            }
+            is.close();
+            byte[] bytes = baos.toByteArray();
+            return bytes.length == 0 ? null : bytes;
+        } catch (Exception e) {
+            Log.e(TAG, "读取图片失败", e);
+            return null;
+        }
+    }
+
+    /**
+     * 按采样率解码字节为 Bitmap，限制最长边避免 OOM。
+     */
+    private Bitmap decodeBytes(byte[] bytes, int maxEdge) {
+        if (bytes == null || bytes.length == 0) {
+            return null;
+        }
+        try {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+            int sample = 1;
+            int maxDim = Math.max(opts.outWidth, opts.outHeight);
+            while (maxDim / sample > maxEdge) {
+                sample *= 2;
+            }
+            opts.inJustDecodeBounds = false;
+            opts.inSampleSize = sample;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+        } catch (Exception e) {
+            Log.e(TAG, "解码图片失败", e);
+            return null;
+        }
+    }
+
+    /** 显示眼镜设备列表，按「已连接 / 已配对 / 已发现」分区展示，供用户选择连接 */
     private void showDeviceDialog() {
         if (mBleService == null) {
             Toast.makeText(this, "BLE服务未就绪，请稍候", Toast.LENGTH_SHORT).show();
             return;
         }
-        final List<GlassBleService.DeviceInfo> devices = mBleService.getDiscoveredDevices();
-        if (devices.isEmpty()) {
+
+        // 已连接：仅当前正在连接的眼镜
+        final List<GlassBleService.DeviceInfo> connected = new ArrayList<>();
+        GlassBleService.DeviceInfo current = mBleService.getConnectedDevice();
+        if (current != null) connected.add(current);
+
+        // 已配对：系统历史配对过的所有眼镜
+        final List<GlassBleService.DeviceInfo> paired = mBleService.getPairedDevices();
+
+        // 已发现：扫描到但尚未配对的眼镜（用于首次连接）
+        final List<GlassBleService.DeviceInfo> discovered = mBleService.getDiscoveredDevices();
+        final List<GlassBleService.DeviceInfo> newDevices = new ArrayList<>();
+        for (GlassBleService.DeviceInfo d : discovered) {
+            boolean alreadyPaired = false;
+            for (GlassBleService.DeviceInfo p : paired) {
+                if (d.address.equals(p.address)) { alreadyPaired = true; break; }
+            }
+            if (!alreadyPaired) newDevices.add(d);
+        }
+
+        if (connected.isEmpty() && paired.isEmpty() && newDevices.isEmpty()) {
             Toast.makeText(this, "暂未发现眼镜，正在扫描中，请稍候再试", Toast.LENGTH_SHORT).show();
             appendLog("ℹ️ 暂未发现眼镜设备，继续扫描中...");
             return;
         }
-        final String[] names = new String[devices.size()];
-        for (int i = 0; i < devices.size(); i++) {
-            GlassBleService.DeviceInfo d = devices.get(i);
-            names[i] = d.name + "  (" + d.address + ")";
+
+        float density = getResources().getDisplayMetrics().density;
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding((int) (16 * density), (int) (16 * density),
+                (int) (16 * density), (int) (16 * density));
+        scroll.addView(container);
+
+        final AlertDialog[] dialogHolder = new AlertDialog[1];
+
+        // 已连接
+        addSectionHeader(container, "已连接");
+        if (connected.isEmpty()) {
+            addDeviceRow(container, "（当前未连接眼镜）", null, false);
+        } else {
+            for (GlassBleService.DeviceInfo d : connected) {
+                addDeviceRow(container, d.name + "  (" + d.address + ")", null, false);
+            }
         }
-        new AlertDialog.Builder(this)
-                .setTitle("选择要连接的眼镜")
-                .setItems(names, (dialog, which) -> {
-                    GlassBleService.DeviceInfo d = devices.get(which);
-                    appendLog("🔗 选择连接: " + d.name);
-                    mBleService.connectToDevice(d.address, d.name);
-                })
+
+        // 已配对（历史配对记录）
+        addSectionHeader(container, "已配对（历史配对记录）");
+        if (paired.isEmpty()) {
+            addDeviceRow(container, "（无历史配对记录）", null, false);
+        } else {
+            for (GlassBleService.DeviceInfo d : paired) {
+                addDeviceRow(container, d.name + "  (" + d.address + ")", () -> {
+                    if (dialogHolder[0] != null) dialogHolder[0].dismiss();
+                    connectSelectedDevice(d);
+                }, true);
+            }
+        }
+
+        // 已发现（未配对的新设备）
+        if (!newDevices.isEmpty()) {
+            addSectionHeader(container, "已发现（未配对）");
+            for (GlassBleService.DeviceInfo d : newDevices) {
+                addDeviceRow(container, d.name + "  (" + d.address + ")", () -> {
+                    if (dialogHolder[0] != null) dialogHolder[0].dismiss();
+                    connectSelectedDevice(d);
+                }, true);
+            }
+        }
+
+        dialogHolder[0] = new AlertDialog.Builder(this)
+                .setTitle("选择眼镜设备")
+                .setView(scroll)
                 .setNegativeButton("刷新", (dialog, which) -> showDeviceDialog())
-                .setNeutralButton("取消", null)
+                .setPositiveButton("关闭", null)
                 .show();
+    }
+
+    /** 向设备分区容器添加标题行 */
+    private void addSectionHeader(LinearLayout container, String title) {
+        TextView tv = new TextView(this);
+        tv.setText(title);
+        tv.setTextSize(14);
+        tv.setTypeface(Typeface.DEFAULT_BOLD);
+        tv.setTextColor(0xFF2196F3);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = (int) (12 * getResources().getDisplayMetrics().density);
+        container.addView(tv, lp);
+    }
+
+    /** 向设备分区容器添加一行设备信息 */
+    private void addDeviceRow(LinearLayout container, String text, final Runnable onClick, boolean clickable) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(14);
+        tv.setPadding(0, (int) (10 * getResources().getDisplayMetrics().density),
+                0, (int) (10 * getResources().getDisplayMetrics().density));
+        if (clickable) {
+            tv.setTextColor(0xFF1565C0);
+            tv.setOnClickListener(v -> onClick.run());
+        } else {
+            tv.setTextColor(0xFF333333);
+        }
+        container.addView(tv);
+    }
+
+    private void connectSelectedDevice(GlassBleService.DeviceInfo d) {
+        appendLog("🔗 选择连接: " + d.name);
+        if (mBleService != null) mBleService.connectToDevice(d.address, d.name);
     }
 
     /** 显示照片勾选列表（带缩略图），用户选择要导入的图片 */
@@ -471,8 +1574,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void appendLog(String text) {
+        // 日志已由 GlassBleService.postLog 写入 logcat，此处仅 UI 展示（避免重复）
         logBuilder.append(text).append("\n");
-        if (tvLog != null) {
+        // 限制内存中的日志量（保留最近 ~400 行，全量日志走 logcat）
+        int nl = 0, cut = 0;
+        String s = logBuilder.toString();
+        for (int i = s.length() - 1; i >= 0 && nl <= 400; i--) {
+            if (s.charAt(i) == '\n') nl++;
+            cut = i;
+        }
+        if (nl > 400) logBuilder.delete(0, cut + 1);
+        // 仅展开时刷新前台日志区（默认收起，避免刷屏）
+        if (mLogExpanded && tvLog != null) {
             tvLog.setText(logBuilder.toString());
             tvLog.post(() -> {
                 final int lineCount = tvLog.getLineCount();
@@ -506,6 +1619,18 @@ public class MainActivity extends AppCompatActivity {
         if (mServiceBound) {
             unbindService(mServiceConnection);
             mServiceBound = false;
+        }
+        if (mDetectPreview != null && !mDetectPreview.isRecycled()) {
+            mDetectPreview.recycle();
+        }
+        mDetectPreview = null;
+        if (detectOverlay != null) detectOverlay.clear();
+        if (mVoiceController != null) {
+            mVoiceController.release();
+        }
+        mOcrExecutor.shutdownNow();
+        if (mTts != null) {
+            mTts.shutdown();
         }
         EventBus.getDefault().unregister(this);
     }

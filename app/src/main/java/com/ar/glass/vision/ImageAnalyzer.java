@@ -3,12 +3,12 @@ package com.ar.glass.vision;
 import android.graphics.Bitmap;
 
 /**
- * 图像识别接口（预留）。
+ * 图像识别接口。
  *
- * 定义三个识别能力，后续接入具体算法/模型实现：
- * 1. 二维码识别
- * 2. 防松线错位检测（螺母松动）
- * 3. 电压表屏幕数字识别
+ * 定义三个识别能力：
+ * 1. 二维码识别（已接入 ML Kit）
+ * 2. 防松线错位检测（螺母松动，未接入）
+ * 3. 电压表屏幕数字识别（未接入）
  */
 public interface ImageAnalyzer {
 
@@ -32,7 +32,15 @@ public interface ImageAnalyzer {
      * 识别电压表屏幕上的数字读数。
      *
      * @param bitmap 待识别的图片
-     * @return 读数字符串（如 "12.5"）；未识别到返回 null
+     * @return 读数字符串（如 "12.5 V"）；未识别到返回 null
      */
     String readMeterValue(Bitmap bitmap);
+
+    /**
+     * 识别万用表读数 + 挡位，返回结构化结果。
+     *
+     * @param bitmap 待识别的图片
+     * @return 结构化识别结果（读数/单位/挡位/异常提示）；未识别到返回 null
+     */
+    MeterReading readMeter(Bitmap bitmap);
 }

@@ -1,16 +1,110 @@
 apply plugin: 'com.android.application'
 
+def crrcVisionModelDir = System.getenv('CRRC_VISION_MODEL_DIR')
+def detectorBackend = (System.getenv('CRRC_DETECTOR_BACKEND') ?: 'onnx').trim().toLowerCase()
+def ncnnAndroidRoot = System.getenv('CRRC_NCNN_ANDROID_ROOT')
+def ncnnModelDir = System.getenv('CRRC_NCNN_MODEL_DIR')
+def markedPointVerifierModelDir = System.getenv('CRRC_MARKED_POINT_VERIFIER_MODEL_DIR')
+def ncnnJniBuildRoot = System.getenv('CRRC_NCNN_JNI_BUILD_ROOT')
+def ncnnConfidenceThreshold = (System.getenv('CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.20').toFloat()
+def ncnnExactMath = (System.getenv('CRRC_NCNN_EXACT_MATH') ?: '0') == '1'
+def ncnnVulkan = (System.getenv('CRRC_NCNN_VULKAN') ?: '0') == '1'
+def ncnnVulkanFp16 = (System.getenv('CRRC_NCNN_VULKAN_FP16') ?: '0') == '1'
+def markedPointVerifierNnapi = (System.getenv('CRRC_MARKED_POINT_VERIFIER_NNAPI') ?: '0') == '1'
+def markedPointVerifierXnnpack = (System.getenv('CRRC_MARKED_POINT_VERIFIER_XNNPACK') ?: '0') == '1'
+def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
+def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
+def filteredOnnxModelDir = file("$buildDir/generated/filteredOnnxModel")
+def filteredMarkedPointVerifierDir = file("$buildDir/generated/filteredMarkedPointVerifier")
+def markedPointVerifierEnabled = detectorBackend == 'ncnn'
+        && markedPointVerifierModelDir != null
+        && !markedPointVerifierModelDir.trim().isEmpty()
+if (markedPointVerifierNnapi && markedPointVerifierXnnpack) {
+    throw new GradleException('only one marked-point verifier accelerator may be enabled')
+}
+
+if (!(detectorBackend in ['onnx', 'ncnn'])) {
+    throw new GradleException("CRRC_DETECTOR_BACKEND must be onnx or ncnn")
+}
+if (ncnnConfidenceThreshold < 0.0f || ncnnConfidenceThreshold > 1.0f) {
+    throw new GradleException("CRRC_NCNN_CONFIDENCE_THRESHOLD must be from 0 to 1")
+}
+if (detectorBackend == 'ncnn'
+        && (ncnnAndroidRoot == null || ncnnAndroidRoot.trim().isEmpty()
+            || ncnnModelDir == null || ncnnModelDir.trim().isEmpty()
+            || ncnnJniBuildRoot == null || ncnnJniBuildRoot.trim().isEmpty())) {
+    throw new GradleException(
+            "ncnn builds require CRRC_NCNN_ANDROID_ROOT, CRRC_NCNN_MODEL_DIR, "
+                    + "and CRRC_NCNN_JNI_BUILD_ROOT")
+}
+
+task prepareFilteredJniLibs(type: Sync) {
+    from('src/main/jniLibs') {
+        exclude '**/libonnxruntime.so'
+    }
+    into filteredJniLibsDir
+}
+
+if (detectorBackend == 'ncnn') {
+    task prepareFilteredNcnnModel(type: Sync) {
+        from(ncnnModelDir) {
+            include 'model.ncnn.param', 'model.ncnn.bin'
+        }
+        into filteredNcnnModelDir
+    }
+}
+if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
+    task prepareFilteredOnnxModel(type: Sync) {
+        from(crrcVisionModelDir) {
+            include 'fastener-target-p2-640.onnx'
+        }
+        into filteredOnnxModelDir
+    }
+}
+if (markedPointVerifierEnabled) {
+    task prepareFilteredMarkedPointVerifier(type: Sync) {
+        from(markedPointVerifierModelDir) {
+            include 'marked-point-verifier-mobilenetv3-small.onnx'
+            rename { 'marked-point-verifier.onnx' }
+        }
+        into filteredMarkedPointVerifierDir
+    }
+}
+
 android {
-    compileSdkVersion 33
+    compileSdkVersion 34
+    buildToolsVersion "34.0.0"
     defaultConfig {
         applicationId "com.ar.glass"
-        minSdkVersion 21
+        minSdkVersion ncnnVulkan ? 24 : 22
         targetSdkVersion 33
         versionCode 1
         versionName "1.0.0"
+        multiDexEnabled true
+        buildConfigField 'String', 'DETECTOR_BACKEND', "\"${detectorBackend}\""
+        buildConfigField 'float', 'NCNN_CONFIDENCE_THRESHOLD',
+                "${ncnnConfidenceThreshold}f"
+        buildConfigField 'boolean', 'NCNN_VULKAN', ncnnVulkan.toString()
+        buildConfigField 'boolean', 'NCNN_VULKAN_FP16', ncnnVulkanFp16.toString()
+        buildConfigField 'boolean', 'MARKED_POINT_VERIFIER_ENABLED',
+                markedPointVerifierEnabled.toString()
+        buildConfigField 'boolean', 'MARKED_POINT_VERIFIER_NNAPI',
+                markedPointVerifierNnapi.toString()
+        buildConfigField 'boolean', 'MARKED_POINT_VERIFIER_XNNPACK',
+                markedPointVerifierXnnpack.toString()
         ndk{
             abiFilters 'armeabi-v7a','arm64-v8a'
         }
+        // 云端视觉 API 配置（万用表读数识别），在根目录 gradle.properties 中填写
+        def arkBaseUrl = project.hasProperty('ARK_BASE_URL')
+                ? project.property('ARK_BASE_URL')
+                : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        def arkApiKey = project.hasProperty('ARK_API_KEY') ? project.property('ARK_API_KEY') : ""
+        def arkModel = project.hasProperty('ARK_MODEL') ? project.property('ARK_MODEL') : "qwen3-vl-flash"
+        buildConfigField "String", "ARK_BASE_URL", "\"${arkBaseUrl}\""
+        buildConfigField "String", "ARK_API_KEY", "\"${arkApiKey}\""
+        buildConfigField "String", "ARK_MODEL", "\"${arkModel}\""
+        buildConfigField "String", "SOP_BASE_URL", '"https://crrc-glasses.ifix.xin"'
     }
     buildTypes {
         release {
@@ -25,8 +119,26 @@ android {
     lintOptions {
         abortOnError false
     }
+    sourceSets {
+        main {
+            if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
+                assets.srcDir filteredOnnxModelDir
+            }
+            if (detectorBackend == 'ncnn') {
+                assets.srcDir filteredNcnnModelDir
+            }
+            if (markedPointVerifierEnabled) {
+                assets.srcDir filteredMarkedPointVerifierDir
+            }
+            jniLibs.srcDirs = [filteredJniLibsDir]
+        }
+    }
     packagingOptions {
         exclude 'META-INF/DEPENDENCIES'
+        // jniLibs 与 onnxruntime-android AAR 均提供 libonnxruntime.so /
+        // libc++_shared.so（内容已统一为官方 1.19.2 版本），重复时取其一
+        pickFirst 'lib/**/libonnxruntime.so'
+        pickFirst 'lib/**/libc++_shared.so'
     }
 }
 
@@ -35,13 +147,104 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    // CameraX（手机摄像头实时检测）
+    implementation 'androidx.camera:camera-core:1.3.4'
+    implementation 'androidx.camera:camera-camera2:1.3.4'
+    implementation 'androidx.camera:camera-lifecycle:1.3.4'
+    implementation 'androidx.camera:camera-view:1.3.4'
     implementation 'org.greenrobot:eventbus:3.3.1'
+    implementation 'com.squareup.okhttp3:okhttp:3.14.9'
 
     implementation 'org.slf4j:slf4j-api:1.7.25'
     implementation 'org.slf4j:slf4j-simple:1.7.25'
 
     implementation 'io.netty:netty-all:4.1.68.Final'
     implementation 'com.google.protobuf:protobuf-javalite:3.18.1'
+    implementation 'com.google.mlkit:barcode-scanning:17.2.0'
+
+    // 解决 CameraX(kotlin-stdlib 1.8) 与旧库(jdk7/jdk8 1.6) 的重复类冲突
+    constraints {
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22')
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22')
+    }
+
+    // YOLO 离线目标检测（ONNX Runtime，NNAPI 硬件加速）
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.2'
 
     implementation files('libs/ksdk-release.aar')
+    // 讯飞 SparkChain SDK（在线语音听写）
+    implementation files('libs/SparkChain.aar')
+    implementation files('libs/Codec.aar')
+    implementation 'com.google.code.gson:gson:2.8.8'
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+preBuild.dependsOn prepareFilteredJniLibs
+if (detectorBackend == 'ncnn') {
+    preBuild.dependsOn prepareFilteredNcnnModel
+}
+if (crrcVisionModelDir != null && !crrcVisionModelDir.trim().isEmpty()) {
+    preBuild.dependsOn prepareFilteredOnnxModel
+}
+if (markedPointVerifierEnabled) {
+    preBuild.dependsOn prepareFilteredMarkedPointVerifier
+}
+
+if (detectorBackend == 'ncnn') {
+    def normalizedJniRoot = ncnnJniBuildRoot.replace('\\', '/')
+    def normalizedNcnnRoot = ncnnAndroidRoot.replace('\\', '/')
+    def cmakeExecutable = "${android.sdkDirectory}/cmake/3.31.6/bin/cmake.exe"
+    def ninjaExecutable = "${android.sdkDirectory}/cmake/3.31.6/bin/ninja.exe"
+    def toolchainFile = "${android.sdkDirectory}/ndk/25.1.8937393/build/cmake/android.toolchain.cmake"
+    def nativeSourceDir = "${normalizedJniRoot}/source"
+
+    task prepareNcnnNativeSource(type: Sync) {
+        from('src/main/cpp')
+        into(nativeSourceDir)
+    }
+
+    ['arm64-v8a', 'armeabi-v7a'].each { abi ->
+        def taskSuffix = abi == 'arm64-v8a' ? 'Arm64' : 'Armv7'
+        def buildDirectory = "${normalizedJniRoot}/build/${abi}"
+        def installDirectory = "${normalizedJniRoot}/install/${abi}"
+        def configureTask = tasks.create("configureNcnn${taskSuffix}", Exec) {
+            dependsOn prepareNcnnNativeSource
+            inputs.dir nativeSourceDir
+            inputs.property 'ncnnAndroidRoot', normalizedNcnnRoot
+            inputs.property 'androidAbi', abi
+            inputs.property 'ncnnExactMath', ncnnExactMath
+            inputs.property 'ncnnVulkan', ncnnVulkan
+            inputs.property 'ncnnVulkanFp16', ncnnVulkanFp16
+            outputs.file "${buildDirectory}/build.ninja"
+            commandLine cmakeExecutable,
+                    '-S', nativeSourceDir,
+                    '-B', buildDirectory,
+                    '-G', 'Ninja',
+                    "-DCMAKE_MAKE_PROGRAM=${ninjaExecutable}",
+                    "-DCMAKE_TOOLCHAIN_FILE=${toolchainFile}",
+                    "-DANDROID_ABI=${abi}",
+                    "-DANDROID_PLATFORM=${ncnnVulkan ? 'android-24' : 'android-21'}",
+                    '-DANDROID_STL=c++_static',
+                    '-DCMAKE_BUILD_TYPE=Release',
+                    "-DCMAKE_INSTALL_PREFIX=${installDirectory}",
+                    "-DCRRC_NCNN_ANDROID_ROOT=${normalizedNcnnRoot}",
+                    "-DCRRC_NCNN_EXACT_MATH=${ncnnExactMath ? 'ON' : 'OFF'}"
+        }
+        def buildTask = tasks.create("buildNcnn${taskSuffix}", Exec) {
+            dependsOn configureTask
+            inputs.dir nativeSourceDir
+            inputs.file "${buildDirectory}/build.ninja"
+            outputs.file "${installDirectory}/libcrrc_ncnn.so"
+            commandLine cmakeExecutable,
+                    '--build', buildDirectory,
+                    '--target', 'install',
+                    '--parallel', '8'
+        }
+        prepareFilteredJniLibs.dependsOn buildTask
+        prepareFilteredJniLibs.from(installDirectory) {
+            include 'libcrrc_ncnn.so'
+            into abi
+        }
+    }
 }

@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="AR 眼镜照片同步"
+        android:text="AR 眼镜控制"
         android:textSize="22sp"
         android:textStyle="bold"
         android:textColor="#333333"
@@ -31,6 +31,46 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="12dp">
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="中车巡检任务"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="登录后台领取任务，按SOP拍照检测并上传现场证据"
+                        android:textSize="11sp"
+                        android:textColor="#777777" />
+
+                    <Button
+                        android:id="@+id/btnSopTasks"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="9dp"
+                        android:text="打开巡检工作台"
+                        android:textColor="@android:color/white"
+                        android:backgroundTint="#176FA8" />
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
 
             <!-- 设备状态卡片 -->
             <androidx.cardview.widget.CardView
@@ -82,15 +122,42 @@
                         <TextView android:id="@+id/tvDeviceName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="-" android:textSize="14sp" android:textColor="#333333"/>
                     </LinearLayout>
 
-                    <Button
-                        android:id="@+id/btnSelectDevice"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="🔍 选择眼镜设备"
-                        android:textSize="14sp"
-                        android:backgroundTint="#2196F3"
-                        android:textColor="@android:color/white"
-                        android:layout_marginTop="4dp"/>
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="6dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="眼镜电量:" android:textSize="14sp" android:textColor="#666666"/>
+                        <TextView android:id="@+id/tvBatteryStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="-" android:textSize="14sp" android:textColor="#333333"/>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="4dp">
+
+                        <Button
+                            android:id="@+id/btnSelectDevice"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🔍 选择眼镜设备"
+                            android:textSize="14sp"
+                            android:backgroundTint="#2196F3"
+                            android:textColor="@android:color/white"/>
+
+                        <Button
+                            android:id="@+id/btnNetDiag"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:text="🌐 网络诊断"
+                            android:textSize="14sp"
+                            android:backgroundTint="#00897B"
+                            android:textColor="@android:color/white"/>
+                    </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
@@ -136,6 +203,271 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- 语音控制卡片 -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="语音控制"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <Button
+                        android:id="@+id/btnVoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🎤 按住说话"
+                        android:textSize="14sp"
+                        android:backgroundTint="#9C27B0"
+                        android:textColor="@android:color/white"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="按住按钮对着眼镜说话，松手后云端识别。语音指令：“二维码拍照”→识别二维码；“对齐拍照”→YOLO检测；“万用表拍照”→读数识别；“拍照”→仅存原图库。结果通过眼镜播报"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="8dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 实时目标检测卡片 -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="实时目标检测（YOLO）"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <Button
+                        android:id="@+id/btnDetectLoop"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="👓 眼镜拍照检测"
+                        android:textSize="14sp"
+                        android:backgroundTint="#FF5722"
+                        android:textColor="@android:color/white"/>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp">
+
+                        <Button
+                            android:id="@+id/btnLiveDetect"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="📱 实时检测"
+                            android:textSize="14sp"
+                            android:backgroundTint="#7B1FA2"
+                            android:textColor="@android:color/white"/>
+
+                        <Button
+                            android:id="@+id/btnGalleryDetect"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:text="🖼 相册选图检测"
+                            android:textSize="14sp"
+                            android:backgroundTint="#455A64"
+                            android:textColor="@android:color/white"/>
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/btnPhoneDetect"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="📱 手机拍照检测"
+                        android:textSize="14sp"
+                        android:backgroundTint="#1976D2"
+                        android:textColor="@android:color/white"/>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp"
+                        android:background="#F5F5F5"
+                        android:padding="6dp"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="检测模型:"
+                            android:textSize="13sp"
+                            android:textColor="#333333"/>
+
+                        <TextView
+                            android:id="@+id/tvModelName"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:text="🔩 紧固件防松（内置）"
+                            android:textSize="13sp"
+                            android:textColor="#333333"
+                            android:singleLine="true"
+                            android:ellipsize="middle"/>
+
+                        <Button
+                            android:id="@+id/btnChangeModel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:minWidth="88dp"
+                            android:text="📂 更换模型"
+                            android:textSize="12sp"
+                            android:layout_marginStart="8dp"/>
+
+                        <Button
+                            android:id="@+id/btnPriority"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:minWidth="72dp"
+                            android:text="⚙ 优先级"
+                            android:textSize="12sp"
+                            android:layout_marginStart="8dp"/>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp"
+                        android:background="#F5F5F5"
+                        android:padding="6dp"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="回传模式:"
+                            android:textSize="13sp"
+                            android:textColor="#333333"/>
+
+                        <Spinner
+                            android:id="@+id/spTransferMode"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"/>
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="语音说“对齐拍照”：眼镜拍照 → 照片传到手机 → 防松标记检测 → 显示预览框并播报"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginBottom="4dp"/>
+
+                    <!-- 检测预览：照片 fitCenter 完整显示 + 检测框叠加（fitCenter 同步映射） -->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="240dp"
+                        android:layout_marginTop="10dp"
+                        android:background="#101010">
+
+                        <ImageView
+                            android:id="@+id/ivDetectPreview"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:scaleType="fitCenter"
+                            android:contentDescription="YOLO 检测预览"/>
+
+                        <com.ar.glass.vision.ui.BoxOverlay
+                            android:id="@+id/detectOverlay"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"/>
+
+                        <TextView
+                            android:id="@+id/tvDetectPlaceholder"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:text="检测预览将在此显示"
+                            android:textSize="12sp"
+                            android:textColor="#777777"/>
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="8dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="置信度"
+                            android:textSize="12sp"
+                            android:textColor="#666666"/>
+
+                        <SeekBar
+                            android:id="@+id/seekDetectConf"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:min="5"
+                            android:max="90"
+                            android:progress="25"/>
+
+                        <TextView
+                            android:id="@+id/tvDetectConf"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:minWidth="42dp"
+                            android:gravity="end"
+                            android:text="0.25"
+                            android:textSize="12sp"
+                            android:textColor="#333333"/>
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvDetectStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="语音说“对齐拍照”即可触发检测；也可用“手机拍照检测”，两种方式使用同一套防松标记检测模型"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="6dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
             <!-- 图库卡片（2个按钮） -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
@@ -159,33 +491,71 @@
                         android:textColor="#333333"
                         android:layout_marginBottom="10dp"/>
 
-                    <LinearLayout
+                    <Button
+                        android:id="@+id/btnGalleryOriginal"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
+                        android:text="📷 原图库"
+                        android:textSize="14sp"
+                        android:backgroundTint="#4CAF50"
+                        android:textColor="@android:color/white"/>
 
-                        <Button
-                            android:id="@+id/btnGalleryOriginal"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="📷 原图库"
-                            android:textSize="14sp"
-                            android:backgroundTint="#4CAF50"
-                            android:textColor="@android:color/white"/>
-                    </LinearLayout>
+                    <Button
+                        android:id="@+id/btnClearGallery"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="🧹 清空原图库"
+                        android:textSize="13sp"
+                        android:backgroundTint="#8D6E63"
+                        android:textColor="@android:color/white"/>
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="原图库：眼镜传输的原始照片"
+                        android:text="原图库：眼镜传输的原始照片（语音拍照均自动存入），支持从手机相册导入；点开图片长按可做 二维码 / YOLO / 万用表 检测"
                         android:textSize="11sp"
                         android:textColor="#999999"
                         android:layout_marginTop="8dp"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- 运行日志卡片 -->
+            <!-- 回传进度卡片（默认隐藏，传输时显示） -->
+            <androidx.cardview.widget.CardView
+                android:id="@+id/cardTransfer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:visibility="gone"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:id="@+id/tvTransferStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="回传中..."
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="6dp"/>
+
+                    <ProgressBar
+                        android:id="@+id/pbTransfer"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 万用表巡检卡片 -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -202,17 +572,100 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="运行日志"
+                        android:text="🔧 万用表巡检"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#333333"
+                        android:layout_marginBottom="10dp"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="语音说“万用表拍照”：眼镜拍照 → 照片自动同步 → 云端识别读数与挡位；也可在“图片浏览”卡片从相册选图做读数识别"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginBottom="6dp"/>
+
+                    <CheckBox
+                        android:id="@+id/cbVoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🔊 语音播报读数"
+                        android:textSize="14sp"
+                        android:textColor="#333333"
+                        android:checked="true"
+                        android:layout_marginTop="6dp"/>
+
+                    <CheckBox
+                        android:id="@+id/cbAlarm"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🚨 阈值报警"
+                        android:textSize="14sp"
+                        android:textColor="#333333"
+                        android:checked="true"
+                        android:layout_marginTop="2dp"/>
+
+                    <Button
+                        android:id="@+id/btnThreshold"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="⚙️ 阈值设置"
+                        android:textSize="14sp"
+                        android:backgroundTint="#795548"
+                        android:textColor="@android:color/white"
+                        android:layout_marginTop="6dp"/>
+
+                    <Button
+                        android:id="@+id/btnRecords"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="📋 巡检台账（查看/导出）"
+                        android:textSize="14sp"
+                        android:backgroundTint="#3F51B5"
+                        android:textColor="@android:color/white"
+                        android:layout_marginTop="6dp"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="识别结果自动保存到台账（时间/读数/单位/挡位/原照片），可导出 CSV/Excel；语音播报让巡检时不用低头看手机"
+                        android:textSize="11sp"
+                        android:textColor="#999999"
+                        android:layout_marginTop="8dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 运行日志卡片（默认收起，点击标题展开/收起；日志仍全量记录在后台） -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:id="@+id/tvLogToggle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="▶ 运行日志（点击展开）"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         android:textColor="#333333"
-                        android:layout_marginBottom="8dp"/>
+                        android:paddingBottom="8dp"/>
 
                     <TextView
                         android:id="@+id/tvLog"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:minHeight="150dp"
+                        android:visibility="gone"
                         android:text="等待连接眼镜...\n"
                         android:textSize="11sp"
                         android:textColor="#666666"
