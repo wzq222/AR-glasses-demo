@@ -1,6 +1,6 @@
 apply plugin: 'com.android.application'
 
-def detectorBackend = (System.getenv('CRRC_DETECTOR_BACKEND') ?: 'onnx').trim().toLowerCase()
+def detectorBackend = (System.getenv('CRRC_DETECTOR_BACKEND') ?: 'ncnn').trim().toLowerCase()
 def ncnnAndroidRoot = System.getenv('CRRC_NCNN_ANDROID_ROOT')
 def ncnnModelDir = System.getenv('CRRC_NCNN_MODEL_DIR')
 def ncnnJniBuildRoot = System.getenv('CRRC_NCNN_JNI_BUILD_ROOT')
@@ -12,9 +12,15 @@ def markedPointVerifierNnapi = (System.getenv('CRRC_MARKED_POINT_VERIFIER_NNAPI'
 def markedPointVerifierXnnpack = (System.getenv('CRRC_MARKED_POINT_VERIFIER_XNNPACK') ?: '0') == '1'
 def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
 def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
+def bundledNcnnModelDir = file('src/main/ncnnAssets')
+def bundledNcnnJniLibsDir = file('src/main/ncnnJniLibs')
+def hasText = { value -> value != null && !value.trim().isEmpty() }
+def ncnnNativeInputCount = [ncnnAndroidRoot, ncnnJniBuildRoot].count { hasText(it) }
+def ncnnNativeRebuildEnabled = ncnnNativeInputCount == 2
+def ncnnModelSourceDir = hasText(ncnnModelDir) ? file(ncnnModelDir) : bundledNcnnModelDir
 def markedPointVerifierEnabled = detectorBackend == 'ncnn'
 def bundledVisionModels = [
-        'src/main/assets/fastener-target-p2-640.onnx': [
+        'src/main/onnxAssets/fastener-target-p2-640.onnx': [
                 size: 43245031L,
                 sha256: 'C50F9105FF75885BE3BA02464E6A994FA7A45FDE0B0634AEA12FAA04A6CC5B7A'
         ],
@@ -25,6 +31,22 @@ def bundledVisionModels = [
         'src/main/assets/witness-roi.onnx': [
                 size: 5458941L,
                 sha256: '6D42E0D6C5785866DC65077FCD4D5E6EED576689431CA5C3E6649A280A5880BA'
+        ],
+        'src/main/ncnnAssets/model.ncnn.param': [
+                size: 21107L,
+                sha256: 'EE68160881FE607CCE87485E569095A917A1511394BE66F39FE7567EFE4C9BB0'
+        ],
+        'src/main/ncnnAssets/model.ncnn.bin': [
+                size: 42768268L,
+                sha256: 'ED1448C049809A4E8E2D1D2AFD254AAE66AA4C1238D70B1CA6D9C2835DE9DCEC'
+        ],
+        'src/main/ncnnJniLibs/arm64-v8a/libcrrc_ncnn.so': [
+                size: 38303536L,
+                sha256: 'BBE8628F00298FF9D8DDA85697696F048488EDD7BFFE8F46A9DD562ED11D0CDD'
+        ],
+        'src/main/ncnnJniLibs/armeabi-v7a/libcrrc_ncnn.so': [
+                size: 18978288L,
+                sha256: 'CC009AF1D2B945BD4ACA22E63E0062B9B56AE455FF7539E32913DAD2A1203C79'
         ]
 ]
 if (markedPointVerifierNnapi && markedPointVerifierXnnpack) {
@@ -37,25 +59,33 @@ if (!(detectorBackend in ['onnx', 'ncnn'])) {
 if (ncnnConfidenceThreshold < 0.0f || ncnnConfidenceThreshold > 1.0f) {
     throw new GradleException("CRRC_NCNN_CONFIDENCE_THRESHOLD must be from 0 to 1")
 }
-if (detectorBackend == 'ncnn'
-        && (ncnnAndroidRoot == null || ncnnAndroidRoot.trim().isEmpty()
-            || ncnnModelDir == null || ncnnModelDir.trim().isEmpty()
-            || ncnnJniBuildRoot == null || ncnnJniBuildRoot.trim().isEmpty())) {
+if (ncnnNativeInputCount == 1) {
     throw new GradleException(
-            "ncnn builds require CRRC_NCNN_ANDROID_ROOT, CRRC_NCNN_MODEL_DIR, "
-                    + "and CRRC_NCNN_JNI_BUILD_ROOT")
+            'set both CRRC_NCNN_ANDROID_ROOT and CRRC_NCNN_JNI_BUILD_ROOT '
+                    + 'to rebuild the bundled ncnn JNI libraries')
+}
+if (detectorBackend == 'ncnn'
+        && (ncnnExactMath || ncnnVulkan || ncnnVulkanFp16)
+        && !ncnnNativeRebuildEnabled) {
+    throw new GradleException(
+            'experimental ncnn math/Vulkan switches require a native rebuild configuration')
 }
 
 task prepareFilteredJniLibs(type: Sync) {
     from('src/main/jniLibs') {
         exclude '**/libonnxruntime.so'
     }
+    if (detectorBackend == 'ncnn' && !ncnnNativeRebuildEnabled) {
+        from(bundledNcnnJniLibsDir) {
+            include '**/libcrrc_ncnn.so'
+        }
+    }
     into filteredJniLibsDir
 }
 
 if (detectorBackend == 'ncnn') {
     task prepareFilteredNcnnModel(type: Sync) {
-        from(ncnnModelDir) {
+        from(ncnnModelSourceDir) {
             include 'model.ncnn.param', 'model.ncnn.bin'
         }
         into filteredNcnnModelDir
@@ -143,6 +173,8 @@ android {
         main {
             if (detectorBackend == 'ncnn') {
                 assets.srcDir filteredNcnnModelDir
+            } else {
+                assets.srcDir 'src/main/onnxAssets'
             }
             jniLibs.srcDirs = [filteredJniLibsDir]
         }
@@ -200,7 +232,7 @@ if (detectorBackend == 'ncnn') {
     preBuild.dependsOn prepareFilteredNcnnModel
 }
 
-if (detectorBackend == 'ncnn') {
+if (ncnnNativeRebuildEnabled) {
     def normalizedJniRoot = ncnnJniBuildRoot.replace('\\', '/')
     def normalizedNcnnRoot = ncnnAndroidRoot.replace('\\', '/')
     def cmakeExecutable = "${android.sdkDirectory}/cmake/3.31.6/bin/cmake.exe"

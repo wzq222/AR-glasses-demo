@@ -328,6 +328,12 @@ git status --short
   两个模型的大小和哈希均复核一致，APK SHA-256为
   `8939E12AF52935091E66728A4B3421AE40696C0E3870AAB0E956FFFFA23C5D6E`。本轮ADB未发现已连接设备，
   因此尚未覆盖安装到P20 Pro；此前安装的APK仍缺少模型，不能用于算法测试。
+- 2026-09-03：将P20 Pro开发集验证过的512单类NCNN FP32检测器和两套预编译CPU JNI纳入Git LFS，
+  默认clone构建不再依赖`CRRC_NCNN_ANDROID_ROOT`、`CRRC_NCNN_MODEL_DIR`或
+  `CRRC_NCNN_JNI_BUILD_ROOT`。默认APK固定启用NCNN候选、128 verifier和witness ROI三段链，旧640
+  ONNX检测模型迁移到独立`onnxAssets`，只在显式`CRRC_DETECTOR_BACKEND=onnx`时打包。默认构建55项
+  JVM测试全过，APK逐项检查确认包含NCNN模型、两ABI JNI、verifier和witness模型且不含旧检测ONNX；
+  ONNX回退构建也独立通过。本轮无ADB设备，尚未做新APK真机安装和端到端时延复测。
 - 2026-09-01：生产根入口已补齐中文 Web 管理后台，支持登录、仪表盘、用户、SOP版本、任务下发和
   巡检记录列表；巡检员被服务端权限门拒绝进入管理接口。`/`直接页面、`/admin`、鉴权冒烟、容器健康
   和原Finbot站点均已在线验证通过。服务端闭环已可管理，但Android登录与SOP执行上传仍待接入。

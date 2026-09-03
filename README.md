@@ -28,10 +28,14 @@
 ### 二维码识别
 - 基于 ML Kit Barcode Scanning，采用**四级递进策略**（原图 / 对比度增强 / 放大 2 倍 / 放大 2 倍 + 对比度增强），提升远距离与模糊二维码的识别率。
 
-### 目标检测（YOLO）
-- 基于 ONNX Runtime 离线推理，支持 NNAPI 硬件加速（失败自动回退 CPU）。
-- 模型 `screw_detect_v2_best.onnx` 用于紧固件/螺丝检测，检测结果在图片上绘制红框与标签（类别 + 置信度）。
-- 支持「对齐拍照」语音触发，以及原图库内对任意照片执行检测。
+### 防松标记检测与辅助判断
+- 默认使用 512 输入的单类 YOLOv8s-P2 NCNN FP32 模型做全图候选，再由 128 输入的
+  MobileNetV3-Small verifier 剔除非防松标记检查点。
+- 对保留检查点运行 `witness-roi.onnx`，定位防松线掩膜、固定侧/活动侧两段线和四端点；证据不足时
+  明确要求近拍，证据可用时按 3°/15°提供辅助分诊。
+- 松动状态必须由操作员逐点确认。当前模型没有独立真实状态测试集证据，不能作为全自动松动判定器。
+- 支持手机拍照、眼镜照片同步和原图库检测；显式设置 `CRRC_DETECTOR_BACKEND=onnx` 可构建旧的
+  640 ONNX 候选后端作为回退。
 
 ### 万用表读数识别
 - 基于通义千问视觉模型（`qwen3-vl-flash`）云端识别万用表读数与挡位。
@@ -102,9 +106,9 @@ git lfs install
 git lfs pull
 ```
 
-1. 确认 `app/src/main/assets/fastener-target-p2-640.onnx` 和
-   `app/src/main/assets/marked-point-verifier.onnx`、`app/src/main/assets/witness-roi.onnx`
-   已由 Git LFS 拉取完成。
+1. 确认 `app/src/main/ncnnAssets/model.ncnn.bin`、`app/src/main/ncnnJniLibs/`、
+   `app/src/main/assets/marked-point-verifier.onnx`、`app/src/main/assets/witness-roi.onnx` 和
+   `app/src/main/onnxAssets/fastener-target-p2-640.onnx` 已由 Git LFS 拉取完成。
 2. 用 Android Studio 打开 `ar_glass_app` 目录，等待 Gradle 同步完成。
 3. 连接 Android 手机（Android 5.1 / API 22 及以上），点击 Run 编译安装。
 
@@ -116,8 +120,9 @@ git lfs pull
 
 生成的 APK 位于 `app/build/outputs/apk/debug/`。
 
-构建会校验三个模型的文件大小和 SHA-256。模型缺失、仍是 Git LFS pointer 或内容不匹配时会直接失败，
-不会生成缺少算法资源的 APK。
+默认构建无需设置 NCNN 模型或 JNI 目录环境变量，直接生成 NCNN + verifier + witness 三段链 APK。
+构建会校验全部模型和预编译 JNI 的文件大小与 SHA-256；文件缺失、仍是 Git LFS pointer 或内容不匹配
+时会直接失败，不会生成缺少算法资源的 APK。
 
 ## 核心实现说明
 
