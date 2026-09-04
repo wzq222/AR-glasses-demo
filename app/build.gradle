@@ -12,6 +12,8 @@ def markedPointVerifierNnapi = (System.getenv('CRRC_MARKED_POINT_VERIFIER_NNAPI'
 def markedPointVerifierXnnpack = (System.getenv('CRRC_MARKED_POINT_VERIFIER_XNNPACK') ?: '0') == '1'
 def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
 def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
+def generatedBuiltinGalleryDir = file("$buildDir/generated/builtinGalleryAssets")
+def builtinGallerySourceDir = System.getenv('CRRC_BUILTIN_GALLERY_DIR')
 def bundledNcnnModelDir = file('src/main/ncnnAssets')
 def bundledNcnnJniLibsDir = file('src/main/ncnnJniLibs')
 def hasText = { value -> value != null && !value.trim().isEmpty() }
@@ -81,6 +83,16 @@ task prepareFilteredJniLibs(type: Sync) {
         }
     }
     into filteredJniLibsDir
+}
+
+task prepareBuiltinGalleryAssets(type: Sync) {
+    into generatedBuiltinGalleryDir
+    if (hasText(builtinGallerySourceDir)) {
+        from(file(builtinGallerySourceDir)) {
+            include '**/*.jpg', '**/*.jpeg', '**/*.png', '**/*.webp'
+            into 'builtin_gallery'
+        }
+    }
 }
 
 if (detectorBackend == 'ncnn') {
@@ -171,6 +183,7 @@ android {
     }
     sourceSets {
         main {
+            assets.srcDir generatedBuiltinGalleryDir
             if (detectorBackend == 'ncnn') {
                 assets.srcDir filteredNcnnModelDir
             } else {
@@ -228,6 +241,7 @@ dependencies {
 }
 
 preBuild.dependsOn prepareFilteredJniLibs
+preBuild.dependsOn prepareBuiltinGalleryAssets
 preBuild.dependsOn verifyBundledVisionModels
 if (detectorBackend == 'ncnn') {
     preBuild.dependsOn prepareFilteredNcnnModel
