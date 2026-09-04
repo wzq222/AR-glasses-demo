@@ -24,5 +24,28 @@ token = login["access_token"]
 status, me = request("/api/v1/users/me", token=token)
 assert status == 200 and me["role"] == "admin"
 status, templates = request("/api/v1/sop/templates", token=token)
-assert status == 200 and any(item["code"] == "CRRC_THREE_STEP" for item in templates)
-print("authenticated smoke passed: login, current user, seeded three-step SOP")
+assert status == 200
+template_codes = {item["code"] for item in templates}
+assert {"CRRC_THREE_STEP", "CRRC_TEN_STEP"}.issubset(template_codes)
+status, assignments = request("/api/v1/assignments", token=token)
+assert status == 200
+active = {
+    item["asset_code"]: item
+    for item in assignments
+    if item["status"] in {"pending", "in_progress"}
+}
+assert len(active["CRRC-DEMO-001"]["steps"]) == 3
+ten_step = active["CRRC-DEMO-010"]["steps"]
+assert [step["type"] for step in ten_step] == [
+    "QR",
+    "FASTENER_MARK",
+    "METER",
+    "FASTENER_MARK",
+    "QR",
+    "FASTENER_MARK",
+    "METER",
+    "FASTENER_MARK",
+    "METER",
+    "FASTENER_MARK",
+]
+print("authenticated smoke passed: public API, 3-step task, 10-step task")
