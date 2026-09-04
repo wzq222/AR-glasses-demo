@@ -32,6 +32,16 @@ The idempotent seeder was run twice on `101.200.152.104`:
 
 No credential or access token was printed or stored in this repository.
 
+A later live authentication check used credentials supplied out of band and retained
+no password or token. The physical phone logged in through the production HTTPS API
+and displayed exactly two pending assignments: `CRRC-DEMO-010` (ten steps) and
+`CRRC-DEMO-001` (three steps). An independent Playwright browser session also logged
+into the public management site, showed one active user, three SOP versions and two
+pending assignments, and expanded `CRRC_TEN_STEP` as 10 steps with five witness-line
+review points. The only browser console error was a non-functional `/favicon.ico`
+404; authentication and business data requests succeeded. The browser session was
+logged out and closed after verification.
+
 ## Local verification
 
 - Server: `python -m pytest tests -q` -> 12 passed.
@@ -43,10 +53,9 @@ No credential or access token was printed or stored in this repository.
 - Formal truth `annotations/fastener-v2/instances.json` remained:
   `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`.
 
-ADB was restarted and still reported no connected device. The APK therefore could
-not be installed or visually exercised on a phone in this validation run; the build,
-unit contracts, and production API are verified, while physical camera interaction
-remains pending a USB-debuggable device.
+At the start of this validation, restarting ADB still reported no connected device,
+so initial checks were limited to the build, unit contracts and production API. The
+later physical-device recovery and installation result is recorded below.
 
 An isolated Android 16/API 36 x86_64 emulator with ARM64 translation was then used as
 a local startup check. The first run exposed a pre-existing crash when an audio-less
