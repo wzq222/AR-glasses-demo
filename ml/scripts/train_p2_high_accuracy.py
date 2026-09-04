@@ -122,7 +122,7 @@ def _safe_model(
     return model
 
 
-def main() -> int:
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--train-coco", default="annotations/high-accuracy-v2/instances.train.json"
@@ -139,6 +139,9 @@ def main() -> int:
     parser.add_argument("--output", default="runs/high-accuracy-p2-s-640")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument(
+        "--train-tile-views", type=int, choices=(1, 2, 3, 4), default=1
+    )
     parser.add_argument("--seed", type=int, choices=P2_SEEDS)
     parser.add_argument("--variant", choices=("n", "s", "m"), default="s")
     parser.add_argument("--transfer-pretrained", action="store_true")
@@ -152,7 +155,11 @@ def main() -> int:
     )
     parser.add_argument("--maximum-synthetic-fraction", type=float)
     parser.add_argument("--execute", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_argument_parser().parse_args()
 
     if args.resume and (args.seed is None or not args.execute):
         raise ValueError("RESUME_REQUIRES_ONE_SEED_AND_EXECUTE")
@@ -255,7 +262,7 @@ def main() -> int:
         runtime_output_root=runtime_dataset_root,
         source_root=source_root,
         train_tiles=True,
-        train_tile_views=1,
+        train_tile_views=args.train_tile_views,
         merge_target_categories=True,
     )
     common = {
@@ -274,6 +281,7 @@ def main() -> int:
         "model_yaml": model_yaml,
         "transfer_pretrained": args.transfer_pretrained,
         "fine_tune": args.fine_tune,
+        "train_tile_views": args.train_tile_views,
         "expected_pretrained_sha256": args.expected_pretrained_sha256,
         "synthetic_batch_policy": {
             **synthetic_policy,
