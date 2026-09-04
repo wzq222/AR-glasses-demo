@@ -61,7 +61,13 @@ the cable, the same `NOH-AN01` composite device remained continuously present fo
 `ew_usbccgpfilter` driver: Windows reports `CM_PROB_FAILED_START` / code 10 before an
 ADB child interface can enumerate. The user reported that the APK was installed
 manually on the physical phone; package identity, startup logs, and SOP interaction on
-that phone remain unverified by the host until the Windows driver is repaired.
+that phone initially remained unverified. A subsequent known-good data cable allowed
+the same `NOH-AN01` to enumerate normally through the Microsoft ADB interface. The
+latest APK was then installed with `adb install -r -g`, cold-launched in 2.342 seconds,
+and kept its process alive. UIAutomator confirmed the main inspection entry and opened
+`SopActivity`; the “中车巡检工作台” login title, username field, and password field
+were all present, with zero matching fatal AndroidRuntime entries. No device serial is
+stored in this repository.
 
 ## Accuracy boundary
 
