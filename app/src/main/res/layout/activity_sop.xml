@@ -297,12 +297,84 @@
                             android:textColor="#71818D" />
 
                         <LinearLayout
-                            android:id="@+id/markedPointReviewList"
+                            android:id="@+id/panelWitnessPointReview"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
                             android:orientation="vertical"
-                            android:visibility="gone" />
+                            android:padding="10dp"
+                            android:background="#EFF5F8"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:id="@+id/tvWitnessReviewProgress"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="检查点 1/1"
+                                android:textColor="#243A48"
+                                android:textStyle="bold" />
+
+                            <FrameLayout
+                                android:layout_width="240dp"
+                                android:layout_height="240dp"
+                                android:layout_gravity="center_horizontal"
+                                android:layout_marginTop="7dp"
+                                android:background="#707070">
+
+                                <ImageView
+                                    android:id="@+id/ivWitnessReviewCrop"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="match_parent"
+                                    android:scaleType="fitCenter"
+                                    android:contentDescription="防松线检查点审核图" />
+
+                                <com.ar.glass.vision.ui.WitnessReviewOverlay
+                                    android:id="@+id/overlayWitnessReviewRoi"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="match_parent" />
+                            </FrameLayout>
+
+                            <TextView
+                                android:id="@+id/tvWitnessAutomaticResult"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:text="AI辅助：等待分析"
+                                android:textColor="#20303A" />
+
+                            <Spinner
+                                android:id="@+id/spinnerWitnessPointDecision"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="5dp"
+                                android:orientation="horizontal">
+
+                                <Button
+                                    android:id="@+id/btnWitnessPrevious"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="上一个" />
+
+                                <Button
+                                    android:id="@+id/btnWitnessFullImage"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="查看原图" />
+
+                                <Button
+                                    android:id="@+id/btnWitnessNext"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="下一个" />
+                            </LinearLayout>
+                        </LinearLayout>
 
                         <Spinner
                             android:id="@+id/spinnerStepDecision"

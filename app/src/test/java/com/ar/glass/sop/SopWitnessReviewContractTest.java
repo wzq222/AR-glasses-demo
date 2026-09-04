@@ -31,10 +31,20 @@ public class SopWitnessReviewContractTest {
     @Test
     public void evidencePreviewIncludesTheWitnessOverlayAndReviewList() throws Exception {
         String layout = readProjectFile("app/src/main/res/layout/activity_sop.xml");
+        String source = readProjectFile(
+                "app/src/main/java/com/ar/glass/sop/SopActivity.java");
 
         assertTrue(layout.contains("android:id=\"@+id/overlaySopEvidence\""));
         assertTrue(layout.contains("com.ar.glass.vision.ui.BoxOverlay"));
-        assertTrue(layout.contains("android:id=\"@+id/markedPointReviewList\""));
+        assertTrue(layout.contains("android:id=\"@+id/panelWitnessPointReview\""));
+        assertTrue(layout.contains("android:id=\"@+id/ivWitnessReviewCrop\""));
+        assertTrue(layout.contains("com.ar.glass.vision.ui.WitnessReviewOverlay"));
+        assertTrue(layout.contains("android:id=\"@+id/btnWitnessPrevious\""));
+        assertTrue(layout.contains("android:id=\"@+id/btnWitnessNext\""));
+        assertTrue(layout.contains("android:id=\"@+id/btnWitnessFullImage\""));
+        assertTrue(source.contains("WitnessReviewCrop.fromNormalized"));
+        assertTrue(source.contains("renderWitnessReviewPoint"));
+        assertTrue(source.contains("showWitnessFullImage"));
     }
 
     private static String readProjectFile(String relativePath) throws Exception {
