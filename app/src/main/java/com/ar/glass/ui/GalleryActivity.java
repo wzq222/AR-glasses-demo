@@ -162,9 +162,9 @@ public class GalleryActivity extends AppCompatActivity {
                 collectImages(f, files);
             } else {
                 String name = f.getName().toLowerCase();
-                if (name.endsWith(".jpg") || name.endsWith(".jpeg")
-                        || name.endsWith(".png") || name.endsWith(".bmp")
-                        || name.endsWith(".webp")) {
+                boolean supportedEvidence = name.endsWith(".jpg") || name.endsWith(".jpeg")
+                        || name.endsWith(".png") || name.endsWith(".webp");
+                if (supportedEvidence || (!selectImageMode && name.endsWith(".bmp"))) {
                     files.add(f);
                 }
             }

@@ -1,8 +1,9 @@
 package com.ar.glass.sop;
 
 import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -23,12 +24,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.ActivityResult;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.cardview.widget.CardView;
 import androidx.core.content.FileProvider;
 
 import com.ar.glass.R;
+import com.ar.glass.ui.GalleryActivity;
 import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.MeterReading;
 import com.ar.glass.vision.Vision;
@@ -40,6 +43,9 @@ import com.ar.glass.vision.ui.WitnessReviewOverlay;
 import com.google.gson.JsonObject;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -76,6 +82,9 @@ public final class SopActivity extends AppCompatActivity {
     private ImageView evidencePreview;
     private BoxOverlay evidenceOverlay;
     private Button captureButton;
+    private Button phoneGalleryButton;
+    private Button originalGalleryButton;
+    private View galleryEvidenceSources;
     private TextView analysisText;
     private View witnessReviewPanel;
     private TextView witnessReviewProgress;
@@ -96,6 +105,8 @@ public final class SopActivity extends AppCompatActivity {
     private String runId;
     private int stepIndex;
     private File evidenceFile;
+    private File pendingCameraFile;
+    private String evidenceSource = "";
     private String analysisSummary = "";
     private Map<String, Object> analysisValue = new HashMap<>();
     private final List<Map<String, Object>> pointResultMaps = new ArrayList<>();
@@ -106,6 +117,8 @@ public final class SopActivity extends AppCompatActivity {
     private Bitmap witnessReviewPatch;
 
     private ActivityResultLauncher<Uri> camera;
+    private ActivityResultLauncher<String> phoneGallery;
+    private ActivityResultLauncher<Intent> originalGallery;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -114,22 +127,19 @@ public final class SopActivity extends AppCompatActivity {
         bindViews();
         bindActions();
         camera = registerForActivityResult(new ActivityResultContracts.TakePicture(), success -> {
-            if (success && evidenceFile != null) {
-                Bitmap bitmap = decode(evidenceFile, 2200);
-                evidenceOverlay.clear();
-                resetWitnessReviews();
-                saveStepButton.setEnabled(false);
-                if (bitmap == null) {
-                    setBusy(false, "照片读取失败，请重新拍摄");
-                    return;
-                }
-                evidenceBitmap = bitmap;
-                evidencePreview.setImageBitmap(bitmap);
-                analyzeCurrentStep(bitmap);
+            File captured = pendingCameraFile;
+            pendingCameraFile = null;
+            if (success && captured != null) {
+                decodeAndProcessEvidence(captured, "CAMERA", true);
             } else {
+                if (captured != null && captured.exists()) captured.delete();
                 setBusy(false, "未获取照片");
             }
         });
+        phoneGallery = registerForActivityResult(
+                new ActivityResultContracts.GetContent(), this::importPhoneEvidence);
+        originalGallery = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(), this::importOriginalEvidence);
         if (api.hasSession()) restoreSession(); else showLogin();
     }
 
@@ -154,6 +164,9 @@ public final class SopActivity extends AppCompatActivity {
         evidencePreview = findViewById(R.id.ivSopEvidence);
         evidenceOverlay = findViewById(R.id.overlaySopEvidence);
         captureButton = findViewById(R.id.btnCaptureStep);
+        phoneGalleryButton = findViewById(R.id.btnSelectPhoneGallery);
+        originalGalleryButton = findViewById(R.id.btnSelectOriginalGallery);
+        galleryEvidenceSources = findViewById(R.id.layoutGalleryEvidenceSources);
         analysisText = findViewById(R.id.tvStepAnalysis);
         witnessReviewPanel = findViewById(R.id.panelWitnessPointReview);
         witnessReviewProgress = findViewById(R.id.tvWitnessReviewProgress);
@@ -188,6 +201,8 @@ public final class SopActivity extends AppCompatActivity {
         });
         findViewById(R.id.btnBackTasks).setOnClickListener(v -> showTasks());
         captureButton.setOnClickListener(v -> captureEvidence());
+        phoneGalleryButton.setOnClickListener(v -> phoneGallery.launch("image/*"));
+        originalGalleryButton.setOnClickListener(v -> selectOriginalGalleryEvidence());
         witnessPrevious.setOnClickListener(v -> moveWitnessReview(false));
         witnessNext.setOnClickListener(v -> moveWitnessReview(true));
         witnessFullImage.setOnClickListener(v -> showWitnessFullImage());
@@ -332,6 +347,7 @@ public final class SopActivity extends AppCompatActivity {
             stepInstruction.setText("提交后将进入后台人工复核队列");
             stepContract.setText("证据完整性门已在提交时再次校验");
             captureButton.setVisibility(View.GONE);
+            galleryEvidenceSources.setVisibility(View.GONE);
             saveStepButton.setVisibility(View.GONE);
             evidencePanel.setVisibility(View.GONE);
             evidenceOverlay.setVisibility(View.GONE);
@@ -342,6 +358,7 @@ public final class SopActivity extends AppCompatActivity {
             return;
         }
         evidenceFile = null;
+        evidenceSource = "";
         analysisSummary = "";
         analysisValue = new HashMap<>();
         evidenceBitmap = null;
@@ -351,6 +368,7 @@ public final class SopActivity extends AppCompatActivity {
         evidencePanel.setVisibility(View.VISIBLE);
         evidenceOverlay.setVisibility(View.VISIBLE);
         captureButton.setVisibility(View.VISIBLE);
+        galleryEvidenceSources.setVisibility(View.VISIBLE);
         saveStepButton.setVisibility(View.VISIBLE);
         decision.setVisibility(View.VISIBLE);
         note.setVisibility(View.VISIBLE);
@@ -374,13 +392,102 @@ public final class SopActivity extends AppCompatActivity {
             File directory = getExternalFilesDir("sop_evidence");
             if (directory == null) throw new IllegalStateException("外部存储不可用");
             if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("无法创建证据目录");
-            evidenceFile = new File(directory, "sop_" + System.currentTimeMillis() + ".jpg");
-            Uri uri = FileProvider.getUriForFile(this, "com.ar.glass.fileprovider", evidenceFile);
+            pendingCameraFile = new File(directory, "sop_" + System.currentTimeMillis() + ".jpg");
+            Uri uri = FileProvider.getUriForFile(this, "com.ar.glass.fileprovider", pendingCameraFile);
             setBusy(true, "等待现场拍照…");
             camera.launch(uri);
         } catch (Exception error) {
+            pendingCameraFile = null;
             setBusy(false, "无法启动相机：" + error.getMessage());
         }
+    }
+
+    private void selectOriginalGalleryEvidence() {
+        Intent intent = new Intent(this, GalleryActivity.class);
+        intent.putExtra(GalleryActivity.EXTRA_MODE, GalleryActivity.MODE_ORIGINAL);
+        intent.putExtra(GalleryActivity.EXTRA_SELECT_IMAGE, true);
+        originalGallery.launch(intent);
+    }
+
+    private void importPhoneEvidence(Uri uri) {
+        if (uri == null) {
+            setBusy(false, "已取消选择，当前证据保持不变");
+            return;
+        }
+        ContentResolver resolver = getContentResolver();
+        String mime = resolver.getType(uri);
+        importEvidence(() -> resolver.openInputStream(uri), mime, "PHONE_GALLERY");
+    }
+
+    private void importOriginalEvidence(ActivityResult result) {
+        if (result.getResultCode() != RESULT_OK || result.getData() == null) {
+            setBusy(false, "已取消选择，当前证据保持不变");
+            return;
+        }
+        String path = result.getData().getStringExtra(GalleryActivity.EXTRA_SELECTED_IMAGE_PATH);
+        File source = path == null ? null : new File(path);
+        if (source == null || !source.isFile()) {
+            setBusy(false, "原图库图片不存在，当前证据保持不变");
+            return;
+        }
+        try {
+            importEvidence(() -> new FileInputStream(source), SopEvidenceFiles.mediaType(source),
+                    "APP_GALLERY");
+        } catch (IllegalArgumentException error) {
+            setBusy(false, error.getMessage() + "，当前证据保持不变");
+        }
+    }
+
+    private void importEvidence(EvidenceInput input, String mime, String source) {
+        setBusy(true, "正在读取图库图片…");
+        analyzerExecutor.execute(() -> {
+            File snapshot = null;
+            try {
+                snapshot = SopEvidenceFiles.copy(
+                        input.open(), mime, evidenceDirectory(), System.currentTimeMillis());
+                Bitmap bitmap = SopImageDecoder.decode(snapshot, 2200);
+                File finalSnapshot = snapshot;
+                runOnUiThread(() -> processEvidenceFile(finalSnapshot, bitmap, source));
+            } catch (Exception error) {
+                if (snapshot != null && snapshot.exists()) snapshot.delete();
+                String message = error.getMessage() == null ? "图片读取失败" : error.getMessage();
+                runOnUiThread(() -> setBusy(false, message + "，当前证据保持不变"));
+            }
+        });
+    }
+
+    private void decodeAndProcessEvidence(File file, String source, boolean deleteOnFailure) {
+        analyzerExecutor.execute(() -> {
+            try {
+                Bitmap bitmap = SopImageDecoder.decode(file, 2200);
+                runOnUiThread(() -> processEvidenceFile(file, bitmap, source));
+            } catch (IOException error) {
+                if (deleteOnFailure && file.exists()) file.delete();
+                runOnUiThread(() -> setBusy(false, "照片读取失败，当前证据保持不变"));
+            }
+        });
+    }
+
+    private void processEvidenceFile(File file, Bitmap bitmap, String source) {
+        evidenceOverlay.clear();
+        resetWitnessReviews();
+        saveStepButton.setEnabled(false);
+        evidenceFile = file;
+        evidenceSource = source;
+        evidenceBitmap = bitmap;
+        evidencePreview.setImageBitmap(bitmap);
+        analyzeCurrentStep(bitmap);
+    }
+
+    private File evidenceDirectory() throws IOException {
+        File directory = getExternalFilesDir("sop_evidence");
+        if (directory == null) throw new IOException("外部存储不可用");
+        if (!directory.exists() && !directory.mkdirs()) throw new IOException("无法创建证据目录");
+        return directory;
+    }
+
+    private interface EvidenceInput {
+        InputStream open() throws IOException;
     }
 
     private void analyzeCurrentStep(Bitmap bitmap) {
@@ -389,6 +496,7 @@ public final class SopActivity extends AppCompatActivity {
         setBusy(true, "正在执行 " + step.title + "…");
         analyzerExecutor.execute(() -> {
             Map<String, Object> value = new HashMap<>();
+            value.put("evidence_source", evidenceSource);
             String summary;
             int recommendedDecision = -1;
             List<com.ar.glass.vision.YoloDetector.Detection> overlayDetections = null;
@@ -727,6 +835,8 @@ public final class SopActivity extends AppCompatActivity {
 
     private void setBusy(boolean busy, String message) {
         captureButton.setEnabled(!busy);
+        phoneGalleryButton.setEnabled(!busy);
+        originalGalleryButton.setEnabled(!busy);
         saveStepButton.setEnabled(!busy && (currentStep() == null || !currentStep().requireEvidence || evidenceFile != null));
         submitButton.setEnabled(!busy);
         setStatus(message);
@@ -734,18 +844,6 @@ public final class SopActivity extends AppCompatActivity {
 
     private void setStatus(String message) {
         status.setText(message == null ? "" : message);
-    }
-
-    private Bitmap decode(File file, int maxEdge) {
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
-        int sample = 1;
-        while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2;
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inSampleSize = sample;
-        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
     }
 
     private String isoNow() {

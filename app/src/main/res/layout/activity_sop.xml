@@ -288,6 +288,38 @@
                             android:textColor="#FFFFFF"
                             android:backgroundTint="#176FA8" />
 
+                        <LinearLayout
+                            android:id="@+id/layoutGalleryEvidenceSources"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:orientation="horizontal">
+
+                            <Button
+                                android:id="@+id/btnSelectPhoneGallery"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="3dp"
+                                android:minHeight="48dp"
+                                android:text="从手机图库选择"
+                                android:textSize="13sp"
+                                android:textColor="#176FA8"
+                                android:backgroundTint="#E6F1F8" />
+
+                            <Button
+                                android:id="@+id/btnSelectOriginalGallery"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="3dp"
+                                android:minHeight="48dp"
+                                android:text="从 App 原图库选择"
+                                android:textSize="13sp"
+                                android:textColor="#176FA8"
+                                android:backgroundTint="#E6F1F8" />
+                        </LinearLayout>
+
                         <TextView
                             android:id="@+id/tvStepAnalysis"
                             android:layout_width="match_parent"
