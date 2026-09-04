@@ -67,7 +67,16 @@ public class VoiceController {
         this.listener = listener;
         this.audioManager = (AudioManager) this.context.getSystemService(Context.AUDIO_SERVICE);
         initTts();
-        toneGenerator = new ToneGenerator(AudioManager.STREAM_MUSIC, 80);
+        initToneGenerator();
+    }
+
+    private void initToneGenerator() {
+        try {
+            toneGenerator = new ToneGenerator(AudioManager.STREAM_MUSIC, 80);
+        } catch (RuntimeException error) {
+            toneGenerator = null;
+            Log.w(TAG, "提示音不可用，语音功能继续无提示音运行", error);
+        }
     }
 
     public boolean isRecording() {

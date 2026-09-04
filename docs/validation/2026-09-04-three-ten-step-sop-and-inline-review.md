@@ -35,11 +35,11 @@ No credential or access token was printed or stored in this repository.
 ## Local verification
 
 - Server: `python -m pytest tests -q` -> 12 passed.
-- Android: `:app:testDebugUnitTest` -> 62 tests, 0 failures, 0 errors.
+- Android: `:app:testDebugUnitTest` -> 63 tests, 0 failures, 0 errors.
 - Android: `:app:assembleDebug` -> PASS.
-- Debug APK: 108,792,168 bytes.
+- Debug APK: 108,792,293 bytes.
 - Debug APK SHA-256:
-  `90D1F5F88015E03479F8A7F927AEB742978201B15ACE5A978B01662D1BC75FD4`.
+  `AFD477F93735EF9888BB96888A1F9F35EC6B6198B4199AFF492C6ED2E6BBE953`.
 - Formal truth `annotations/fastener-v2/instances.json` remained:
   `B659FC8160BD7C49491BA4C560E1AF047CA837E54EE93E79826FEBAABCB0F001`.
 
@@ -47,6 +47,21 @@ ADB was restarted and still reported no connected device. The APK therefore coul
 not be installed or visually exercised on a phone in this validation run; the build,
 unit contracts, and production API are verified, while physical camera interaction
 remains pending a USB-debuggable device.
+
+An isolated Android 16/API 36 x86_64 emulator with ARM64 translation was then used as
+a local startup check. The first run exposed a pre-existing crash when an audio-less
+device rejected `ToneGenerator` initialization. `VoiceController` now treats the
+prompt tone as optional, and a regression contract covers the fallback. After the
+fix, the APK installed with `primaryCpuAbi=arm64-v8a`, cold-launched without a fatal
+exception, kept its process alive, rendered the main “中车巡检任务” card, and opened
+the SOP login screen. The physical Huawei connection initially disappeared from the
+USB bus every 5-8 seconds and also produced descriptor error code 43. After replacing
+the cable, the same `NOH-AN01` composite device remained continuously present for the
+30-second observation window, isolating the remaining failure to its 2016 Huawei
+`ew_usbccgpfilter` driver: Windows reports `CM_PROB_FAILED_START` / code 10 before an
+ADB child interface can enumerate. The user reported that the APK was installed
+manually on the physical phone; package identity, startup logs, and SOP interaction on
+that phone remain unverified by the host until the Windows driver is repaired.
 
 ## Accuracy boundary
 

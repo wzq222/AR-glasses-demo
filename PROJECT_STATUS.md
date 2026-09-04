@@ -14,6 +14,12 @@
   全部检查点审核完才可保存。服务端12项、Android 62项测试及Debug APK构建通过；ADB当前无设备，
   所以本轮未完成真机安装。状态模型仍是人工辅助，不能宣称可靠自动松动判定。证据见
   `docs/validation/2026-09-04-three-ten-step-sop-and-inline-review.md`。
+- 2026-09-04：API 36本地模拟器通过ARM64转译成功安装APK，首次冷启动暴露无音频设备上
+  `ToneGenerator`初始化异常导致主界面退出；现已改为提示音不可用时安全降级。修复后冷启动无崩溃，
+  主界面“中车巡检任务”入口与SOP登录页均完成UI层级核验。Android回归增至63项。插入的华为
+  `NOH-AN01`最初每5–8秒从USB总线消失并出现设备描述符错误码43；更换线材后连续30秒稳定枚举，
+  剩余阻塞定位为2016年华为`ew_usbccgpfilter`驱动启动失败（Windows Code 10），ADB子接口尚未生成。
+  用户已手工安装APK，但主机须在驱动修复后才能核验真机包版本和运行日志。
 
 - 2026-08-25：仓库从 `https://github.com/wzq222/AR-glasses-demo.git` 克隆，保留上游 Git 历史；
   基线提交为 `510e5f5`。
