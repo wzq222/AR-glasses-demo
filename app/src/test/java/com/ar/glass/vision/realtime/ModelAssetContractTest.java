@@ -74,6 +74,8 @@ public class ModelAssetContractTest {
                 StandardCharsets.UTF_8);
 
         assertTrue(buildScript.contains("CRRC_DETECTOR_BACKEND') ?: 'ncnn'"));
+        assertTrue(buildScript.contains(
+                "CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.0019424824276939034'"));
         assertTrue(buildScript.contains("markedPointVerifierEnabled = detectorBackend == 'ncnn'"));
         assertEquals(21_107L,
                 Files.size(appRoot.resolve("src/main/ncnnAssets/model.ncnn.param")));

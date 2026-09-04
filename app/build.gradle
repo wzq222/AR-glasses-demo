@@ -4,7 +4,7 @@ def detectorBackend = (System.getenv('CRRC_DETECTOR_BACKEND') ?: 'ncnn').trim().
 def ncnnAndroidRoot = System.getenv('CRRC_NCNN_ANDROID_ROOT')
 def ncnnModelDir = System.getenv('CRRC_NCNN_MODEL_DIR')
 def ncnnJniBuildRoot = System.getenv('CRRC_NCNN_JNI_BUILD_ROOT')
-def ncnnConfidenceThreshold = (System.getenv('CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.20').toFloat()
+def ncnnConfidenceThreshold = (System.getenv('CRRC_NCNN_CONFIDENCE_THRESHOLD') ?: '0.0019424824276939034').toFloat()
 def ncnnExactMath = (System.getenv('CRRC_NCNN_EXACT_MATH') ?: '0') == '1'
 def ncnnVulkan = (System.getenv('CRRC_NCNN_VULKAN') ?: '0') == '1'
 def ncnnVulkanFp16 = (System.getenv('CRRC_NCNN_VULKAN_FP16') ?: '0') == '1'

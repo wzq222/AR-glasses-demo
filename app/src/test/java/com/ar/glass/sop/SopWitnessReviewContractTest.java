@@ -23,6 +23,8 @@ public class SopWitnessReviewContractTest {
         assertTrue(source.contains("pointResultMaps.get(index).put(\"human_decision\""));
         assertTrue(source.contains("new String[]{\"请选择逐点结论\", \"确认正常\", \"疑似松动\", \"无法判断/重拍\"}"));
         assertTrue(source.contains("value.put(\"human_review_complete\", true)"));
+        assertTrue(source.contains("第一步·螺栓定位"));
+        assertTrue(source.contains("第二步·松动判断"));
         assertFalse(source.contains(
                 "value.put(\"marked_point_count\", detection.detections.size());\n"
                         + "                        value.put(\"state\", \"INSUFFICIENT\");"));

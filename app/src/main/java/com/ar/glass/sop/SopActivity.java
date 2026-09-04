@@ -33,6 +33,7 @@ import androidx.core.content.FileProvider;
 import com.ar.glass.R;
 import com.ar.glass.ui.GalleryActivity;
 import com.ar.glass.vision.MarkedPointDetectorHolder;
+import com.ar.glass.vision.InspectionPresentation;
 import com.ar.glass.vision.MeterReading;
 import com.ar.glass.vision.Vision;
 import com.ar.glass.vision.realtime.WitnessStateEstimate;
@@ -559,9 +560,12 @@ public final class SopActivity extends AppCompatActivity {
                             recommendedDecision = 2;
                         }
                         value.put("requires_human_confirmation", true);
-                        summary = "检出 " + detection.detections.size() + " 个防松检查点：正常倾向 "
-                                + aligned + "，疑似错位 " + suspected + "，高疑似 "
-                                + highSuspicion + "，需近拍 " + insufficient + "；请逐点人工确认";
+                        summary = "第一步·螺栓定位：检出 " + detection.detections.size()
+                                + " 个带防松标记的螺栓\n"
+                                + "第二步·松动判断：未见松动迹象 " + aligned
+                                + "，疑似松动 " + suspected + "，高疑似松动 "
+                                + highSuspicion + "，无法判断 " + insufficient
+                                + "；请逐点人工确认";
                         break;
                     case "METER":
                         MeterReading reading = Vision.get().readMeter(bitmap);
@@ -748,16 +752,7 @@ public final class SopActivity extends AppCompatActivity {
     }
 
     private String automaticWitnessResult(WitnessStateEstimate estimate) {
-        if (estimate.getTriage() == WitnessTriage.LIKELY_ALIGNED) {
-            return String.format(Locale.CHINA, "正常倾向 %.1f°", estimate.getAngleDegrees());
-        }
-        if (estimate.getTriage() == WitnessTriage.POSSIBLE_DISPLACED) {
-            return String.format(Locale.CHINA, "疑似错位 %.1f°", estimate.getAngleDegrees());
-        }
-        if (estimate.getTriage() == WitnessTriage.HIGH_SUSPICION) {
-            return String.format(Locale.CHINA, "高疑似松动 %.1f°（待确认）", estimate.getAngleDegrees());
-        }
-        return "无法自动测量，请近拍";
+        return InspectionPresentation.stateLabel(estimate);
     }
 
     private Bitmap renderSourceCropWithNeutralPadding(Bitmap source, WitnessReviewCrop crop) {

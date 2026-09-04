@@ -25,6 +25,7 @@ import com.ar.glass.R;
 import com.ar.glass.vision.MeterReading;
 import com.ar.glass.vision.Vision;
 import com.ar.glass.vision.MarkedPointDetectorHolder;
+import com.ar.glass.vision.InspectionPresentation;
 import com.ar.glass.vision.YoloDetector;
 import com.ar.glass.vision.cloud.MeterCloudOcr;
 
@@ -221,12 +222,15 @@ public class ImageViewerActivity extends AppCompatActivity {
         mAnnotatedBitmap = drawDetections(bitmap, dets);
 
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format(Locale.US, "检测到 %d 个目标，耗时 %dms\n\n",
+        sb.append(String.format(Locale.US, "第一步·螺栓定位：%d 个带防松标记的螺栓，耗时 %dms\n\n",
                 dets != null ? dets.size() : 0, ms));
         if (dets != null && !dets.isEmpty()) {
             for (YoloDetector.Detection d : dets) {
-                sb.append(String.format(Locale.US, "· %s  置信度 %.0f%%\n",
-                        d.className, d.score * 100));
+                sb.append(String.format(Locale.US, "· %s  定位置信度 %.0f%%\n  第二步·%s\n",
+                        d.className,
+                        d.score * 100,
+                        InspectionPresentation.stateLabel(
+                                d.witnessTriage, d.witnessAngleDegrees)));
             }
         }
         return sb.toString();
@@ -265,16 +269,46 @@ public class ImageViewerActivity extends AppCompatActivity {
                 float y2 = d.y2 * h;
                 canvas.drawRect(x1, y1, x2, y2, boxPaint);
 
-                String label = d.className + " " + Math.round(d.score * 100) + "%";
-                float tw = textPaint.measureText(label);
+                String primary = d.className + " " + Math.round(d.score * 100) + "%";
+                String secondary = InspectionPresentation.stateLabel(
+                        d.witnessTriage, d.witnessAngleDegrees);
+                float tw = Math.max(
+                        textPaint.measureText(primary), textPaint.measureText(secondary));
                 float th = textPaint.getTextSize();
-                float labelTop = y1 - th - stroke;
+                float labelTop = y1 - 2 * th - stroke;
                 if (labelTop < 0) labelTop = y1;
-                canvas.drawRect(x1, labelTop, x1 + tw + 8, labelTop + th + 4, bgPaint);
-                canvas.drawText(label, x1 + 4, labelTop + th, textPaint);
+                canvas.drawRect(x1, labelTop, x1 + tw + 8, labelTop + 2 * th + 8, bgPaint);
+                canvas.drawText(primary, x1 + 4, labelTop + th, textPaint);
+                canvas.drawText(secondary, x1 + 4, labelTop + 2 * th + 4, textPaint);
+                drawWitnessGeometry(canvas, d, w, h, boxPaint);
             }
         }
         return src;
+    }
+
+    private void drawWitnessGeometry(
+            Canvas canvas,
+            YoloDetector.Detection detection,
+            float imageWidth,
+            float imageHeight,
+            Paint paint) {
+        float[] points = detection.witnessPoints;
+        if (points == null || points.length != 8) return;
+        Paint geometry = new Paint(paint);
+        geometry.setStrokeWidth(Math.max(paint.getStrokeWidth() * 1.8f, 4f));
+        geometry.setStrokeCap(Paint.Cap.ROUND);
+        float[] mapped = new float[8];
+        for (int index = 0; index < 4; index++) {
+            mapped[index * 2] = points[index * 2] * imageWidth;
+            mapped[index * 2 + 1] = points[index * 2 + 1] * imageHeight;
+        }
+        canvas.drawLine(mapped[0], mapped[1], mapped[2], mapped[3], geometry);
+        canvas.drawLine(mapped[4], mapped[5], mapped[6], mapped[7], geometry);
+        geometry.setStyle(Paint.Style.FILL);
+        float radius = Math.max(geometry.getStrokeWidth() * 1.2f, 5f);
+        for (int index = 0; index < 4; index++) {
+            canvas.drawCircle(mapped[index * 2], mapped[index * 2 + 1], radius, geometry);
+        }
     }
 
     /** 万用表读数识别：云端识别读数与挡位 */
