@@ -182,6 +182,14 @@
   0.136、关键点P95 3.61px、角度mean/P95 3.37°/6.27°，严格质量门FAIL，
   `android_packaging_allowed=false`，没有把失败状态模型装进手机。基础/训练Python回归分别为
   361 passed + 3 skipped / 373 passed，Android 56项测试和Debug APK构建通过，formal truth哈希未变。
+- 2026-09-02：按用户要求把上述ROI状态模型作为“AI辅助分诊”接入手机SOP拍照链，但没有改变其
+  生产验收结论。全图marked-point候选会逐点裁取1.5倍ROI，目标边长小于32px或模型证据门失败时
+  明确要求近拍；证据足够时绘制两段防松线与四端点，并按3°/15°给出正常倾向、疑似错位或高疑似
+  待确认。每个检查点必须由巡检员选择确认正常、疑似松动或无法判断/重拍后才能保存，后台同时保留
+  AI角度区间、拒判原因和逐点人工结论。Android 54项测试及Debug APK构建通过，APK内三个模型与
+  固定源文件逐字节SHA-256一致；验证记录见
+  `docs/validation/2026-09-02-witness-state-sop-assistive-integration.md`。真实历史19个ROI在严格门下仍为
+  19/19拒判，因此这是可采集反馈的人机协作版本，不是可靠自动松动判定版本。formal truth未修改。
 - 2026-09-01：完成当前YOLOv8s-P2 640模型的ncnn/MNN转换与17张冻结开发验证集严格一致性门。
   ncnn FP32为82/82框、0漏框、0多框，最大坐标/分数漂移0.000286像素/0.00000212，唯一
   `parity_passed`并进入Android实测；ncnn FP16因0.2018阈值边缘框跌破0.20而漏1框，MNN FP32
@@ -220,11 +228,11 @@ MobileNetV3-Small复核：在17个同源开发val场景、75个marked-point真�
 单模型权重平均挑战者为19.71个/图并保持75/75，可进入跨设备挑战但余量很小。阈值仍使用同一val选择，
 sealed test未打开、当前手机实测只验证运行与性能，尚无跨车辆现场准确率证据，因此不允许表述为
 生产准确率。当前512单类ncnn+128复核已在P20 Pro逐框保持75/75开发集覆盖，并将最终候选压到
-293个；XNNPACK端到端P50为1.370秒，仍未达到流畅视频实时。松动状态已完成真实首审和
-2个疑似点的隐藏二审；两个疑似点均因宽涂层或低分辨率落为`INSUFFICIENT`。当前ROI状态实验模型
-已经完成训练和ONNX技术验证，但严格质量门失败并禁止Android打包。真实数据仍没有受控
-`ALIGNED/DISPLACED`成对真值，因此不能宣称可靠状态模型。现有审计链已能阻止单张历史图被错误
-提升为松动真值。
+293个；XNNPACK端到端P50为1.370秒，仍未达到流畅视频实时。松动状态已完成真实首审和2个疑似点
+的隐藏二审；两个疑似点均因宽涂层或低分辨率落为`INSUFFICIENT`。当前ROI状态实验模型已按用户
+要求作为辅助分诊接入SOP，但严格真实证据门仍保持：真实历史19个ROI均拒判，所有逐点结论必须
+人工确认。真实数据仍没有受控`ALIGNED/DISPLACED`成对真值，因此不能宣称可靠自动状态模型；
+当前手机版本的价值是显示候选、能测则显示角度、不能测则引导近拍，并把人工逐点反馈沉淀到后台。
 
 ## Run
 
@@ -314,6 +322,18 @@ git status --short
   `1CF55BFD2AE6EAB16839C1D97B45B0FAFBDA475C0A795661D6DE83C4F0C1BB15`，仅安装到P20 Pro
   `CLT-AL00`，真机确认主界面入口和登录页，未安装到眼镜。尚未用真实巡检员账号完成生产任务实单，
   因此不能把接口与UI闭环表述为现场验收完成。
+- 2026-09-02：`fastener-target-p2-640.onnx`和`marked-point-verifier.onnx`已放入Android标准
+  `assets`并由Git LFS管理，构建不再依赖开发机的模型目录环境变量。`preBuild`会校验精确文件大小和
+  SHA-256，缺失、LFS对象未拉取或内容不匹配时拒绝构建。45项Android JVM测试通过；Debug APK内
+  两个模型的大小和哈希均复核一致，APK SHA-256为
+  `8939E12AF52935091E66728A4B3421AE40696C0E3870AAB0E956FFFFA23C5D6E`。本轮ADB未发现已连接设备，
+  因此尚未覆盖安装到P20 Pro；此前安装的APK仍缺少模型，不能用于算法测试。
+- 2026-09-03：将P20 Pro开发集验证过的512单类NCNN FP32检测器和两套预编译CPU JNI纳入Git LFS，
+  默认clone构建不再依赖`CRRC_NCNN_ANDROID_ROOT`、`CRRC_NCNN_MODEL_DIR`或
+  `CRRC_NCNN_JNI_BUILD_ROOT`。默认APK固定启用NCNN候选、128 verifier和witness ROI三段链，旧640
+  ONNX检测模型迁移到独立`onnxAssets`，只在显式`CRRC_DETECTOR_BACKEND=onnx`时打包。默认构建55项
+  JVM测试全过，APK逐项检查确认包含NCNN模型、两ABI JNI、verifier和witness模型且不含旧检测ONNX；
+  ONNX回退构建也独立通过。本轮无ADB设备，尚未做新APK真机安装和端到端时延复测。
 - 2026-09-01：生产根入口已补齐中文 Web 管理后台，支持登录、仪表盘、用户、SOP版本、任务下发和
   巡检记录列表；巡检员被服务端权限门拒绝进入管理接口。`/`直接页面、`/admin`、鉴权冒烟、容器健康
   和原Finbot站点均已在线验证通过。服务端闭环已可管理，但Android登录与SOP执行上传仍待接入。

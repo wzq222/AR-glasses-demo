@@ -26,6 +26,9 @@ import com.ar.glass.R;
 import com.ar.glass.vision.MarkedPointDetectorHolder;
 import com.ar.glass.vision.MeterReading;
 import com.ar.glass.vision.Vision;
+import com.ar.glass.vision.realtime.WitnessStateEstimate;
+import com.ar.glass.vision.realtime.WitnessTriage;
+import com.ar.glass.vision.ui.BoxOverlay;
 import com.google.gson.JsonObject;
 
 import java.io.File;
@@ -60,9 +63,12 @@ public final class SopActivity extends AppCompatActivity {
     private TextView stepTitle;
     private TextView stepInstruction;
     private TextView stepContract;
+    private View evidencePanel;
     private ImageView evidencePreview;
+    private BoxOverlay evidenceOverlay;
     private Button captureButton;
     private TextView analysisText;
+    private LinearLayout markedPointReviewList;
     private Spinner decision;
     private EditText note;
     private Button saveStepButton;
@@ -75,6 +81,8 @@ public final class SopActivity extends AppCompatActivity {
     private File evidenceFile;
     private String analysisSummary = "";
     private Map<String, Object> analysisValue = new HashMap<>();
+    private final List<Spinner> pointDecisionSpinners = new ArrayList<>();
+    private final List<Map<String, Object>> pointResultMaps = new ArrayList<>();
 
     private ActivityResultLauncher<Uri> camera;
 
@@ -87,6 +95,16 @@ public final class SopActivity extends AppCompatActivity {
         camera = registerForActivityResult(new ActivityResultContracts.TakePicture(), success -> {
             if (success && evidenceFile != null) {
                 Bitmap bitmap = decode(evidenceFile, 2200);
+                evidenceOverlay.clear();
+                markedPointReviewList.removeAllViews();
+                markedPointReviewList.setVisibility(View.GONE);
+                pointDecisionSpinners.clear();
+                pointResultMaps.clear();
+                saveStepButton.setEnabled(false);
+                if (bitmap == null) {
+                    setBusy(false, "照片读取失败，请重新拍摄");
+                    return;
+                }
                 evidencePreview.setImageBitmap(bitmap);
                 analyzeCurrentStep(bitmap);
             } else {
@@ -113,9 +131,12 @@ public final class SopActivity extends AppCompatActivity {
         stepTitle = findViewById(R.id.tvStepTitle);
         stepInstruction = findViewById(R.id.tvStepInstruction);
         stepContract = findViewById(R.id.tvStepContract);
+        evidencePanel = findViewById(R.id.panelSopEvidence);
         evidencePreview = findViewById(R.id.ivSopEvidence);
+        evidenceOverlay = findViewById(R.id.overlaySopEvidence);
         captureButton = findViewById(R.id.btnCaptureStep);
         analysisText = findViewById(R.id.tvStepAnalysis);
+        markedPointReviewList = findViewById(R.id.markedPointReviewList);
         decision = findViewById(R.id.spinnerStepDecision);
         note = findViewById(R.id.etStepNote);
         saveStepButton = findViewById(R.id.btnSaveStep);
@@ -277,7 +298,8 @@ public final class SopActivity extends AppCompatActivity {
             stepContract.setText("证据完整性门已在提交时再次校验");
             captureButton.setVisibility(View.GONE);
             saveStepButton.setVisibility(View.GONE);
-            evidencePreview.setVisibility(View.GONE);
+            evidencePanel.setVisibility(View.GONE);
+            evidenceOverlay.setVisibility(View.GONE);
             decision.setVisibility(View.GONE);
             note.setVisibility(View.GONE);
             analysisText.setText("");
@@ -288,7 +310,13 @@ public final class SopActivity extends AppCompatActivity {
         analysisSummary = "";
         analysisValue = new HashMap<>();
         evidencePreview.setImageDrawable(null);
-        evidencePreview.setVisibility(View.VISIBLE);
+        evidenceOverlay.clear();
+        markedPointReviewList.removeAllViews();
+        markedPointReviewList.setVisibility(View.GONE);
+        pointDecisionSpinners.clear();
+        pointResultMaps.clear();
+        evidencePanel.setVisibility(View.VISIBLE);
+        evidenceOverlay.setVisibility(View.VISIBLE);
         captureButton.setVisibility(View.VISIBLE);
         saveStepButton.setVisibility(View.VISIBLE);
         decision.setVisibility(View.VISIBLE);
@@ -329,6 +357,10 @@ public final class SopActivity extends AppCompatActivity {
         analyzerExecutor.execute(() -> {
             Map<String, Object> value = new HashMap<>();
             String summary;
+            int recommendedDecision = -1;
+            List<com.ar.glass.vision.YoloDetector.Detection> overlayDetections = null;
+            List<MarkedPointDetectorHolder.Assessment> pointAssessments = null;
+            List<Map<String, Object>> pointResults = null;
             try {
                 switch (step.type) {
                     case "QR":
@@ -338,10 +370,55 @@ public final class SopActivity extends AppCompatActivity {
                         break;
                     case "FASTENER_MARK":
                         MarkedPointDetectorHolder.Result detection = MarkedPointDetectorHolder.detect(this, bitmap);
+                        overlayDetections = detection.detections;
+                        pointAssessments = detection.assessments;
                         value.put("marked_point_count", detection.detections.size());
                         value.put("latency_ms", Math.round(detection.latencyMillis));
-                        value.put("state", "INSUFFICIENT");
-                        summary = "检出 " + detection.detections.size() + " 个防松标记检查点；松动状态请人工确认";
+                        value.put("detector_latency_ms", Math.round(detection.detectorLatencyMillis));
+                        value.put("state_latency_ms", Math.round(detection.stateLatencyMillis));
+                        value.put("analyzer_version", "marked-point-v1+witness-roi-v1-assistive");
+                        pointResults = new ArrayList<>();
+                        int aligned = 0;
+                        int suspected = 0;
+                        int highSuspicion = 0;
+                        int insufficient = 0;
+                        for (MarkedPointDetectorHolder.Assessment assessment : detection.assessments) {
+                            WitnessStateEstimate estimate = assessment.estimate;
+                            Map<String, Object> point = new HashMap<>();
+                            point.put("index", assessment.index);
+                            point.put("bbox_xyxy", java.util.Arrays.asList(
+                                    assessment.left, assessment.top, assessment.right, assessment.bottom));
+                            point.put("detection_confidence", assessment.detectionConfidence);
+                            point.put("triage", estimate.getTriage().name());
+                            point.put("reason", estimate.getReason());
+                            if (estimate.isMeasured()) {
+                                point.put("angle_degrees", estimate.getAngleDegrees());
+                                point.put("angle_lower_degrees", estimate.getLowerDegrees());
+                                point.put("angle_upper_degrees", estimate.getUpperDegrees());
+                                point.put("state_inference_ms", estimate.getInferenceMillis());
+                            }
+                            point.put("requires_human_confirmation", true);
+                            pointResults.add(point);
+                            if (estimate.getTriage() == WitnessTriage.LIKELY_ALIGNED) aligned++;
+                            else if (estimate.getTriage() == WitnessTriage.POSSIBLE_DISPLACED) suspected++;
+                            else if (estimate.getTriage() == WitnessTriage.HIGH_SUSPICION) highSuspicion++;
+                            else insufficient++;
+                        }
+                        value.put("point_results", pointResults);
+                        if (highSuspicion > 0 || suspected > 0) {
+                            value.put("ai_triage", "REVIEW_REQUIRED");
+                            recommendedDecision = 1;
+                        } else if (!detection.assessments.isEmpty() && insufficient == 0) {
+                            value.put("ai_triage", "LIKELY_ALIGNED");
+                            recommendedDecision = 0;
+                        } else {
+                            value.put("ai_triage", "INSUFFICIENT");
+                            recommendedDecision = 2;
+                        }
+                        value.put("requires_human_confirmation", true);
+                        summary = "检出 " + detection.detections.size() + " 个防松检查点：正常倾向 "
+                                + aligned + "，疑似错位 " + suspected + "，高疑似 "
+                                + highSuspicion + "，需近拍 " + insufficient + "；请逐点人工确认";
                         break;
                     case "METER":
                         MeterReading reading = Vision.get().readMeter(bitmap);
@@ -363,10 +440,24 @@ public final class SopActivity extends AppCompatActivity {
                 summary = "自动检测未完成，请人工判断或重新采集";
             }
             String finalSummary = summary;
+            int finalRecommendedDecision = recommendedDecision;
+            List<com.ar.glass.vision.YoloDetector.Detection> finalOverlayDetections = overlayDetections;
+            List<MarkedPointDetectorHolder.Assessment> finalPointAssessments = pointAssessments;
+            List<Map<String, Object>> finalPointResults = pointResults;
             runOnUiThread(() -> {
                 analysisValue = value;
                 analysisSummary = finalSummary;
                 analysisText.setText(finalSummary);
+                if (finalOverlayDetections == null) {
+                    evidenceOverlay.clear();
+                } else {
+                    evidenceOverlay.setResults(
+                            finalOverlayDetections, bitmap.getWidth(), bitmap.getHeight());
+                }
+                if (finalRecommendedDecision >= 0) {
+                    decision.setSelection(finalRecommendedDecision);
+                }
+                renderPointReviews(finalPointAssessments, finalPointResults);
                 setBusy(false, "检测完成，请确认本步结果");
                 saveStepButton.setEnabled(true);
             });
@@ -381,8 +472,36 @@ public final class SopActivity extends AppCompatActivity {
             return;
         }
         int selected = decision.getSelectedItemPosition();
+        if ("FASTENER_MARK".equals(step.type) && !pointDecisionSpinners.isEmpty()) {
+            boolean anySuspected = false;
+            boolean anyUnable = false;
+            for (int index = 0; index < pointDecisionSpinners.size(); index++) {
+                int pointSelection = pointDecisionSpinners.get(index).getSelectedItemPosition();
+                if (pointSelection == 0) {
+                    setStatus("请先确认每一个防松检查点");
+                    return;
+                }
+                String pointDecision;
+                if (pointSelection == 1) pointDecision = "confirmed_aligned";
+                else if (pointSelection == 2) {
+                    pointDecision = "suspected_displaced";
+                    anySuspected = true;
+                } else {
+                    pointDecision = "unable_to_judge";
+                    anyUnable = true;
+                }
+                pointResultMaps.get(index).put("human_decision", pointDecision);
+            }
+            selected = anySuspected ? 1 : (anyUnable ? 2 : 0);
+            decision.setSelection(selected);
+        }
         String humanDecision = SopStepPolicy.humanDecision(selected);
         Map<String, Object> value = new HashMap<>(analysisValue);
+        if ("FASTENER_MARK".equals(step.type)) {
+            value.put("state", selected == 0
+                    ? "ALIGNED" : (selected == 1 ? "SUSPECTED" : "INSUFFICIENT"));
+            value.put("human_review_complete", true);
+        }
         value.put("analysis_summary", analysisSummary);
         value.put("operator_note", note.getText().toString().trim());
         value.put("decision_label", decision.getSelectedItem().toString());
@@ -404,6 +523,64 @@ public final class SopActivity extends AppCompatActivity {
             }
             @Override public void onError(String message) { setBusy(false, message); }
         });
+    }
+
+    private void renderPointReviews(
+            List<MarkedPointDetectorHolder.Assessment> assessments,
+            List<Map<String, Object>> resultMaps) {
+        markedPointReviewList.removeAllViews();
+        pointDecisionSpinners.clear();
+        pointResultMaps.clear();
+        if (assessments == null || resultMaps == null || assessments.isEmpty()
+                || assessments.size() != resultMaps.size()) {
+            markedPointReviewList.setVisibility(View.GONE);
+            return;
+        }
+        markedPointReviewList.setVisibility(View.VISIBLE);
+        TextView heading = new TextView(this);
+        heading.setText("逐点复核（对应图片中的编号）");
+        heading.setTextColor(Color.rgb(36, 58, 72));
+        heading.setTextSize(14f);
+        heading.setPadding(0, dp(4), 0, dp(4));
+        markedPointReviewList.addView(heading);
+        for (int index = 0; index < assessments.size(); index++) {
+            MarkedPointDetectorHolder.Assessment assessment = assessments.get(index);
+            WitnessStateEstimate estimate = assessment.estimate;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(10), dp(8), dp(10), dp(8));
+            row.setBackgroundColor(index % 2 == 0
+                    ? Color.rgb(239, 245, 248) : Color.rgb(247, 249, 250));
+
+            TextView result = new TextView(this);
+            String automatic;
+            if (estimate.getTriage() == WitnessTriage.LIKELY_ALIGNED) {
+                automatic = String.format(Locale.CHINA, "正常倾向 %.1f°", estimate.getAngleDegrees());
+            } else if (estimate.getTriage() == WitnessTriage.POSSIBLE_DISPLACED) {
+                automatic = String.format(Locale.CHINA, "疑似错位 %.1f°", estimate.getAngleDegrees());
+            } else if (estimate.getTriage() == WitnessTriage.HIGH_SUSPICION) {
+                automatic = String.format(
+                        Locale.CHINA, "高疑似松动 %.1f°（待确认）", estimate.getAngleDegrees());
+            } else {
+                automatic = "无法自动测量，请近拍";
+            }
+            result.setText("检查点 " + assessment.index + " · AI辅助：" + automatic);
+            result.setTextColor(Color.rgb(32, 48, 58));
+            row.addView(result);
+
+            Spinner pointDecision = new Spinner(this);
+            pointDecision.setAdapter(new ArrayAdapter<>(this,
+                    android.R.layout.simple_spinner_dropdown_item,
+                    new String[]{"请选择逐点结论", "确认正常", "疑似松动", "无法判断/重拍"}));
+            row.addView(pointDecision);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.bottomMargin = dp(6);
+            markedPointReviewList.addView(row, params);
+            pointDecisionSpinners.add(pointDecision);
+            pointResultMaps.add(resultMaps.get(index));
+        }
     }
 
     private void uploadEvidence(SopModels.Step step) {

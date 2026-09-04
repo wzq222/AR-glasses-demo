@@ -39,6 +39,7 @@ public class BoxOverlay extends View {
     private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mText = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mLabelBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mWitness = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     public BoxOverlay(Context context) {
         super(context);
@@ -59,6 +60,8 @@ public class BoxOverlay extends View {
         mStroke.setStyle(Paint.Style.STROKE);
         mText.setColor(Color.WHITE);
         mLabelBg.setStyle(Paint.Style.FILL);
+        mWitness.setStyle(Paint.Style.STROKE);
+        mWitness.setStrokeCap(Paint.Cap.ROUND);
     }
 
     /** 提交一轮检测结果（帧为原始照片尺寸，坐标为归一化 [0,1]） */
@@ -99,11 +102,12 @@ public class BoxOverlay extends View {
             RectF rect = new RectF(x1, y1, x2, y2);
             if (rect.width() < 2 || rect.height() < 2) continue;
             drawBox(canvas, rect, d, viewW);
+            drawWitnessSegments(canvas, d, s, offsetX, offsetY);
         }
     }
 
     private void drawBox(Canvas canvas, RectF rect, YoloDetector.Detection d, int canvasW) {
-        int color = BOX_COLORS[Math.abs(d.classId) % BOX_COLORS.length];
+        int color = stateColor(d);
         float dim = Math.min(rect.width(), rect.height());
         float density = getResources().getDisplayMetrics().density;
 
@@ -136,6 +140,40 @@ public class BoxOverlay extends View {
                 new RectF(labelLeft, labelTop, labelLeft + labelW + 2 * pad, labelTop + bgH),
                 cornerR * 0.6f, cornerR * 0.6f, mLabelBg);
         canvas.drawText(label, labelLeft + pad, labelTop + pad + textSize * 0.86f, mText);
+    }
+
+    private void drawWitnessSegments(
+            Canvas canvas,
+            YoloDetector.Detection detection,
+            float scale,
+            float offsetX,
+            float offsetY) {
+        float[] points = detection.witnessPoints;
+        if (points == null || points.length != 8) return;
+        int color = stateColor(detection);
+        float density = getResources().getDisplayMetrics().density;
+        mWitness.setColor(color);
+        mWitness.setStrokeWidth(3.2f * density);
+        float[] mapped = new float[8];
+        for (int index = 0; index < 4; index++) {
+            mapped[index * 2] = points[index * 2] * mFrameW * scale + offsetX;
+            mapped[index * 2 + 1] = points[index * 2 + 1] * mFrameH * scale + offsetY;
+        }
+        canvas.drawLine(mapped[0], mapped[1], mapped[2], mapped[3], mWitness);
+        canvas.drawLine(mapped[4], mapped[5], mapped[6], mapped[7], mWitness);
+        mWitness.setStyle(Paint.Style.FILL);
+        for (int index = 0; index < 4; index++) {
+            canvas.drawCircle(mapped[index * 2], mapped[index * 2 + 1], 3.5f * density, mWitness);
+        }
+        mWitness.setStyle(Paint.Style.STROKE);
+    }
+
+    private static int stateColor(YoloDetector.Detection detection) {
+        if ("LIKELY_ALIGNED".equals(detection.witnessTriage)) return 0xFF2E7D32;
+        if ("POSSIBLE_DISPLACED".equals(detection.witnessTriage)) return 0xFFF9A825;
+        if ("HIGH_SUSPICION".equals(detection.witnessTriage)) return 0xFFC62828;
+        if ("INSUFFICIENT".equals(detection.witnessTriage)) return 0xFF607D8B;
+        return BOX_COLORS[Math.abs(detection.classId) % BOX_COLORS.length];
     }
 
     private static float clamp(float v, float min, float max) {

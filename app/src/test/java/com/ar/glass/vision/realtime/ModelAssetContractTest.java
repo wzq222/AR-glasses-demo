@@ -24,6 +24,7 @@ public class ModelAssetContractTest {
     @Test
     public void exposesTheFrozenModelContract() {
         assertEquals("fastener-target-p2-640.onnx", OnnxFastenerDetector.MODEL_ASSET_NAME);
+        assertEquals("witness-roi.onnx", OnnxWitnessStateEstimator.MODEL_ASSET_NAME);
         assertEquals(640, OnnxFastenerDetector.INPUT_SIZE);
         assertEquals(6, OnnxFastenerDetector.OUTPUT_CHANNELS);
         assertEquals(34_000, OnnxFastenerDetector.OUTPUT_CANDIDATES);
@@ -59,6 +60,31 @@ public class ModelAssetContractTest {
                 "com.microsoft.onnxruntime:onnxruntime-android:1.19.2"));
         assertTrue(!buildScript.contains(
                 "com.microsoft.onnxruntime:onnxruntime-android:1.17.3"));
+    }
+
+    @Test
+    public void defaultsToTheSelfContainedNcnnVerifierChain() throws Exception {
+        Path projectRoot = Paths.get(System.getProperty("user.dir"));
+        Path appRoot = projectRoot.resolve("app");
+        if (!Files.isDirectory(appRoot)) {
+            appRoot = projectRoot;
+        }
+        String buildScript = new String(
+                Files.readAllBytes(appRoot.resolve("build.gradle")),
+                StandardCharsets.UTF_8);
+
+        assertTrue(buildScript.contains("CRRC_DETECTOR_BACKEND') ?: 'ncnn'"));
+        assertTrue(buildScript.contains("markedPointVerifierEnabled = detectorBackend == 'ncnn'"));
+        assertEquals(21_107L,
+                Files.size(appRoot.resolve("src/main/ncnnAssets/model.ncnn.param")));
+        assertEquals(42_768_268L,
+                Files.size(appRoot.resolve("src/main/ncnnAssets/model.ncnn.bin")));
+        assertEquals(38_303_536L,
+                Files.size(appRoot.resolve(
+                        "src/main/ncnnJniLibs/arm64-v8a/libcrrc_ncnn.so")));
+        assertEquals(18_978_288L,
+                Files.size(appRoot.resolve(
+                        "src/main/ncnnJniLibs/armeabi-v7a/libcrrc_ncnn.so")));
     }
 
     @Test(expected = UnsupportedOperationException.class)
