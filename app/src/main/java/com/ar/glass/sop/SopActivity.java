@@ -264,7 +264,9 @@ public final class SopActivity extends AppCompatActivity {
             @Override public void onSuccess(List<SopModels.Assignment> values) {
                 List<SopModels.Assignment> active = new ArrayList<>();
                 for (SopModels.Assignment item : values) {
-                    if (!"completed".equals(item.status) && !"cancelled".equals(item.status)) active.add(item);
+                    if (!"completed".equals(item.status)
+                            && !"cancelled".equals(item.status)
+                            && !"submitted".equals(item.status)) active.add(item);
                 }
                 taskCount.setText("待处理 " + active.size() + " 项");
                 renderTasks(active);
