@@ -22,6 +22,8 @@ progress.
 Choosing a phone image opens Android's system document picker with `image/*`.
 Choosing an original-library image opens the existing `GalleryActivity` in a new
 single-selection mode. Normal gallery browsing remains unchanged outside the SOP.
+The original library keeps its existing multi-image import action, so test images can
+be imported from the phone once and reused across later SOP runs.
 
 After selection, the execution page shows the chosen image and runs the current
 step's existing QR, witness-line or meter analyzer. Witness-line detections continue
@@ -69,8 +71,10 @@ types, snapshot naming, upload media types, cancellation safety and UI wiring. T
 full Android unit suite and debug build must pass.
 
 The resulting APK will be installed on the connected `NOH-AN01`. A physical-device
-test will use existing phone/app-library images to complete `CRRC-DEMO-001` end to
+test will first import selected phone images into the currently empty app original
+library, then use phone/app-library images to complete `CRRC-DEMO-001` end to
 end: start the run, select evidence for all three steps, observe each analyzer,
 complete required human review, upload every step, submit the run, and confirm the
 completed record in the public management backend. No production claim will be made
 from these test images; the run proves workflow integration only.
+No field or case image is added to Git or bundled into the APK.
