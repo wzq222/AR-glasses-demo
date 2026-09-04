@@ -36,6 +36,8 @@ public final class MarkedPointOnnxVerifier implements Closeable {
     public static final float VERIFIER_THRESHOLD = 0.28198338f;
     public static final float PROPOSAL_BYPASS_THRESHOLD = 0.96769285f;
     public static final float NMS_IOU_THRESHOLD = 0.30f;
+    public static final float CONTEXT_BOX_AREA_RATIO = 4.0f;
+    public static final float CONTEXT_BOX_CONTAINMENT = 0.80f;
 
     private static final int RESIZE_SIZE = 146;
     private static final int CROP_OFFSET = (RESIZE_SIZE - INPUT_SIZE) / 2;
@@ -267,7 +269,42 @@ public final class MarkedPointOnnxVerifier implements Closeable {
                         proposal.getClassId()));
             }
         }
-        return Collections.unmodifiableList(kept);
+        List<Detection> display = new ArrayList<>();
+        for (Detection candidate : kept) {
+            boolean broadContext = false;
+            float candidateArea = area(candidate);
+            for (Detection other : kept) {
+                if (candidate == other) {
+                    continue;
+                }
+                float otherArea = area(other);
+                if (candidateArea / otherArea >= CONTEXT_BOX_AREA_RATIO
+                        && containment(other, candidate) >= CONTEXT_BOX_CONTAINMENT) {
+                    broadContext = true;
+                    break;
+                }
+            }
+            if (!broadContext) {
+                display.add(candidate);
+            }
+        }
+        return Collections.unmodifiableList(display);
+    }
+
+    private static float area(Detection detection) {
+        return Math.max(0f, detection.getRight() - detection.getLeft())
+                * Math.max(0f, detection.getBottom() - detection.getTop());
+    }
+
+    private static float containment(Detection inner, Detection outer) {
+        float intersectionWidth = Math.max(0f,
+                Math.min(inner.getRight(), outer.getRight())
+                        - Math.max(inner.getLeft(), outer.getLeft()));
+        float intersectionHeight = Math.max(0f,
+                Math.min(inner.getBottom(), outer.getBottom())
+                        - Math.max(inner.getTop(), outer.getTop()));
+        float innerArea = area(inner);
+        return innerArea > 0f ? intersectionWidth * intersectionHeight / innerArea : 0f;
     }
 
     private FloatBuffer prepare(Bitmap source, List<Detection> proposals) {

@@ -49,6 +49,14 @@ candidate and deterministic duplicates while retaining all original review evide
 reduces this image from 52 raw candidates to 41 displayed boxes. This improves readability,
 but the remaining false positives prove that post-processing alone cannot repair the model.
 
+The same conservative context suppression is now in the Android verifier output: when a
+broad box is at least 4x the area of a contained tight box and covers at least 80% of that
+tight box, only the tight box is displayed. On the frozen phone predictions it reduces
+293 boxes to 254 while preserving the corrected 62/75 IoU-0.30 and 40/75 IoU-0.50 hits.
+The new unit test and the complete 74-test Android suite pass; the debug APK builds and was
+installed and launched on `NOH-AN01`. APK SHA-256:
+`E2292CCD277442B12938457E0E5EA6CE46693269F28B95089B0C0F24525559D4`.
+
 This prototype is not yet in the Android inference path. It needs regression over complete
 scenes with adjacent fasteners before integration; otherwise a large false box could merge
 two true neighbouring objects and reduce recall.

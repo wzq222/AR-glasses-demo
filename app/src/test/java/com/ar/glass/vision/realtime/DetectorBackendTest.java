@@ -170,6 +170,20 @@ public class DetectorBackendTest {
     }
 
     @Test
+    public void markedPointVerifierHidesBroadContextBoxWhenTightCandidateExists() {
+        List<Detection> proposals = java.util.Arrays.asList(
+                new Detection(0f, 0f, 240f, 240f, 0.99f, 0),
+                new Detection(80f, 80f, 140f, 140f, 0.20f, 0));
+
+        List<Detection> selected = MarkedPointOnnxVerifier.filterDetections(
+                proposals, new float[]{0.10f, 0.90f});
+
+        assertEquals(1, selected.size());
+        assertEquals(80f, selected.get(0).getLeft(), 0f);
+        assertEquals(140f, selected.get(0).getRight(), 0f);
+    }
+
+    @Test
     public void markedPointVerifierCropMatchesTheTrainingContextRule() {
         assertTrue(java.util.Arrays.equals(
                 new int[]{68, 28, 64},
