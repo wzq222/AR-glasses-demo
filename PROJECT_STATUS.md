@@ -7,6 +7,14 @@
 
 ## Verified Current State
 
+- 2026-09-04：生产后台现同时提供`CRRC-DEMO-001`三步任务和`CRRC-DEMO-010`十步任务；十步按
+  二维码2次、防松线5次、万用表3次穿插。初始化脚本连续运行两次仅创建一次新模板和任务，公网
+  鉴权烟测验证3/10步数量及十步类型顺序正确。手机端防松线步骤改为步骤内逐点审核：从原始照片
+  裁取2.25倍上下文、目标居中、明确ROI框、支持前后切换和查看原图；小于32原图像素默认要求近拍，
+  全部检查点审核完才可保存。服务端12项、Android 62项测试及Debug APK构建通过；ADB当前无设备，
+  所以本轮未完成真机安装。状态模型仍是人工辅助，不能宣称可靠自动松动判定。证据见
+  `docs/validation/2026-09-04-three-ten-step-sop-and-inline-review.md`。
+
 - 2026-08-25：仓库从 `https://github.com/wzq222/AR-glasses-demo.git` 克隆，保留上游 Git 历史；
   基线提交为 `510e5f5`。
 - 代码包含单个 Android 手机端模块，使用 Java、BLE、WiFi Direct、HTTP 和 K900 SDK。
