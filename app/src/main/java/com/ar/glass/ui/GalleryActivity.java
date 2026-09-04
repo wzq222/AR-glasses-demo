@@ -46,6 +46,8 @@ public class GalleryActivity extends AppCompatActivity {
 
     public static final String EXTRA_MODE = "gallery_mode";
     public static final String MODE_ORIGINAL = "original";
+    public static final String EXTRA_SELECT_IMAGE = "select_image";
+    public static final String EXTRA_SELECTED_IMAGE_PATH = "selected_image_path";
 
     private GridView gridImages;
     private TextView tvGalleryTitle;
@@ -63,11 +65,13 @@ public class GalleryActivity extends AppCompatActivity {
     private LruCache<String, Bitmap> thumbnailCache;
     private ExecutorService executor = Executors.newFixedThreadPool(4);
     private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private boolean selectImageMode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_gallery);
+        selectImageMode = getIntent().getBooleanExtra(EXTRA_SELECT_IMAGE, false);
 
         // 初始化缩略图缓存
         final int maxMemory = (int) (Runtime.getRuntime().maxMemory() / 1024);
@@ -98,7 +102,7 @@ public class GalleryActivity extends AppCompatActivity {
 
         gridImages.setOnItemClickListener((parent, view, position, id) -> {
             if (position >= 0 && position < imageFiles.size()) {
-                openImageViewer(position);
+                openOrReturnImage(position);
             }
         });
     }
@@ -112,7 +116,8 @@ public class GalleryActivity extends AppCompatActivity {
         }
 
         rootDir = new File(externalDir, "glass_media/photos");
-        tvGalleryTitle.setText("原图库 (眼镜原始照片)");
+        tvGalleryTitle.setText(selectImageMode ? "选择原图库图片" : "原图库 (眼镜原始照片)");
+        if (selectImageMode) tvEmpty.setText("原图库为空，可点右上角导入图片");
     }
 
     private void loadImages() {
@@ -177,6 +182,21 @@ public class GalleryActivity extends AppCompatActivity {
         intent.putExtra("start_index", index);
         intent.putExtra("title", tvGalleryTitle.getText().toString());
         startActivity(intent);
+    }
+
+    private void openOrReturnImage(int position) {
+        if (selectImageMode) {
+            returnSelectedImage(position);
+        } else {
+            openImageViewer(position);
+        }
+    }
+
+    private void returnSelectedImage(int position) {
+        Intent result = new Intent().putExtra(
+                EXTRA_SELECTED_IMAGE_PATH, imageFiles.get(position).getAbsolutePath());
+        setResult(RESULT_OK, result);
+        finish();
     }
 
     /** 从手机相册导入图片到原图库 */
