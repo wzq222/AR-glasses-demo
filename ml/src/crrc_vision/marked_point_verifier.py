@@ -178,13 +178,9 @@ def select_verifier_examples(
                 **common,
                 "label": "marked_point",
                 "truth_id": assigned.get("id"),
-                "truth_ids": sorted(
-                    (annotation.get("id") for annotation in matching),
-                    key=int,
-                ),
+                "truth_ids": [assigned.get("id")],
             }
-            for annotation in matching:
-                positives_by_truth[annotation.get("id")].append(row)
+            positives_by_truth[assigned.get("id")].append(row)
         else:
             negatives_by_scene[common["scene_group"]].append(
                 {

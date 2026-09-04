@@ -38,6 +38,13 @@ def is_proposal_match(
     proposal: tuple[float, float, float, float],
     target: tuple[float, float, float, float],
 ) -> bool:
+    return _iou(proposal, target) >= 0.30
+
+
+def _iou(
+    proposal: tuple[float, float, float, float],
+    target: tuple[float, float, float, float],
+) -> float:
     px, py, pw, ph = proposal
     tx, ty, tw, th = target
     intersection = max(0.0, min(px + pw, tx + tw) - max(px, tx)) * max(
@@ -46,12 +53,7 @@ def is_proposal_match(
     proposal_area = pw * ph
     target_area = tw * th
     union = proposal_area + target_area - intersection
-    iou = intersection / union if union else 0.0
-    containment = intersection / min(proposal_area, target_area)
-    proposal_center_in_target = (
-        tx <= px + pw / 2.0 <= tx + tw and ty <= py + ph / 2.0 <= ty + th
-    )
-    return proposal_center_in_target or iou >= 0.10 or containment >= 0.50
+    return intersection / union if union else 0.0
 
 
 def _coverage_metrics(
@@ -95,10 +97,30 @@ def _coverage_metrics(
     for image_id in image_ids:
         target_boxes = truth_by_image[image_id]
         proposal_boxes = predictions_by_image[image_id]
-        hits = sum(
-            any(is_proposal_match(proposal, target) for proposal in proposal_boxes)
-            for target in target_boxes
-        )
+        target_to_proposal: dict[int, int] = {}
+
+        def assign(proposal_index: int, visited_targets: set[int]) -> bool:
+            matches = sorted(
+                (
+                    (target_index, _iou(proposal_boxes[proposal_index], target))
+                    for target_index, target in enumerate(target_boxes)
+                    if is_proposal_match(proposal_boxes[proposal_index], target)
+                ),
+                key=lambda item: (-item[1], item[0]),
+            )
+            for target_index, _ in matches:
+                if target_index in visited_targets:
+                    continue
+                visited_targets.add(target_index)
+                previous = target_to_proposal.get(target_index)
+                if previous is None or assign(previous, visited_targets):
+                    target_to_proposal[target_index] = proposal_index
+                    return True
+            return False
+
+        for proposal_index in range(len(proposal_boxes)):
+            assign(proposal_index, set())
+        hits = len(target_to_proposal)
         covered_truth += hits
         complete_scenes += hits == len(target_boxes)
         relevant_candidates += sum(
@@ -192,10 +214,10 @@ def build_proposal_gate_document(
         predictions, truth, minimum_recall=minimum_recall
     )
     return {
-        "schema_version": "marked-point-model-gate-v2",
+        "schema_version": "marked-point-model-gate-v3",
         "minimum_recall": minimum_recall,
         "maximum_candidates_per_image": maximum_candidates_per_image,
-        "proposal_match": "candidate_center_in_truth_or_iou_gte_0.10_or_containment_gte_0.50",
+        "proposal_match": "one_to_one_iou_gte_0.30",
         "strict_iou_threshold": 0.50,
         "model_sha256": model_sha256.upper(),
         "truth_sha256": truth_sha256.upper(),

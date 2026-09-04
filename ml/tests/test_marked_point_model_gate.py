@@ -55,7 +55,7 @@ def test_gate_counts_duplicate_predictions_as_candidate_burden() -> None:
     assert report.candidate_relevance == 1.0
 
 
-def test_gate_accepts_tight_proposal_centered_inside_loose_truth() -> None:
+def test_gate_rejects_nested_box_below_localization_iou() -> None:
     truth = {
         "images": [{"id": 1}],
         "annotations": [{"id": 1, "image_id": 1, "bbox": [0, 0, 180, 180]}],
@@ -64,11 +64,24 @@ def test_gate_accepts_tight_proposal_centered_inside_loose_truth() -> None:
         {"image_id": 1, "bbox": [45, 45, 90, 90], "score": 0.8},
     ]
 
-    report = select_proposal_threshold(predictions, truth, minimum_recall=1.0)
+    with pytest.raises(ValueError, match="NO_THRESHOLD_MEETS_RECALL"):
+        select_proposal_threshold(predictions, truth, minimum_recall=1.0)
 
-    assert report.coverage_recall == 1.0
-    assert report.strict_iou_recall == 0.0
-    assert report.candidate_relevance == 1.0
+
+def test_one_proposal_cannot_cover_two_adjacent_truth_boxes() -> None:
+    truth = {
+        "images": [{"id": 1}],
+        "annotations": [
+            {"id": 1, "image_id": 1, "bbox": [100, 100, 80, 80]},
+            {"id": 2, "image_id": 1, "bbox": [180, 100, 80, 80]},
+        ],
+    }
+    predictions = [
+        {"image_id": 1, "bbox": [90, 90, 180, 100], "score": 0.9},
+    ]
+
+    with pytest.raises(ValueError, match="NO_THRESHOLD_MEETS_RECALL"):
+        select_proposal_threshold(predictions, truth, minimum_recall=1.0)
 
 
 def test_gate_uses_logarithmic_threshold_search(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,7 +124,8 @@ def test_gate_document_binds_model_truth_and_predictions() -> None:
         prediction_sha256="C" * 64,
         minimum_recall=1.0,
     )
-    assert document["schema_version"] == "marked-point-model-gate-v2"
+    assert document["schema_version"] == "marked-point-model-gate-v3"
+    assert document["proposal_match"] == "one_to_one_iou_gte_0.30"
     assert document["model_sha256"] == "A" * 64
     assert document["report"]["coverage_recall"] == 1.0
     assert document["passed_recall"] is True

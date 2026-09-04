@@ -50,11 +50,11 @@ def _truth(partition: str = "train") -> dict[str, object]:
 
 def test_verifier_examples_cover_every_truth_and_cap_negatives() -> None:
     predictions = [
-        {"image_id": 1, "bbox": [140, 140, 80, 80], "score": 0.9},
-        {"image_id": 1, "bbox": [145, 145, 70, 70], "score": 0.8},
+        {"image_id": 1, "bbox": [105, 105, 170, 170], "score": 0.9},
+        {"image_id": 1, "bbox": [110, 110, 160, 160], "score": 0.8},
         {"image_id": 1, "bbox": [1000, 900, 80, 80], "score": 0.7},
         {"image_id": 1, "bbox": [1200, 900, 80, 80], "score": 0.6},
-        {"image_id": 2, "bbox": [140, 140, 80, 80], "score": 0.85},
+        {"image_id": 2, "bbox": [105, 105, 170, 170], "score": 0.85},
         {"image_id": 2, "bbox": [1000, 900, 80, 80], "score": 0.65},
     ]
 
@@ -77,7 +77,7 @@ def test_verifier_examples_cover_every_truth_and_cap_negatives() -> None:
     ]
 
 
-def test_shared_proposal_can_cover_adjacent_truth_without_duplicate_crop() -> None:
+def test_shared_proposal_cannot_train_as_two_adjacent_truth_objects() -> None:
     truth = _truth()
     truth["images"] = [truth["images"][0]]
     truth["annotations"] = [
@@ -85,16 +85,14 @@ def test_shared_proposal_can_cover_adjacent_truth_without_duplicate_crop() -> No
         {"id": 12, "image_id": 1, "bbox": [180, 100, 80, 80]},
     ]
 
-    examples = select_verifier_examples(
-        [{"image_id": 1, "bbox": [90, 90, 180, 100], "score": 0.9}],
-        truth,
-        score_threshold=0.01,
-        max_positive_per_truth=2,
-        max_negative_per_scene=1,
-    )
-
-    assert len(examples) == 1
-    assert examples[0]["truth_ids"] == [11, 12]
+    with pytest.raises(ValueError, match="VERIFIER_TRUTH_UNCOVERED:12"):
+        select_verifier_examples(
+            [{"image_id": 1, "bbox": [90, 90, 180, 100], "score": 0.9}],
+            truth,
+            score_threshold=0.01,
+            max_positive_per_truth=2,
+            max_negative_per_scene=1,
+        )
 
 
 def test_verifier_threshold_keeps_required_positive_recall() -> None:
