@@ -22,6 +22,13 @@ public class GallerySelectionContractTest {
         assertTrue(source.contains("setResult(RESULT_OK"));
         assertTrue(source.contains("openImageViewer(position)"));
         assertTrue(source.contains("选择原图库图片"));
+        assertTrue(source.contains("builtin_gallery/v1"));
+        assertTrue(source.contains("BuiltinGallerySeeder.Source"));
+        assertTrue(source.contains("getAssets().list"));
+        assertTrue(source.contains("getAssets().open"));
+        assertTrue(source.contains("BuiltinGallerySeeder.seed"));
+        assertTrue(source.contains("collectImages(builtinRootDir, files)"));
+        assertTrue(source.contains("collectImages(rootDir, files)"));
     }
 
     private static String readProjectFile(String relativePath) throws Exception {

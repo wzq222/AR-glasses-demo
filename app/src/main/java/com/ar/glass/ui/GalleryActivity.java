@@ -31,6 +31,7 @@ import com.ar.glass.R;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -60,6 +61,7 @@ public class GalleryActivity extends AppCompatActivity {
             registerForActivityResult(new ActivityResultContracts.GetMultipleContents(), this::importImages);
 
     private File rootDir;
+    private File builtinRootDir;
     private List<File> imageFiles = new ArrayList<>();
     private ImageAdapter adapter;
     private LruCache<String, Bitmap> thumbnailCache;
@@ -116,7 +118,8 @@ public class GalleryActivity extends AppCompatActivity {
         }
 
         rootDir = new File(externalDir, "glass_media/photos");
-        tvGalleryTitle.setText(selectImageMode ? "选择原图库图片" : "原图库 (眼镜原始照片)");
+        builtinRootDir = new File(getFilesDir(), "builtin_gallery/v1");
+        tvGalleryTitle.setText(selectImageMode ? "选择原图库图片" : "原图库（含内置案例）");
         if (selectImageMode) tvEmpty.setText("原图库为空，可点右上角导入图片");
     }
 
@@ -129,12 +132,23 @@ public class GalleryActivity extends AppCompatActivity {
 
         executor.execute(() -> {
             List<File> files = new ArrayList<>();
+            String builtinError = null;
+            try {
+                seedBuiltinGallery();
+            } catch (IOException error) {
+                builtinError = "内置案例加载失败，仍可使用已有图片";
+            }
+            collectImages(builtinRootDir, files);
             collectImages(rootDir, files);
 
             // 按修改时间排序（最新的在前）
             Collections.sort(files, (f1, f2) -> Long.compare(f2.lastModified(), f1.lastModified()));
 
+            final String errorMessage = builtinError;
             mainHandler.post(() -> {
+                if (errorMessage != null) {
+                    Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
                 imageFiles = files;
                 if (files.isEmpty()) {
                     tvEmpty.setVisibility(View.VISIBLE);
@@ -147,6 +161,20 @@ public class GalleryActivity extends AppCompatActivity {
                 }
             });
         });
+    }
+
+    private void seedBuiltinGallery() throws IOException {
+        BuiltinGallerySeeder.seed(new BuiltinGallerySeeder.Source() {
+            @Override public String[] list(String relativePath) throws IOException {
+                String assetPath = relativePath.isEmpty()
+                        ? "builtin_gallery" : "builtin_gallery/" + relativePath;
+                return getAssets().list(assetPath);
+            }
+
+            @Override public InputStream open(String relativePath) throws IOException {
+                return getAssets().open("builtin_gallery/" + relativePath);
+            }
+        }, builtinRootDir);
     }
 
     /**
