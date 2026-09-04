@@ -9,6 +9,7 @@ import android.util.AttributeSet;
 import android.view.View;
 
 import com.ar.glass.vision.YoloDetector;
+import com.ar.glass.vision.InspectionPresentation;
 
 import java.util.List;
 import java.util.Locale;
@@ -122,12 +123,18 @@ public class BoxOverlay extends View {
         canvas.drawRoundRect(rect, cornerR, cornerR, mFill);
         canvas.drawRoundRect(rect, cornerR, cornerR, mStroke);
 
-        // 标签：类名 + 置信度
+        // 两层结果：第一行定位螺栓，第二行展示防松线几何判断。
         mText.setTextSize(textSize);
-        String label = d.className + " " + String.format(Locale.US, "%.2f", d.score);
-        float labelW = mText.measureText(label);
+        String primary = d.className + " " + String.format(Locale.US, "%.0f%%", d.score * 100f);
+        String secondary = d.witnessTriage == null
+                ? null
+                : InspectionPresentation.stateLabel(d.witnessTriage, d.witnessAngleDegrees);
+        float labelW = Math.max(
+                mText.measureText(primary),
+                secondary == null ? 0f : mText.measureText(secondary));
         float pad = 4f * density;
-        float bgH = textSize + 2 * pad;
+        float lineHeight = textSize * 1.15f;
+        float bgH = lineHeight * (secondary == null ? 1f : 2f) + 2 * pad;
 
         float labelLeft = rect.left;
         if (labelLeft + labelW + 2 * pad > canvasW) {
@@ -139,7 +146,14 @@ public class BoxOverlay extends View {
         canvas.drawRoundRect(
                 new RectF(labelLeft, labelTop, labelLeft + labelW + 2 * pad, labelTop + bgH),
                 cornerR * 0.6f, cornerR * 0.6f, mLabelBg);
-        canvas.drawText(label, labelLeft + pad, labelTop + pad + textSize * 0.86f, mText);
+        canvas.drawText(primary, labelLeft + pad, labelTop + pad + textSize, mText);
+        if (secondary != null) {
+            canvas.drawText(
+                    secondary,
+                    labelLeft + pad,
+                    labelTop + pad + textSize + lineHeight,
+                    mText);
+        }
     }
 
     private void drawWitnessSegments(

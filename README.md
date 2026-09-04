@@ -7,7 +7,7 @@
 ### 中车巡检任务
 - 登录生产SOP后台并仅加载当前巡检员的任务。
 - 按版本化流程逐步执行二维码、防松标记和万用表检查。
-- 每步支持手机拍照、自动分析、人工结论、原始证据上传和幂等重试。
+- 每步支持手机拍照、手机图库或 App 原图库选图；三种来源复用同一自动分析、人工结论、原始证据上传和幂等重试链路。
 - 全部必做步骤、照片证据和人工确认齐全后才能提交后台复核。
 
 ### 设备连接
@@ -119,6 +119,16 @@ git lfs pull
 ```
 
 生成的 APK 位于 `app/build/outputs/apk/debug/`。
+
+需要生成带内置测试案例的 APK 时，案例图片保持在 Git 外，通过环境变量传入目录；构建只接收
+JPEG、PNG 和 WebP，并保留子目录结构：
+
+```powershell
+$env:CRRC_BUILTIN_GALLERY_DIR='E:\path\to\app-original-gallery'
+.\gradlew.bat clean :app:assembleDebug
+```
+
+未设置该变量时正常生成不含案例图片的 APK。
 
 默认构建无需设置 NCNN 模型或 JNI 目录环境变量，直接生成 NCNN + verifier + witness 三段链 APK。
 构建会校验全部模型和预编译 JNI 的文件大小与 SHA-256；文件缺失、仍是 Git LFS pointer 或内容不匹配

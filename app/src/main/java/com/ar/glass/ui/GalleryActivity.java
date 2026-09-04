@@ -31,6 +31,7 @@ import com.ar.glass.R;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -46,6 +47,8 @@ public class GalleryActivity extends AppCompatActivity {
 
     public static final String EXTRA_MODE = "gallery_mode";
     public static final String MODE_ORIGINAL = "original";
+    public static final String EXTRA_SELECT_IMAGE = "select_image";
+    public static final String EXTRA_SELECTED_IMAGE_PATH = "selected_image_path";
 
     private GridView gridImages;
     private TextView tvGalleryTitle;
@@ -58,16 +61,19 @@ public class GalleryActivity extends AppCompatActivity {
             registerForActivityResult(new ActivityResultContracts.GetMultipleContents(), this::importImages);
 
     private File rootDir;
+    private File builtinRootDir;
     private List<File> imageFiles = new ArrayList<>();
     private ImageAdapter adapter;
     private LruCache<String, Bitmap> thumbnailCache;
     private ExecutorService executor = Executors.newFixedThreadPool(4);
     private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private boolean selectImageMode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_gallery);
+        selectImageMode = getIntent().getBooleanExtra(EXTRA_SELECT_IMAGE, false);
 
         // 初始化缩略图缓存
         final int maxMemory = (int) (Runtime.getRuntime().maxMemory() / 1024);
@@ -98,7 +104,7 @@ public class GalleryActivity extends AppCompatActivity {
 
         gridImages.setOnItemClickListener((parent, view, position, id) -> {
             if (position >= 0 && position < imageFiles.size()) {
-                openImageViewer(position);
+                openOrReturnImage(position);
             }
         });
     }
@@ -112,7 +118,9 @@ public class GalleryActivity extends AppCompatActivity {
         }
 
         rootDir = new File(externalDir, "glass_media/photos");
-        tvGalleryTitle.setText("原图库 (眼镜原始照片)");
+        builtinRootDir = new File(getFilesDir(), "builtin_gallery/v1");
+        tvGalleryTitle.setText(selectImageMode ? "选择原图库图片" : "原图库（含内置案例）");
+        if (selectImageMode) tvEmpty.setText("原图库为空，可点右上角导入图片");
     }
 
     private void loadImages() {
@@ -124,12 +132,23 @@ public class GalleryActivity extends AppCompatActivity {
 
         executor.execute(() -> {
             List<File> files = new ArrayList<>();
+            String builtinError = null;
+            try {
+                seedBuiltinGallery();
+            } catch (IOException error) {
+                builtinError = "内置案例加载失败，仍可使用已有图片";
+            }
+            collectImages(builtinRootDir, files);
             collectImages(rootDir, files);
 
             // 按修改时间排序（最新的在前）
             Collections.sort(files, (f1, f2) -> Long.compare(f2.lastModified(), f1.lastModified()));
 
+            final String errorMessage = builtinError;
             mainHandler.post(() -> {
+                if (errorMessage != null) {
+                    Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
                 imageFiles = files;
                 if (files.isEmpty()) {
                     tvEmpty.setVisibility(View.VISIBLE);
@@ -142,6 +161,20 @@ public class GalleryActivity extends AppCompatActivity {
                 }
             });
         });
+    }
+
+    private void seedBuiltinGallery() throws IOException {
+        BuiltinGallerySeeder.seed(new BuiltinGallerySeeder.Source() {
+            @Override public String[] list(String relativePath) throws IOException {
+                String assetPath = relativePath.isEmpty()
+                        ? "builtin_gallery" : "builtin_gallery/" + relativePath;
+                return getAssets().list(assetPath);
+            }
+
+            @Override public InputStream open(String relativePath) throws IOException {
+                return getAssets().open("builtin_gallery/" + relativePath);
+            }
+        }, builtinRootDir);
     }
 
     /**
@@ -157,9 +190,9 @@ public class GalleryActivity extends AppCompatActivity {
                 collectImages(f, files);
             } else {
                 String name = f.getName().toLowerCase();
-                if (name.endsWith(".jpg") || name.endsWith(".jpeg")
-                        || name.endsWith(".png") || name.endsWith(".bmp")
-                        || name.endsWith(".webp")) {
+                boolean supportedEvidence = name.endsWith(".jpg") || name.endsWith(".jpeg")
+                        || name.endsWith(".png") || name.endsWith(".webp");
+                if (supportedEvidence || (!selectImageMode && name.endsWith(".bmp"))) {
                     files.add(f);
                 }
             }
@@ -177,6 +210,21 @@ public class GalleryActivity extends AppCompatActivity {
         intent.putExtra("start_index", index);
         intent.putExtra("title", tvGalleryTitle.getText().toString());
         startActivity(intent);
+    }
+
+    private void openOrReturnImage(int position) {
+        if (selectImageMode) {
+            returnSelectedImage(position);
+        } else {
+            openImageViewer(position);
+        }
+    }
+
+    private void returnSelectedImage(int position) {
+        Intent result = new Intent().putExtra(
+                EXTRA_SELECTED_IMAGE_PATH, imageFiles.get(position).getAbsolutePath());
+        setResult(RESULT_OK, result);
+        finish();
     }
 
     /** 从手机相册导入图片到原图库 */

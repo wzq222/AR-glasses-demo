@@ -173,8 +173,17 @@ def test_complete_sop_requires_steps_evidence_and_human_decision(tmp_path):
 
         submitted = c.post(f"/api/v1/runs/{run_id}/submit", headers=worker)
         assert submitted.status_code == 200, submitted.text
+        assignments = c.get("/api/v1/assignments", headers=worker).json()
+        assert assignments[0]["status"] == "submitted"
+        duplicate = c.post(
+            "/api/v1/runs",
+            headers=worker,
+            json={"assignment_id": assignment["id"], "device": {"source": "PHONE"}},
+        )
+        assert duplicate.status_code == 409
         reviewed = c.post(f"/api/v1/runs/{run_id}/review", headers=admin, json={"decision": "reviewed", "note": "证据完整"})
         assert reviewed.status_code == 200, reviewed.text
+        assert c.get("/api/v1/assignments", headers=worker).json()[0]["status"] == "completed"
 
 
 def test_role_and_evidence_guards(tmp_path):

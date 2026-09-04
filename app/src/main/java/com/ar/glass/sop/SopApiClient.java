@@ -34,7 +34,6 @@ public final class SopApiClient {
     }
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-    private static final MediaType JPEG = MediaType.parse("image/jpeg");
     private static final String PREFS = "crrc_sop_session";
     private static final String KEY_TOKEN = "access_token";
 
@@ -102,8 +101,9 @@ public final class SopApiClient {
     }
 
     public void uploadEvidence(String runId, String stepKey, File file, Result<JsonObject> result) {
+        MediaType mediaType = MediaType.parse(SopEvidenceFiles.mediaType(file));
         RequestBody body = new MultipartBody.Builder().setType(MultipartBody.FORM)
-                .addFormDataPart("file", file.getName(), RequestBody.create(JPEG, file)).build();
+                .addFormDataPart("file", file.getName(), RequestBody.create(mediaType, file)).build();
         execute(authorized("/api/v1/runs/" + runId + "/steps/" + stepKey + "/evidence")
                 .post(body).build(), JsonObject.class, result);
     }

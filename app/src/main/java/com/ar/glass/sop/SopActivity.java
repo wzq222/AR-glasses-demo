@@ -1,14 +1,21 @@
 package com.ar.glass.sop;
 
+import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -17,23 +24,32 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.ActivityResult;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.cardview.widget.CardView;
 import androidx.core.content.FileProvider;
 
 import com.ar.glass.R;
+import com.ar.glass.ui.GalleryActivity;
 import com.ar.glass.vision.MarkedPointDetectorHolder;
+import com.ar.glass.vision.InspectionPresentation;
 import com.ar.glass.vision.MeterReading;
 import com.ar.glass.vision.Vision;
 import com.ar.glass.vision.realtime.WitnessStateEstimate;
 import com.ar.glass.vision.realtime.WitnessTriage;
 import com.ar.glass.vision.ui.BoxOverlay;
+import com.ar.glass.vision.ui.WitnessReviewCrop;
+import com.ar.glass.vision.ui.WitnessReviewOverlay;
 import com.google.gson.JsonObject;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -67,8 +83,19 @@ public final class SopActivity extends AppCompatActivity {
     private ImageView evidencePreview;
     private BoxOverlay evidenceOverlay;
     private Button captureButton;
+    private Button phoneGalleryButton;
+    private Button originalGalleryButton;
+    private View galleryEvidenceSources;
     private TextView analysisText;
-    private LinearLayout markedPointReviewList;
+    private View witnessReviewPanel;
+    private TextView witnessReviewProgress;
+    private ImageView witnessReviewImage;
+    private WitnessReviewOverlay witnessReviewOverlay;
+    private TextView witnessAutomaticResult;
+    private Spinner witnessPointDecision;
+    private Button witnessPrevious;
+    private Button witnessNext;
+    private Button witnessFullImage;
     private Spinner decision;
     private EditText note;
     private Button saveStepButton;
@@ -79,12 +106,20 @@ public final class SopActivity extends AppCompatActivity {
     private String runId;
     private int stepIndex;
     private File evidenceFile;
+    private File pendingCameraFile;
+    private String evidenceSource = "";
     private String analysisSummary = "";
     private Map<String, Object> analysisValue = new HashMap<>();
-    private final List<Spinner> pointDecisionSpinners = new ArrayList<>();
     private final List<Map<String, Object>> pointResultMaps = new ArrayList<>();
+    private List<MarkedPointDetectorHolder.Assessment> witnessAssessments = Collections.emptyList();
+    private List<com.ar.glass.vision.YoloDetector.Detection> witnessDetections = Collections.emptyList();
+    private WitnessReviewState witnessReviewState;
+    private Bitmap evidenceBitmap;
+    private Bitmap witnessReviewPatch;
 
     private ActivityResultLauncher<Uri> camera;
+    private ActivityResultLauncher<String> phoneGallery;
+    private ActivityResultLauncher<Intent> originalGallery;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -93,24 +128,19 @@ public final class SopActivity extends AppCompatActivity {
         bindViews();
         bindActions();
         camera = registerForActivityResult(new ActivityResultContracts.TakePicture(), success -> {
-            if (success && evidenceFile != null) {
-                Bitmap bitmap = decode(evidenceFile, 2200);
-                evidenceOverlay.clear();
-                markedPointReviewList.removeAllViews();
-                markedPointReviewList.setVisibility(View.GONE);
-                pointDecisionSpinners.clear();
-                pointResultMaps.clear();
-                saveStepButton.setEnabled(false);
-                if (bitmap == null) {
-                    setBusy(false, "照片读取失败，请重新拍摄");
-                    return;
-                }
-                evidencePreview.setImageBitmap(bitmap);
-                analyzeCurrentStep(bitmap);
+            File captured = pendingCameraFile;
+            pendingCameraFile = null;
+            if (success && captured != null) {
+                decodeAndProcessEvidence(captured, "CAMERA", true);
             } else {
+                if (captured != null && captured.exists()) captured.delete();
                 setBusy(false, "未获取照片");
             }
         });
+        phoneGallery = registerForActivityResult(
+                new ActivityResultContracts.GetContent(), this::importPhoneEvidence);
+        originalGallery = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(), this::importOriginalEvidence);
         if (api.hasSession()) restoreSession(); else showLogin();
     }
 
@@ -135,8 +165,19 @@ public final class SopActivity extends AppCompatActivity {
         evidencePreview = findViewById(R.id.ivSopEvidence);
         evidenceOverlay = findViewById(R.id.overlaySopEvidence);
         captureButton = findViewById(R.id.btnCaptureStep);
+        phoneGalleryButton = findViewById(R.id.btnSelectPhoneGallery);
+        originalGalleryButton = findViewById(R.id.btnSelectOriginalGallery);
+        galleryEvidenceSources = findViewById(R.id.layoutGalleryEvidenceSources);
         analysisText = findViewById(R.id.tvStepAnalysis);
-        markedPointReviewList = findViewById(R.id.markedPointReviewList);
+        witnessReviewPanel = findViewById(R.id.panelWitnessPointReview);
+        witnessReviewProgress = findViewById(R.id.tvWitnessReviewProgress);
+        witnessReviewImage = findViewById(R.id.ivWitnessReviewCrop);
+        witnessReviewOverlay = findViewById(R.id.overlayWitnessReviewRoi);
+        witnessAutomaticResult = findViewById(R.id.tvWitnessAutomaticResult);
+        witnessPointDecision = findViewById(R.id.spinnerWitnessPointDecision);
+        witnessPrevious = findViewById(R.id.btnWitnessPrevious);
+        witnessNext = findViewById(R.id.btnWitnessNext);
+        witnessFullImage = findViewById(R.id.btnWitnessFullImage);
         decision = findViewById(R.id.spinnerStepDecision);
         note = findViewById(R.id.etStepNote);
         saveStepButton = findViewById(R.id.btnSaveStep);
@@ -145,6 +186,9 @@ public final class SopActivity extends AppCompatActivity {
                 android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"确认正常", "疑似异常", "无法判断"});
         decision.setAdapter(decisions);
+        witnessPointDecision.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"请选择逐点结论", "确认正常", "疑似松动", "无法判断/重拍"}));
     }
 
     private void bindActions() {
@@ -158,6 +202,11 @@ public final class SopActivity extends AppCompatActivity {
         });
         findViewById(R.id.btnBackTasks).setOnClickListener(v -> showTasks());
         captureButton.setOnClickListener(v -> captureEvidence());
+        phoneGalleryButton.setOnClickListener(v -> phoneGallery.launch("image/*"));
+        originalGalleryButton.setOnClickListener(v -> selectOriginalGalleryEvidence());
+        witnessPrevious.setOnClickListener(v -> moveWitnessReview(false));
+        witnessNext.setOnClickListener(v -> moveWitnessReview(true));
+        witnessFullImage.setOnClickListener(v -> showWitnessFullImage());
         saveStepButton.setOnClickListener(v -> saveCurrentStep());
         submitButton.setOnClickListener(v -> submitRun());
     }
@@ -216,7 +265,9 @@ public final class SopActivity extends AppCompatActivity {
             @Override public void onSuccess(List<SopModels.Assignment> values) {
                 List<SopModels.Assignment> active = new ArrayList<>();
                 for (SopModels.Assignment item : values) {
-                    if (!"completed".equals(item.status) && !"cancelled".equals(item.status)) active.add(item);
+                    if (!"completed".equals(item.status)
+                            && !"cancelled".equals(item.status)
+                            && !"submitted".equals(item.status)) active.add(item);
                 }
                 taskCount.setText("待处理 " + active.size() + " 项");
                 renderTasks(active);
@@ -292,11 +343,14 @@ public final class SopActivity extends AppCompatActivity {
         progress.setProgress(total == 0 ? 0 : Math.round(stepIndex * 100f / total));
         submitButton.setVisibility(step == null ? View.VISIBLE : View.GONE);
         if (step == null) {
+            evidenceBitmap = null;
+            resetWitnessReviews();
             stepNumber.setText("全部步骤已完成");
             stepTitle.setText("请提交本次巡检");
             stepInstruction.setText("提交后将进入后台人工复核队列");
             stepContract.setText("证据完整性门已在提交时再次校验");
             captureButton.setVisibility(View.GONE);
+            galleryEvidenceSources.setVisibility(View.GONE);
             saveStepButton.setVisibility(View.GONE);
             evidencePanel.setVisibility(View.GONE);
             evidenceOverlay.setVisibility(View.GONE);
@@ -307,17 +361,17 @@ public final class SopActivity extends AppCompatActivity {
             return;
         }
         evidenceFile = null;
+        evidenceSource = "";
         analysisSummary = "";
         analysisValue = new HashMap<>();
+        evidenceBitmap = null;
         evidencePreview.setImageDrawable(null);
         evidenceOverlay.clear();
-        markedPointReviewList.removeAllViews();
-        markedPointReviewList.setVisibility(View.GONE);
-        pointDecisionSpinners.clear();
-        pointResultMaps.clear();
+        resetWitnessReviews();
         evidencePanel.setVisibility(View.VISIBLE);
         evidenceOverlay.setVisibility(View.VISIBLE);
         captureButton.setVisibility(View.VISIBLE);
+        galleryEvidenceSources.setVisibility(View.VISIBLE);
         saveStepButton.setVisibility(View.VISIBLE);
         decision.setVisibility(View.VISIBLE);
         note.setVisibility(View.VISIBLE);
@@ -341,13 +395,102 @@ public final class SopActivity extends AppCompatActivity {
             File directory = getExternalFilesDir("sop_evidence");
             if (directory == null) throw new IllegalStateException("外部存储不可用");
             if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("无法创建证据目录");
-            evidenceFile = new File(directory, "sop_" + System.currentTimeMillis() + ".jpg");
-            Uri uri = FileProvider.getUriForFile(this, "com.ar.glass.fileprovider", evidenceFile);
+            pendingCameraFile = new File(directory, "sop_" + System.currentTimeMillis() + ".jpg");
+            Uri uri = FileProvider.getUriForFile(this, "com.ar.glass.fileprovider", pendingCameraFile);
             setBusy(true, "等待现场拍照…");
             camera.launch(uri);
         } catch (Exception error) {
+            pendingCameraFile = null;
             setBusy(false, "无法启动相机：" + error.getMessage());
         }
+    }
+
+    private void selectOriginalGalleryEvidence() {
+        Intent intent = new Intent(this, GalleryActivity.class);
+        intent.putExtra(GalleryActivity.EXTRA_MODE, GalleryActivity.MODE_ORIGINAL);
+        intent.putExtra(GalleryActivity.EXTRA_SELECT_IMAGE, true);
+        originalGallery.launch(intent);
+    }
+
+    private void importPhoneEvidence(Uri uri) {
+        if (uri == null) {
+            setBusy(false, "已取消选择，当前证据保持不变");
+            return;
+        }
+        ContentResolver resolver = getContentResolver();
+        String mime = resolver.getType(uri);
+        importEvidence(() -> resolver.openInputStream(uri), mime, "PHONE_GALLERY");
+    }
+
+    private void importOriginalEvidence(ActivityResult result) {
+        if (result.getResultCode() != RESULT_OK || result.getData() == null) {
+            setBusy(false, "已取消选择，当前证据保持不变");
+            return;
+        }
+        String path = result.getData().getStringExtra(GalleryActivity.EXTRA_SELECTED_IMAGE_PATH);
+        File source = path == null ? null : new File(path);
+        if (source == null || !source.isFile()) {
+            setBusy(false, "原图库图片不存在，当前证据保持不变");
+            return;
+        }
+        try {
+            importEvidence(() -> new FileInputStream(source), SopEvidenceFiles.mediaType(source),
+                    "APP_GALLERY");
+        } catch (IllegalArgumentException error) {
+            setBusy(false, error.getMessage() + "，当前证据保持不变");
+        }
+    }
+
+    private void importEvidence(EvidenceInput input, String mime, String source) {
+        setBusy(true, "正在读取图库图片…");
+        analyzerExecutor.execute(() -> {
+            File snapshot = null;
+            try {
+                snapshot = SopEvidenceFiles.copy(
+                        input.open(), mime, evidenceDirectory(), System.currentTimeMillis());
+                Bitmap bitmap = SopImageDecoder.decode(snapshot, 2200);
+                File finalSnapshot = snapshot;
+                runOnUiThread(() -> processEvidenceFile(finalSnapshot, bitmap, source));
+            } catch (Exception error) {
+                if (snapshot != null && snapshot.exists()) snapshot.delete();
+                String message = error.getMessage() == null ? "图片读取失败" : error.getMessage();
+                runOnUiThread(() -> setBusy(false, message + "，当前证据保持不变"));
+            }
+        });
+    }
+
+    private void decodeAndProcessEvidence(File file, String source, boolean deleteOnFailure) {
+        analyzerExecutor.execute(() -> {
+            try {
+                Bitmap bitmap = SopImageDecoder.decode(file, 2200);
+                runOnUiThread(() -> processEvidenceFile(file, bitmap, source));
+            } catch (IOException error) {
+                if (deleteOnFailure && file.exists()) file.delete();
+                runOnUiThread(() -> setBusy(false, "照片读取失败，当前证据保持不变"));
+            }
+        });
+    }
+
+    private void processEvidenceFile(File file, Bitmap bitmap, String source) {
+        evidenceOverlay.clear();
+        resetWitnessReviews();
+        saveStepButton.setEnabled(false);
+        evidenceFile = file;
+        evidenceSource = source;
+        evidenceBitmap = bitmap;
+        evidencePreview.setImageBitmap(bitmap);
+        analyzeCurrentStep(bitmap);
+    }
+
+    private File evidenceDirectory() throws IOException {
+        File directory = getExternalFilesDir("sop_evidence");
+        if (directory == null) throw new IOException("外部存储不可用");
+        if (!directory.exists() && !directory.mkdirs()) throw new IOException("无法创建证据目录");
+        return directory;
+    }
+
+    private interface EvidenceInput {
+        InputStream open() throws IOException;
     }
 
     private void analyzeCurrentStep(Bitmap bitmap) {
@@ -356,6 +499,7 @@ public final class SopActivity extends AppCompatActivity {
         setBusy(true, "正在执行 " + step.title + "…");
         analyzerExecutor.execute(() -> {
             Map<String, Object> value = new HashMap<>();
+            value.put("evidence_source", evidenceSource);
             String summary;
             int recommendedDecision = -1;
             List<com.ar.glass.vision.YoloDetector.Detection> overlayDetections = null;
@@ -416,9 +560,12 @@ public final class SopActivity extends AppCompatActivity {
                             recommendedDecision = 2;
                         }
                         value.put("requires_human_confirmation", true);
-                        summary = "检出 " + detection.detections.size() + " 个防松检查点：正常倾向 "
-                                + aligned + "，疑似错位 " + suspected + "，高疑似 "
-                                + highSuspicion + "，需近拍 " + insufficient + "；请逐点人工确认";
+                        summary = "第一步·螺栓定位：检出 " + detection.detections.size()
+                                + " 个带防松标记的螺栓\n"
+                                + "第二步·松动判断：未见松动迹象 " + aligned
+                                + "，疑似松动 " + suspected + "，高疑似松动 "
+                                + highSuspicion + "，无法判断 " + insufficient
+                                + "；请逐点人工确认";
                         break;
                     case "METER":
                         MeterReading reading = Vision.get().readMeter(bitmap);
@@ -457,7 +604,8 @@ public final class SopActivity extends AppCompatActivity {
                 if (finalRecommendedDecision >= 0) {
                     decision.setSelection(finalRecommendedDecision);
                 }
-                renderPointReviews(finalPointAssessments, finalPointResults);
+                renderPointReviews(
+                        bitmap, finalOverlayDetections, finalPointAssessments, finalPointResults);
                 setBusy(false, "检测完成，请确认本步结果");
                 saveStepButton.setEnabled(true);
             });
@@ -472,15 +620,16 @@ public final class SopActivity extends AppCompatActivity {
             return;
         }
         int selected = decision.getSelectedItemPosition();
-        if ("FASTENER_MARK".equals(step.type) && !pointDecisionSpinners.isEmpty()) {
+        if ("FASTENER_MARK".equals(step.type) && witnessReviewState != null) {
+            witnessReviewState.setCurrentDecision(witnessPointDecision.getSelectedItemPosition());
+            if (!witnessReviewState.allReviewed()) {
+                setStatus("请先确认每一个防松检查点");
+                return;
+            }
             boolean anySuspected = false;
             boolean anyUnable = false;
-            for (int index = 0; index < pointDecisionSpinners.size(); index++) {
-                int pointSelection = pointDecisionSpinners.get(index).getSelectedItemPosition();
-                if (pointSelection == 0) {
-                    setStatus("请先确认每一个防松检查点");
-                    return;
-                }
+            for (int index = 0; index < witnessReviewState.size(); index++) {
+                int pointSelection = witnessReviewState.getDecision(index);
                 String pointDecision;
                 if (pointSelection == 1) pointDecision = "confirmed_aligned";
                 else if (pointSelection == 2) {
@@ -526,61 +675,133 @@ public final class SopActivity extends AppCompatActivity {
     }
 
     private void renderPointReviews(
+            Bitmap bitmap,
+            List<com.ar.glass.vision.YoloDetector.Detection> detections,
             List<MarkedPointDetectorHolder.Assessment> assessments,
             List<Map<String, Object>> resultMaps) {
-        markedPointReviewList.removeAllViews();
-        pointDecisionSpinners.clear();
-        pointResultMaps.clear();
-        if (assessments == null || resultMaps == null || assessments.isEmpty()
+        resetWitnessReviews();
+        if (bitmap == null || detections == null || assessments == null || resultMaps == null
+                || assessments.isEmpty() || detections.size() != assessments.size()
                 || assessments.size() != resultMaps.size()) {
-            markedPointReviewList.setVisibility(View.GONE);
             return;
         }
-        markedPointReviewList.setVisibility(View.VISIBLE);
-        TextView heading = new TextView(this);
-        heading.setText("逐点复核（对应图片中的编号）");
-        heading.setTextColor(Color.rgb(36, 58, 72));
-        heading.setTextSize(14f);
-        heading.setPadding(0, dp(4), 0, dp(4));
-        markedPointReviewList.addView(heading);
-        for (int index = 0; index < assessments.size(); index++) {
-            MarkedPointDetectorHolder.Assessment assessment = assessments.get(index);
-            WitnessStateEstimate estimate = assessment.estimate;
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.VERTICAL);
-            row.setPadding(dp(10), dp(8), dp(10), dp(8));
-            row.setBackgroundColor(index % 2 == 0
-                    ? Color.rgb(239, 245, 248) : Color.rgb(247, 249, 250));
+        evidenceBitmap = bitmap;
+        witnessAssessments = new ArrayList<>(assessments);
+        witnessDetections = new ArrayList<>(detections);
+        pointResultMaps.addAll(resultMaps);
+        witnessReviewState = new WitnessReviewState(assessments.size());
+        witnessReviewPanel.setVisibility(View.VISIBLE);
+        renderWitnessReviewPoint();
+    }
 
-            TextView result = new TextView(this);
-            String automatic;
-            if (estimate.getTriage() == WitnessTriage.LIKELY_ALIGNED) {
-                automatic = String.format(Locale.CHINA, "正常倾向 %.1f°", estimate.getAngleDegrees());
-            } else if (estimate.getTriage() == WitnessTriage.POSSIBLE_DISPLACED) {
-                automatic = String.format(Locale.CHINA, "疑似错位 %.1f°", estimate.getAngleDegrees());
-            } else if (estimate.getTriage() == WitnessTriage.HIGH_SUSPICION) {
-                automatic = String.format(
-                        Locale.CHINA, "高疑似松动 %.1f°（待确认）", estimate.getAngleDegrees());
-            } else {
-                automatic = "无法自动测量，请近拍";
-            }
-            result.setText("检查点 " + assessment.index + " · AI辅助：" + automatic);
-            result.setTextColor(Color.rgb(32, 48, 58));
-            row.addView(result);
-
-            Spinner pointDecision = new Spinner(this);
-            pointDecision.setAdapter(new ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_dropdown_item,
-                    new String[]{"请选择逐点结论", "确认正常", "疑似松动", "无法判断/重拍"}));
-            row.addView(pointDecision);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT);
-            params.bottomMargin = dp(6);
-            markedPointReviewList.addView(row, params);
-            pointDecisionSpinners.add(pointDecision);
-            pointResultMaps.add(resultMaps.get(index));
+    private void resetWitnessReviews() {
+        witnessReviewPanel.setVisibility(View.GONE);
+        witnessReviewImage.setImageDrawable(null);
+        witnessReviewOverlay.clear();
+        witnessAssessments = Collections.emptyList();
+        witnessDetections = Collections.emptyList();
+        witnessReviewState = null;
+        pointResultMaps.clear();
+        if (witnessReviewPatch != null && !witnessReviewPatch.isRecycled()) {
+            witnessReviewPatch.recycle();
         }
+        witnessReviewPatch = null;
+    }
+
+    private void moveWitnessReview(boolean forward) {
+        if (witnessReviewState == null) return;
+        witnessReviewState.setCurrentDecision(witnessPointDecision.getSelectedItemPosition());
+        boolean moved = forward
+                ? witnessReviewState.moveNext() : witnessReviewState.movePrevious();
+        if (moved) renderWitnessReviewPoint();
+    }
+
+    private void renderWitnessReviewPoint() {
+        if (witnessReviewState == null || evidenceBitmap == null) return;
+        int position = witnessReviewState.getCurrentIndex();
+        MarkedPointDetectorHolder.Assessment assessment = witnessAssessments.get(position);
+        WitnessReviewCrop crop = WitnessReviewCrop.fromNormalized(
+                assessment.left,
+                assessment.top,
+                assessment.right,
+                assessment.bottom,
+                evidenceBitmap.getWidth(),
+                evidenceBitmap.getHeight());
+        Bitmap patch = renderSourceCropWithNeutralPadding(evidenceBitmap, crop);
+        witnessReviewImage.setImageBitmap(patch);
+        if (witnessReviewPatch != null && witnessReviewPatch != patch
+                && !witnessReviewPatch.isRecycled()) {
+            witnessReviewPatch.recycle();
+        }
+        witnessReviewPatch = patch;
+        witnessReviewOverlay.setReview(
+                crop, assessment.index, assessment.estimate.getTriage().name());
+        witnessReviewProgress.setText(
+                "逐点审核 " + (position + 1) + "/" + witnessReviewState.size());
+        String automatic = automaticWitnessResult(assessment.estimate);
+        if (crop.requiresCloserCapture()) {
+            automatic += " · 目标小于32像素，请靠近重拍";
+            if (witnessReviewState.getCurrentDecision() == 0) {
+                witnessReviewState.setCurrentDecision(3);
+            }
+        }
+        witnessAutomaticResult.setText("AI辅助：" + automatic);
+        witnessPointDecision.setSelection(witnessReviewState.getCurrentDecision());
+        witnessPrevious.setEnabled(position > 0);
+        witnessNext.setEnabled(position + 1 < witnessReviewState.size());
+    }
+
+    private String automaticWitnessResult(WitnessStateEstimate estimate) {
+        return InspectionPresentation.stateLabel(estimate);
+    }
+
+    private Bitmap renderSourceCropWithNeutralPadding(Bitmap source, WitnessReviewCrop crop) {
+        int outputSize = Math.min(720, Math.max(1, Math.round(crop.getSide())));
+        float scale = outputSize / crop.getSide();
+        Bitmap output = Bitmap.createBitmap(
+                outputSize, outputSize, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(output);
+        canvas.drawColor(Color.rgb(112, 112, 112));
+        float requestedLeft = crop.getRequestedLeft();
+        float requestedTop = crop.getRequestedTop();
+        Rect sourceRect = new Rect(
+                Math.max(0, (int) Math.floor(requestedLeft)),
+                Math.max(0, (int) Math.floor(requestedTop)),
+                Math.min(source.getWidth(), (int) Math.ceil(requestedLeft + crop.getSide())),
+                Math.min(source.getHeight(), (int) Math.ceil(requestedTop + crop.getSide())));
+        if (!sourceRect.isEmpty()) {
+            RectF destination = new RectF(
+                    (sourceRect.left - requestedLeft) * scale,
+                    (sourceRect.top - requestedTop) * scale,
+                    (sourceRect.right - requestedLeft) * scale,
+                    (sourceRect.bottom - requestedTop) * scale);
+            canvas.drawBitmap(source, sourceRect, destination, null);
+        }
+        return output;
+    }
+
+    private void showWitnessFullImage() {
+        if (witnessReviewState == null || evidenceBitmap == null) return;
+        int position = witnessReviewState.getCurrentIndex();
+        FrameLayout frame = new FrameLayout(this);
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setImageBitmap(evidenceBitmap);
+        BoxOverlay overlay = new BoxOverlay(this);
+        overlay.setResults(
+                Collections.singletonList(witnessDetections.get(position)),
+                evidenceBitmap.getWidth(),
+                evidenceBitmap.getHeight());
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(420));
+        frame.addView(image, params);
+        frame.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(420)));
+        new AlertDialog.Builder(this)
+                .setTitle("检查点 " + witnessAssessments.get(position).index + " · 原图定位")
+                .setView(frame)
+                .setPositiveButton("返回审核", null)
+                .show();
     }
 
     private void uploadEvidence(SopModels.Step step) {
@@ -611,6 +832,8 @@ public final class SopActivity extends AppCompatActivity {
 
     private void setBusy(boolean busy, String message) {
         captureButton.setEnabled(!busy);
+        phoneGalleryButton.setEnabled(!busy);
+        originalGalleryButton.setEnabled(!busy);
         saveStepButton.setEnabled(!busy && (currentStep() == null || !currentStep().requireEvidence || evidenceFile != null));
         submitButton.setEnabled(!busy);
         setStatus(message);
@@ -618,18 +841,6 @@ public final class SopActivity extends AppCompatActivity {
 
     private void setStatus(String message) {
         status.setText(message == null ? "" : message);
-    }
-
-    private Bitmap decode(File file, int maxEdge) {
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
-        int sample = 1;
-        while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2;
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inSampleSize = sample;
-        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
     }
 
     private String isoNow() {
@@ -643,6 +854,7 @@ public final class SopActivity extends AppCompatActivity {
     }
 
     @Override protected void onDestroy() {
+        resetWitnessReviews();
         analyzerExecutor.shutdownNow();
         super.onDestroy();
     }

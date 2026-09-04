@@ -173,7 +173,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/assignments")
     def list_assignments(user: Annotated[dict, Depends(current_user)]):
-        sql = """SELECT a.*,t.code,t.version,t.title,t.steps_json FROM assignments a
+        sql = """SELECT a.*,t.code,t.version,t.title,t.steps_json,
+                        (SELECT r.status FROM runs r WHERE r.assignment_id=a.id
+                         ORDER BY r.started_at DESC LIMIT 1) AS latest_run_status
+                 FROM assignments a
                  JOIN sop_templates t ON t.id=a.template_id"""
         params: tuple = ()
         if user["role"] == "inspector":
@@ -182,7 +185,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sql += " ORDER BY a.created_at DESC"
         with database.connect() as db:
             rows = db.execute(sql, params).fetchall()
-        return [{**dict(row), "steps": json.loads(row["steps_json"])} for row in rows]
+        response = []
+        for row in rows:
+            item = dict(row)
+            if item.pop("latest_run_status", None) == "submitted":
+                item["status"] = "submitted"
+            item["steps"] = json.loads(row["steps_json"])
+            response.append(item)
+        return response
 
     @app.post("/api/v1/runs", status_code=201)
     def start_run(request: RunCreate, user: Annotated[dict, Depends(current_user)]):
@@ -195,6 +205,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             existing = db.execute("SELECT * FROM runs WHERE assignment_id=? AND status='in_progress'", (request.assignment_id,)).fetchone()
             if existing:
                 return dict(existing)
+            submitted = db.execute("SELECT id FROM runs WHERE assignment_id=? AND status='submitted'", (request.assignment_id,)).fetchone()
+            if submitted:
+                raise HTTPException(status_code=409, detail="assignment is awaiting review")
+            if assignment["status"] not in ("pending", "in_progress"):
+                raise HTTPException(status_code=409, detail="assignment is not executable")
             run_id = str(uuid.uuid4())
             started_at = now_iso()
             db.execute("INSERT INTO runs(id,assignment_id,operator_id,status,device_json,started_at) VALUES(?,?,?,'in_progress',?,?)", (run_id, request.assignment_id, user["id"], Database.json(request.device), started_at))
@@ -226,7 +241,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {
                 "users": db.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0],
                 "active_templates": db.execute("SELECT COUNT(*) FROM sop_templates WHERE active=1").fetchone()[0],
-                "pending_assignments": db.execute("SELECT COUNT(*) FROM assignments WHERE status IN ('pending','in_progress')").fetchone()[0],
+                "pending_assignments": db.execute(
+                    """SELECT COUNT(*) FROM assignments a
+                       WHERE a.status IN ('pending','in_progress')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM runs r
+                           WHERE r.assignment_id=a.id AND r.status='submitted'
+                       )"""
+                ).fetchone()[0],
                 "awaiting_review": db.execute("SELECT COUNT(*) FROM runs WHERE status='submitted'").fetchone()[0],
                 "completed_assignments": db.execute("SELECT COUNT(*) FROM assignments WHERE status='completed'").fetchone()[0],
             }
@@ -331,6 +353,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.execute("UPDATE runs SET status=?,reviewed_by=?,reviewed_at=?,review_note=? WHERE id=?", (request.decision, user["id"], reviewed_at, request.note, run_id))
             if request.decision == "reviewed":
                 db.execute("UPDATE assignments SET status='completed' WHERE id=?", (run["assignment_id"],))
+            else:
+                db.execute("UPDATE assignments SET status='pending' WHERE id=?", (run["assignment_id"],))
             audit(db, user["id"], request.decision, "run", run_id)
         return {"id": run_id, "status": request.decision, "reviewed_at": reviewed_at}
 

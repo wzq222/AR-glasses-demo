@@ -174,7 +174,7 @@ public final class MarkedPointDetectorHolder {
             }
             float[] fullImagePoints = roi == null || !estimate.isMeasured()
                     ? null : mapPointsToImage(estimate.getNormalizedPoints(), roi, width, height);
-            String label = "防松点" + index + "·" + triageLabel(estimate.getTriage());
+            String label = InspectionPresentation.boltLabel(index);
             mapped.add(new YoloDetector.Detection(
                     clamp01(hit.getLeft() / width),
                     clamp01(hit.getTop() / height),
@@ -212,13 +212,6 @@ public final class MarkedPointDetectorHolder {
                     (roi.getTop() + normalizedPoints[index * 2 + 1] * roi.getHeight()) / imageHeight);
         }
         return mapped;
-    }
-
-    private static String triageLabel(WitnessTriage triage) {
-        if (triage == WitnessTriage.LIKELY_ALIGNED) return "正常倾向";
-        if (triage == WitnessTriage.POSSIBLE_DISPLACED) return "疑似错位";
-        if (triage == WitnessTriage.HIGH_SUSPICION) return "高疑似·待确认";
-        return "需近拍";
     }
 
     private static float clamp01(float value) {

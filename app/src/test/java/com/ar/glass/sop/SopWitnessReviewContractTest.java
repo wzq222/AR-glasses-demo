@@ -23,6 +23,8 @@ public class SopWitnessReviewContractTest {
         assertTrue(source.contains("pointResultMaps.get(index).put(\"human_decision\""));
         assertTrue(source.contains("new String[]{\"请选择逐点结论\", \"确认正常\", \"疑似松动\", \"无法判断/重拍\"}"));
         assertTrue(source.contains("value.put(\"human_review_complete\", true)"));
+        assertTrue(source.contains("第一步·螺栓定位"));
+        assertTrue(source.contains("第二步·松动判断"));
         assertFalse(source.contains(
                 "value.put(\"marked_point_count\", detection.detections.size());\n"
                         + "                        value.put(\"state\", \"INSUFFICIENT\");"));
@@ -31,10 +33,20 @@ public class SopWitnessReviewContractTest {
     @Test
     public void evidencePreviewIncludesTheWitnessOverlayAndReviewList() throws Exception {
         String layout = readProjectFile("app/src/main/res/layout/activity_sop.xml");
+        String source = readProjectFile(
+                "app/src/main/java/com/ar/glass/sop/SopActivity.java");
 
         assertTrue(layout.contains("android:id=\"@+id/overlaySopEvidence\""));
         assertTrue(layout.contains("com.ar.glass.vision.ui.BoxOverlay"));
-        assertTrue(layout.contains("android:id=\"@+id/markedPointReviewList\""));
+        assertTrue(layout.contains("android:id=\"@+id/panelWitnessPointReview\""));
+        assertTrue(layout.contains("android:id=\"@+id/ivWitnessReviewCrop\""));
+        assertTrue(layout.contains("com.ar.glass.vision.ui.WitnessReviewOverlay"));
+        assertTrue(layout.contains("android:id=\"@+id/btnWitnessPrevious\""));
+        assertTrue(layout.contains("android:id=\"@+id/btnWitnessNext\""));
+        assertTrue(layout.contains("android:id=\"@+id/btnWitnessFullImage\""));
+        assertTrue(source.contains("WitnessReviewCrop.fromNormalized"));
+        assertTrue(source.contains("renderWitnessReviewPoint"));
+        assertTrue(source.contains("showWitnessFullImage"));
     }
 
     private static String readProjectFile(String relativePath) throws Exception {
