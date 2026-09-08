@@ -18,3 +18,9 @@ local.properties
 
 # legacy merged sub-project (kept on disk, excluded from repo)
 Android_YOLO/
+
+# AI 大模型资产（体积超 git 托管限制，由 docs/AI-BRANCH.md 描述的本地缓存恢复）
+app/src/main/assets/llm/*.gguf
+app/src/main/assets/llm/*.part
+app/src/main/assets/asr/sensevoice-small-int8.onnx
+model-cache/

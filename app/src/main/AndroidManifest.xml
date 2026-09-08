@@ -87,6 +87,11 @@
             android:name=".sop.SopActivity"
             android:screenOrientation="portrait" />
 
+        <!-- AI 助手（本地 ASR + 本地 LLM） -->
+        <activity
+            android:name=".ai.AiChatActivity"
+            android:screenOrientation="portrait" />
+
         <!-- 文件分享（导出台账 CSV/Excel） -->
         <provider
             android:name="androidx.core.content.FileProvider"

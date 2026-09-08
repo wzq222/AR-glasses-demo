@@ -69,6 +69,15 @@
                         android:text="打开巡检工作台"
                         android:textColor="@android:color/white"
                         android:backgroundTint="#176FA8" />
+
+                    <Button
+                        android:id="@+id/btnAiChat"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="9dp"
+                        android:text="AI 助手（本地语音/对话）"
+                        android:textColor="@android:color/white"
+                        android:backgroundTint="#5A6B3B" />
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 

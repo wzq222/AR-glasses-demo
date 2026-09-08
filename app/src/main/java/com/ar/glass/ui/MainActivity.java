@@ -106,6 +106,7 @@ public class MainActivity extends AppCompatActivity {
     private Button btnLiveDetect;
     private Button btnGalleryDetect;
     private Button btnSopTasks;
+    private Button btnAiChat;
     private Button btnChangeModel;
     private Button btnClearGallery;
     private Button btnPriority;
@@ -204,6 +205,7 @@ public class MainActivity extends AppCompatActivity {
         btnLiveDetect = findViewById(R.id.btnLiveDetect);
         btnGalleryDetect = findViewById(R.id.btnGalleryDetect);
         btnSopTasks = findViewById(R.id.btnSopTasks);
+        btnAiChat = findViewById(R.id.btnAiChat);
         btnChangeModel = findViewById(R.id.btnChangeModel);
         btnClearGallery = findViewById(R.id.btnClearGallery);
         btnPriority = findViewById(R.id.btnPriority);
@@ -275,6 +277,8 @@ public class MainActivity extends AppCompatActivity {
         btnGalleryDetect.setOnClickListener(v -> mGalleryDetectLauncher.launch("image/*"));
         btnSopTasks.setOnClickListener(v ->
                 startActivity(new Intent(this, com.ar.glass.sop.SopActivity.class)));
+        btnAiChat.setOnClickListener(v ->
+                startActivity(new Intent(this, com.ar.glass.ai.AiChatActivity.class)));
         // 更换模型：点击选择 ONNX 模型文件并热加载；长按恢复内置模型
         btnChangeModel.setOnClickListener(v ->
                 mModelPickerLauncher.launch(new String[]{"*/*"}));
