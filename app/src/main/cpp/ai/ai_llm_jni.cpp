@@ -6,8 +6,11 @@
 #include <vector>
 #include <android/log.h>
 #include <chrono>
+#include <cstring>
 
 #include "llama.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
 
 #define LOG_TAG "AiLlm"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -21,6 +24,7 @@ struct LlmSession {
     llama_vocab const *vocab = nullptr;
     llama_sampler *smpl = nullptr;
     int n_ctx = 0;
+    mtmd_context *mctx = nullptr; // 视觉编码器（加载 mmproj 后可用）
 };
 
 // 列出 ggml 全部后端设备（GPU/Vulkan 是否在列一目了然，附显存）
@@ -144,6 +148,7 @@ Java_com_ar_glass_ai_LlmEngine_nativeFreeSession(
         JNIEnv * /*env*/, jobject /*thiz*/, jlong handle) {
     auto *s = reinterpret_cast<LlmSession *>(handle);
     if (!s) return;
+    if (s->mctx) mtmd_free(s->mctx); // 依赖 model/ctx，需先于其释放
     if (s->smpl) llama_sampler_free(s->smpl);
     if (s->ctx) llama_free(s->ctx);
     if (s->model) llama_model_free(s->model);
@@ -151,53 +156,23 @@ Java_com_ar_glass_ai_LlmEngine_nativeFreeSession(
     llama_backend_free();
 }
 
-// 单轮流式生成：prompt 已由 Java 层套好模板。每次调用独立采样链，KV 在开头清空。
-JNIEXPORT jstring JNICALL
-Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
-        JNIEnv *env, jobject /*thiz*/, jlong handle, jstring jprompt,
-        jint max_tokens, jfloat temperature) {
-    auto *s = reinterpret_cast<LlmSession *>(handle);
-    if (!s || !s->ctx) return env->NewStringUTF("");
-
-    const char *prompt = env->GetStringUTFChars(jprompt, nullptr);
-    std::string prompt_utf8(prompt);
-    env->ReleaseStringUTFChars(jprompt, prompt);
-
-    // Qwen3 思考输出由 Java 层过滤器剥离；<think> 起始标签原样放行
-    if (s->smpl) llama_sampler_free(s->smpl);
-    llama_sampler_chain_params sp = llama_sampler_chain_default_params();
-    sp.no_perf = true;
-    s->smpl = llama_sampler_chain_init(sp);
-    llama_sampler_chain_add(s->smpl, llama_sampler_init_top_k(20));
-    llama_sampler_chain_add(s->smpl, llama_sampler_init_temp(temperature));
-    llama_sampler_chain_add(s->smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
-
-    llama_memory_clear(llama_get_memory(s->ctx), true);
-
-    const llama_vocab *vocab = s->vocab;
-    const bool is_special = true; // 模板含 <|im_start|> 等特殊 token
-    int n_prompt = -llama_tokenize(vocab, prompt_utf8.c_str(),
-                                   (int32_t) prompt_utf8.size(), nullptr, 0,
-                                   is_special, true);
-    if (n_prompt <= 0) return env->NewStringUTF("");
-    std::vector<llama_token> tokens(n_prompt);
-    if (llama_tokenize(vocab, prompt_utf8.c_str(), (int32_t) prompt_utf8.size(),
-                       tokens.data(), n_prompt, is_special, true) < 0) {
-        return env->NewStringUTF("");
-    }
-
+// 预填完成后从当前上下文继续解码生成（tokens 为最近一步输入，首轮可为空向量）
+std::string run_decode(LlmSession *s, std::vector<llama_token> tokens,
+                       jint max_tokens, int32_t n_prompt) {
     std::string output;
-    llama_token new_token = 0;
     auto t_gen = std::chrono::steady_clock::now();
     int n_gen = 0;
+    const llama_vocab *vocab = s->vocab;
     for (int i = 0; i < max_tokens; i++) {
-        llama_batch batch = llama_batch_get_one(
-                tokens.data(), (int32_t) tokens.size());
-        if (llama_decode(s->ctx, batch)) {
-            ALOGE("decode failed");
-            break;
+        if (!tokens.empty()) {
+            llama_batch batch = llama_batch_get_one(
+                    tokens.data(), (int32_t) tokens.size());
+            if (llama_decode(s->ctx, batch)) {
+                ALOGE("decode failed");
+                break;
+            }
         }
-        new_token = llama_sampler_sample(s->smpl, s->ctx, -1);
+        llama_token new_token = llama_sampler_sample(s->smpl, s->ctx, -1);
         if (llama_vocab_is_eog(vocab, new_token)) break;
         output += token_to_utf8(vocab, new_token);
         tokens = {new_token};
@@ -212,6 +187,46 @@ Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
             std::chrono::steady_clock::now() - t_gen).count();
     ALOGI("generated %d tokens in %.1fs (%.2f tok/s), prompt=%d tok",
           n_gen, secs, secs > 0 ? n_gen / secs : 0.0, n_prompt);
+    return output;
+}
+
+void fresh_sampler(LlmSession *s, jfloat temperature) {
+    if (s->smpl) llama_sampler_free(s->smpl);
+    llama_sampler_chain_params sp = llama_sampler_chain_default_params();
+    sp.no_perf = true;
+    s->smpl = llama_sampler_chain_init(sp);
+    llama_sampler_chain_add(s->smpl, llama_sampler_init_top_k(20));
+    llama_sampler_chain_add(s->smpl, llama_sampler_init_temp(temperature));
+    llama_sampler_chain_add(s->smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+}
+
+// 单轮流式生成：prompt 已由 Java 层套好模板。每次调用独立采样链，KV 在开头清空。
+JNIEXPORT jstring JNICALL
+Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
+        JNIEnv *env, jobject /*thiz*/, jlong handle, jstring jprompt,
+        jint max_tokens, jfloat temperature) {
+    auto *s = reinterpret_cast<LlmSession *>(handle);
+    if (!s || !s->ctx) return env->NewStringUTF("");
+
+    const char *prompt = env->GetStringUTFChars(jprompt, nullptr);
+    std::string prompt_utf8(prompt);
+    env->ReleaseStringUTFChars(jprompt, prompt);
+
+    fresh_sampler(s, temperature);
+    llama_memory_clear(llama_get_memory(s->ctx), true);
+
+    const llama_vocab *vocab = s->vocab;
+    const bool is_special = true; // 模板含 <|im_start|> 等特殊 token
+    int n_prompt = -llama_tokenize(vocab, prompt_utf8.c_str(),
+                                   (int32_t) prompt_utf8.size(), nullptr, 0,
+                                   is_special, true);
+    if (n_prompt <= 0) return env->NewStringUTF("");
+    std::vector<llama_token> tokens(n_prompt);
+    if (llama_tokenize(vocab, prompt_utf8.c_str(), (int32_t) prompt_utf8.size(),
+                       tokens.data(), n_prompt, is_special, true) < 0) {
+        return env->NewStringUTF("");
+    }
+    std::string output = run_decode(s, tokens, max_tokens, n_prompt);
     return env->NewStringUTF(output.c_str());
 }
 
@@ -219,6 +234,91 @@ JNIEXPORT jboolean JNICALL
 Java_com_ar_glass_ai_LlmEngine_nativeIsGpuActive(
         JNIEnv * /*env*/, jobject /*thiz*/) {
     return has_accel_dev();
+}
+
+// 加载 mmproj 视觉投影器，绑定到当前会话的 llama_model（多模态输入前提）
+JNIEXPORT jboolean JNICALL
+Java_com_ar_glass_ai_LlmEngine_nativeInitVision(
+        JNIEnv *env, jobject /*thiz*/, jlong handle, jstring jmmproj) {
+    auto *s = reinterpret_cast<LlmSession *>(handle);
+    if (!s || !s->model) return JNI_FALSE;
+    if (s->mctx) return JNI_TRUE; // 已加载
+    const char *mmproj = env->GetStringUTFChars(jmmproj, nullptr);
+    mtmd_context_params p = mtmd_context_params_default();
+    p.use_gpu = true;   // 视觉塔同样优先 Vulkan
+    p.print_timings = true;
+    p.n_threads = 4;
+    s->mctx = mtmd_init_from_file(mmproj, s->model, p);
+    env->ReleaseStringUTFChars(jmmproj, mmproj);
+    ALOGI("vision init %s", s->mctx ? "ok" : "FAILED");
+    return s->mctx ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_ar_glass_ai_LlmEngine_nativeHasVision(
+        JNIEnv * /*env*/, jobject /*thiz*/, jlong handle) {
+    auto *s = reinterpret_cast<LlmSession *>(handle);
+    return (s && s->mctx) ? JNI_TRUE : JNI_FALSE;
+}
+
+// 多模态生成：prompt 由 Java 层套模板并含媒体标记；pixels 为 ARGB_8888 位图
+JNIEXPORT jstring JNICALL
+Java_com_ar_glass_ai_LlmEngine_nativeGenerateWithImage(
+        JNIEnv *env, jobject /*thiz*/, jlong handle, jstring jprompt,
+        jintArray jpixels, jint width, jint height,
+        jint max_tokens, jfloat temperature) {
+    auto *s = reinterpret_cast<LlmSession *>(handle);
+    if (!s || !s->ctx || !s->mctx) return env->NewStringUTF("");
+
+    const char *prompt = env->GetStringUTFChars(jprompt, nullptr);
+    std::string prompt_utf8(prompt);
+    env->ReleaseStringUTFChars(jprompt, prompt);
+
+    jsize n_px = env->GetArrayLength(jpixels);
+    jint *px = env->GetIntArrayElements(jpixels, nullptr);
+    std::vector<unsigned char> rgb((size_t) n_px * 3);
+    for (jsize i = 0; i < n_px; i++) {
+        uint32_t c = (uint32_t) px[i];
+        rgb[i * 3 + 0] = (unsigned char) ((c >> 16) & 0xFF); // R
+        rgb[i * 3 + 1] = (unsigned char) ((c >> 8) & 0xFF);  // G
+        rgb[i * 3 + 2] = (unsigned char) (c & 0xFF);         // B
+    }
+    env->ReleaseIntArrayElements(jpixels, px, JNI_ABORT);
+
+    mtmd_bitmap *bitmap = mtmd_bitmap_init((uint32_t) width, (uint32_t) height,
+                                           rgb.data());
+    if (!bitmap) return env->NewStringUTF("");
+
+    mtmd_input_text text{prompt_utf8.c_str(), prompt_utf8.size(),
+                         /*add_special=*/false, /*parse_special=*/true};
+    const mtmd_bitmap *bitmaps[1] = {bitmap};
+    mtmd_input_chunks *chunks = mtmd_input_chunks_init();
+    int32_t res = mtmd_tokenize(s->mctx, chunks, &text, bitmaps, 1);
+    mtmd_bitmap_free(bitmap);
+    if (res != 0) {
+        ALOGE("mtmd_tokenize failed: %d", res);
+        mtmd_input_chunks_free(chunks);
+        return env->NewStringUTF("");
+    }
+
+    fresh_sampler(s, temperature);
+    llama_memory_clear(llama_get_memory(s->ctx), true);
+    auto t0 = std::chrono::steady_clock::now();
+    llama_pos n_past = 0;
+    res = mtmd_helper_eval_chunks(s->mctx, s->ctx, chunks,
+                                  /*n_past=*/0, /*seq_id=*/0,
+                                  /*n_batch=*/256, /*logits_last=*/true,
+                                  &n_past);
+    double prefill = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t0).count();
+    mtmd_input_chunks_free(chunks);
+    if (res != 0) {
+        ALOGE("vision prefill failed: %d", res);
+        return env->NewStringUTF("");
+    }
+    ALOGI("vision prefill done, n_past=%d in %.1fs", n_past, prefill);
+    std::string output = run_decode(s, {}, max_tokens, (int32_t) n_past);
+    return env->NewStringUTF(output.c_str());
 }
 
 } // extern "C"

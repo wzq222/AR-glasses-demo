@@ -47,5 +47,9 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}/spirv-headers-include")
 
 add_subdirectory(llama.cpp)
 
+# 多模态视觉编码器（MiniCPM-V 4.6 等，经 mmproj 投影进 LLM）
+set(MTMD_VIDEO OFF CACHE BOOL "" FORCE)
+add_subdirectory(llama.cpp/tools-mtmd)
+
 add_library(ai_llm SHARED ai_llm_jni.cpp)
-target_link_libraries(ai_llm PRIVATE llama android log)
+target_link_libraries(ai_llm PRIVATE llama mtmd android log)

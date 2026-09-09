@@ -16,7 +16,9 @@ import java.io.OutputStream;
 public class LlmEngine {
     private static final String TAG = "AiLlm";
 
-    public static final String MODEL_ASSET = "llm/qwen3-4b-q4_k_m.gguf";
+    public static final String MODEL_ASSET = "llm/minicpm5-2b-q4_k_m.gguf";
+    public static final String VLM_ASSET = "vlm/minicpm-v4_6-q4_k_m.gguf";
+    public static final String MMPROJ_ASSET = "vlm/mmproj-f16.gguf";
     private static final int DEFAULT_CTX = 4096;
     private static final int DEFAULT_GPU_LAYERS = 99; // 全部分层交给 Vulkan，放不下自动回退 CPU
 
@@ -114,6 +116,27 @@ public class LlmEngine {
 
     public interface ProgressListener {
         void onProgress(String file, int percent);
+    }
+
+    /** 通用 assets→filesDir 拷贝（幂等），用于 VLM/mmproj 等大文件外置或内置。 */
+    public static String ensureAssetFile(Context ctx, String asset) throws Exception {
+        File out = new File(ctx.getFilesDir(), asset);
+        long assetLen;
+        try {
+            assetLen = ctx.getAssets().openFd(asset).getLength();
+        } catch (Exception e) {
+            throw new IllegalStateException("asset not found: " + asset);
+        }
+        if (out.exists() && out.length() == assetLen) return out.getAbsolutePath();
+        File parent = out.getParentFile();
+        if (parent != null) parent.mkdirs();
+        try (InputStream in = ctx.getAssets().open(asset);
+             OutputStream os = new FileOutputStream(out)) {
+            byte[] buf = new byte[1 << 20];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        }
+        return out.getAbsolutePath();
     }
 
     /** 确保模型已从 assets 拷出，返回本地文件路径。拷贝一次性，幂等。
@@ -234,13 +257,37 @@ public class LlmEngine {
 
     /**
      * 同步生成（内部线程由调用方管理）。返回完整文本；
-     * 模板为 Qwen3 ChatML，enable_thinking 关闭以抑制思考输出。
+     * 模板为 MiniCPM5 ChatML；预填空 <think> 块跳过混合思考直接快速响应。
      */
     public synchronized String generate(String userText, int maxTokens, float temperature) {
         if (session == 0) throw new IllegalStateException("model not loaded");
         String prompt = "<|im_start|>user\n" + userText
-                + "<|im_end|>\n<|im_start|>assistant\n";
+                + "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
         return nativeGenerate(session, prompt, maxTokens, temperature);
+    }
+
+    /**
+     * 多模态生成：图片经 MiniCPM-V 4.6 视觉编码器（mmproj）编码后，
+     * 由该 VLM 的语言塔产出回答。prompt 含媒体标记，由本方法套模板。
+     */
+    public synchronized String generateWithImage(android.graphics.Bitmap image,
+                                                 String userText,
+                                                 int maxTokens, float temperature) {
+        if (session == 0) throw new IllegalStateException("model not loaded");
+        String prompt = "<|im_start|>user\n<__image__>" + userText
+                + "<|im_end|>\n<|im_start|>assistant\n";
+        int w = image.getWidth(), h = image.getHeight();
+        int[] px = new int[w * h];
+        image.getPixels(px, 0, w, 0, 0, w, h);
+        return nativeGenerateWithImage(session, prompt, px, w, h,
+                maxTokens, temperature);
+    }
+
+    /** 加载 mmproj 视觉投影器（一次性，之后 nativeHasVision 为真）。 */
+    public synchronized boolean initVision(String mmprojPath) {
+        if (session == 0) throw new IllegalStateException("model not loaded");
+        if (nativeHasVision(session)) return true;
+        return nativeInitVision(session, mmprojPath);
     }
 
     /** 流式生成回调。 */
@@ -274,6 +321,15 @@ public class LlmEngine {
     }
 
     public native boolean nativeIsGpuActive();
+
+    private native boolean nativeInitVision(long session, String mmprojPath);
+
+    private native boolean nativeHasVision(long session);
+
+    private native String nativeGenerateWithImage(long session, String prompt,
+                                                  int[] pixels, int width,
+                                                  int height, int maxTokens,
+                                                  float temperature);
 
     private native long nativeCreateSession(String modelPath, int nCtx,
                                             int nGpuLayers, int nThreads);

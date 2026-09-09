@@ -24,3 +24,4 @@ app/src/aiAssets/assets/llm/*.gguf
 app/src/aiAssets/assets/llm/*.part
 app/src/aiAssets/assets/asr/sensevoice-small-int8.onnx
 model-cache/
+app/src/aiAssets/assets/vlm/*.gguf

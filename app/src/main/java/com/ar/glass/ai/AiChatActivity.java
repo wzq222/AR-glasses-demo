@@ -32,10 +32,12 @@ import java.util.concurrent.Executors;
 public class AiChatActivity extends AppCompatActivity {
 
     private static final int REQ_RECORD_AUDIO = 101;
+    private static final int REQ_PICK_IMAGE = 102;
 
     private TextView logView;
     private EditText input, llmPathInput, asrPathInput;
-    private Button btnSend, btnTalk, btnCorrect, btnSummarize, btnClear, btnReload;
+    private Button btnSend, btnTalk, btnCorrect, btnSummarize, btnClear, btnReload, btnImage;
+    private android.graphics.Bitmap pendingImage;
 
     private LlmEngine llm;
     private AsrEngine asr;
@@ -64,6 +66,7 @@ public class AiChatActivity extends AppCompatActivity {
         btnSummarize = findViewById(R.id.ai_summarize);
         btnClear = findViewById(R.id.ai_clear);
         btnReload = findViewById(R.id.ai_reload);
+        btnImage = findViewById(R.id.ai_image);
 
         llm = new LlmEngine();
         asr = new AsrEngine();
@@ -84,13 +87,37 @@ public class AiChatActivity extends AppCompatActivity {
 
         btnSend.setOnClickListener(v -> {
             String text = input.getText().toString().trim();
-            if (text.isEmpty()) return;
+            android.graphics.Bitmap img = pendingImage;
+            if (text.isEmpty() && img == null) return;
             input.setText("");
+            pendingImage = null;
+            final String prompt = text.isEmpty() ? "描述这张图片" : text;
             runAsync(() -> {
-                append("我: " + text);
-                String reply = pipeline.chat(text);
-                appendVisible("AI: " + reply);
+                if (img != null) {
+                    append("我: [图片] " + prompt);
+                    // 懒加载视觉投影器（一次性），随后走 VLM 图文通路
+                    String mmproj = vlmPathFromAssets();
+                    if (!llm.initVision(mmproj)) {
+                        appendVisible("AI: [视觉编码器加载失败]");
+                        return;
+                    }
+                    String reply = llm.generateWithImage(img, prompt, 512, 0.7f);
+                    appendVisible("AI: " + reply);
+                } else {
+                    append("我: " + text);
+                    String reply = pipeline.chat(text);
+                    appendVisible("AI: " + reply);
+                }
             });
+        });
+
+        // 图片选择：系统相册，选图后随下一条消息发送
+        btnImage.setOnClickListener(v -> {
+            android.content.Intent i = new android.content.Intent(
+                    android.content.Intent.ACTION_GET_CONTENT);
+            i.setType("image/*");
+            startActivityForResult(android.content.Intent.createChooser(i, "选择图片"),
+                    REQ_PICK_IMAGE);
         });
 
         // 按住说话：按下开始录音，松开转写并显示
@@ -189,6 +216,50 @@ public class AiChatActivity extends AppCompatActivity {
         } catch (Throwable e) {
             AiDebug.e("model load failed: " + e);
             runOnUiThread(() -> log("[ERR] 模型加载失败: " + e.getMessage()));
+        }
+    }
+
+    /** 拷出 VLM/mmproj 资产（懒加载，仅在首次发图时执行）。 */
+    private String vlmPathFromAssets() {
+        try {
+            LlmEngine.ensureAssetFile(this, LlmEngine.VLM_ASSET);
+            return LlmEngine.ensureAssetFile(this, LlmEngine.MMPROJ_ASSET);
+        } catch (Exception e) {
+            AiDebug.e("vlm asset copy failed: " + e);
+            return null;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode,
+                                    android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_IMAGE && resultCode == RESULT_OK && data != null
+                && data.getData() != null) {
+            executor.execute(() -> {
+                try {
+                    android.graphics.Bitmap bm = android.graphics.ImageDecoder
+                            .decodeBitmap(android.graphics.ImageDecoder
+                                    .createSource(getContentResolver(), data.getData()),
+                                    (decoder, info, src) -> {
+                                        int maxSide = 896; // 控制视觉 token 量
+                                        int w = info.getSize().getWidth();
+                                        int h = info.getSize().getHeight();
+                                        float scale = Math.min(1f,
+                                                maxSide / (float) Math.max(w, h));
+                                        if (scale < 1f) {
+                                            decoder.setTargetSize(
+                                                    Math.max(1, (int) (w * scale)),
+                                                    Math.max(1, (int) (h * scale)));
+                                        }
+                                    });
+                    pendingImage = bm;
+                    runOnUiThread(() -> log("已选图片 " + bm.getWidth() + "x"
+                            + bm.getHeight() + "，输入问题后点发送"));
+                } catch (Exception e) {
+                    runOnUiThread(() -> log("[ERR] 图片读取失败: " + e.getMessage()));
+                }
+            });
         }
     }
 
