@@ -24,6 +24,25 @@
         android:inputType="textMultiLine"
         android:maxLines="3" />
 
+    <!-- 模型接入接口：留空使用内置模型 -->
+    <EditText
+        android:id="@+id/ai_llm_path"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:hint="LLM GGUF 路径（留空=内置）"
+        android:inputType="text"
+        android:textSize="11sp" />
+
+    <EditText
+        android:id="@+id/ai_asr_path"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:hint="ASR SenseVoice onnx 路径（留空=内置）"
+        android:inputType="text"
+        android:textSize="11sp" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -43,6 +62,13 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="按住说话" />
+
+        <Button
+            android:id="@+id/ai_reload"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="重载模型" />
     </LinearLayout>
 
     <LinearLayout

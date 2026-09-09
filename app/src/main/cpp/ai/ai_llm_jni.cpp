@@ -82,9 +82,8 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
 
     auto *session = new LlmSession{model, ctx, llama_model_get_vocab(model), nullptr,
                                    n_ctx};
-    const char *vk = ggml_backend_dev_name(ggml_backend_dev_by_type(
-            GGML_BACKEND_DEVICE_TYPE_GPU));
-    ALOGI("session created, ctx=%d, gpu_dev=%s", n_ctx, vk ? vk : "none");
+    ALOGI("session created, ctx=%d, vulkan_dev=%s", n_ctx,
+          ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) ? "yes" : "no");
     return reinterpret_cast<jlong>(session);
 }
 

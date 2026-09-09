@@ -94,8 +94,8 @@ android {
         buildConfigField 'boolean', 'MARKED_POINT_VERIFIER_XNNPACK',
                 markedPointVerifierXnnpack.toString()
         ndk{
-            // AI 分支：本地 LLM/ASR 仅适配 arm64（qwen3:4b 需 ~3.5GB 可用内存）
-            abiFilters 'arm64-v8a'
+            // arm64：真机（眼镜/旗舰）；x86_64：MuMu 等模拟器测试
+            abiFilters 'arm64-v8a', 'x86_64'
         }
         // ai_llm 链接 libvulkan.so 需要 android-28+ 的符号（vkGetPhysicalDeviceFeatures2）；
         // 仅影响该 so 编译目标平台，APK minSdk 仍为 22（旧设备不加载 AI 引擎）

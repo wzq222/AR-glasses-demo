@@ -34,8 +34,8 @@ public class AiChatActivity extends AppCompatActivity {
     private static final int REQ_RECORD_AUDIO = 101;
 
     private TextView logView;
-    private EditText input;
-    private Button btnSend, btnTalk, btnCorrect, btnSummarize, btnClear;
+    private EditText input, llmPathInput, asrPathInput;
+    private Button btnSend, btnTalk, btnCorrect, btnSummarize, btnClear, btnReload;
 
     private LlmEngine llm;
     private AsrEngine asr;
@@ -56,26 +56,27 @@ public class AiChatActivity extends AppCompatActivity {
         logView = findViewById(R.id.ai_log);
         logView.setMovementMethod(new ScrollingMovementMethod());
         input = findViewById(R.id.ai_input);
+        llmPathInput = findViewById(R.id.ai_llm_path);
+        asrPathInput = findViewById(R.id.ai_asr_path);
         btnSend = findViewById(R.id.ai_send);
         btnTalk = findViewById(R.id.ai_talk);
         btnCorrect = findViewById(R.id.ai_correct);
         btnSummarize = findViewById(R.id.ai_summarize);
         btnClear = findViewById(R.id.ai_clear);
+        btnReload = findViewById(R.id.ai_reload);
 
         llm = new LlmEngine();
         asr = new AsrEngine();
         pipeline = new AiPipeline(llm);
 
         log("引擎初始化中（首次加载 LLM 约需 30-60s）…");
-        executor.execute(() -> {
-            try {
-                String modelPath = LlmEngine.ensureModelFile(this, null);
-                llm.load(modelPath);
-                asr.load(this);
-                runOnUiThread(() -> log("[OK] 引擎就绪 GPU=" + llm.nativeIsGpuActive()));
-            } catch (Exception e) {
-                runOnUiThread(() -> log("[ERR] 初始化失败: " + e.getMessage()));
-            }
+        reloadModels();
+
+        // 模型接口：LLM 填 GGUF 文件路径、ASR 填 SenseVoice onnx 路径（tokens.txt 同目录），
+        // 留空则使用内置模型；修改后点击"重载模型"生效
+        btnReload.setOnClickListener(v -> {
+            log("重载模型中…");
+            executor.execute(this::reloadModels);
         });
 
         btnSend.setOnClickListener(v -> {
@@ -134,6 +135,39 @@ public class AiChatActivity extends AppCompatActivity {
             transcript.setLength(0);
             logView.setText("");
         });
+    }
+
+    /** 按当前输入框的路径重载 LLM/ASR（在后台线程调用）。路径留空用内置模型。 */
+    private void reloadModels() {
+        try {
+            String llmPath = llmPathInput.getText().toString().trim();
+            if (llmPath.isEmpty()) {
+                llmPath = LlmEngine.ensureModelFile(this, null);
+            }
+            final String llmPathFinal = llmPath;
+            if (!new java.io.File(llmPathFinal).exists()) {
+                runOnUiThread(() -> log("[ERR] LLM 路径不存在: " + llmPathFinal));
+                return;
+            }
+            llm.load(llmPathFinal);
+
+            String asrPath = asrPathInput.getText().toString().trim();
+            if (asrPath.isEmpty()) {
+                asr.load(this);
+            } else {
+                java.io.File onnx = new java.io.File(asrPath);
+                java.io.File tokens = new java.io.File(onnx.getParentFile(), "tokens.txt");
+                if (!onnx.exists() || !tokens.exists()) {
+                    runOnUiThread(() -> log("[ERR] ASR 路径无效（需 onnx + 同目录 tokens.txt）"));
+                    return;
+                }
+                asr.load(onnx.getPath(), tokens.getPath(), "zh");
+            }
+            boolean gpu = llm.nativeIsGpuActive();
+            runOnUiThread(() -> log("[OK] 引擎就绪 后端=" + (gpu ? "GPU(Vulkan)" : "CPU")));
+        } catch (Throwable e) {
+            runOnUiThread(() -> log("[ERR] 模型加载失败: " + e.getMessage()));
+        }
     }
 
     private void startRecording() {

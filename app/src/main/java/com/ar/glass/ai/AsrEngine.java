@@ -51,14 +51,24 @@ public class AsrEngine {
         release();
         ensureModelFiles(ctx);
         File base = new File(ctx.getFilesDir(), "asr");
+        load(new File(base, "sensevoice-small-int8.onnx").getPath(),
+                new File(base, "tokens.txt").getPath(), "zh");
+    }
+
+    /**
+     * 外部模型接入接口：自定义 SenseVoice onnx / tokens 路径与语言。
+     * 模型须为 sherpa-onnx 兼容的 SenseVoice ONNX（含元数据）。
+     */
+    public synchronized void load(String modelPath, String tokensPath, String language) {
+        release();
         OfflineRecognizerConfig config = OfflineRecognizerConfig.builder()
                 .setOfflineModelConfig(OfflineModelConfig.builder()
                         .setSenseVoice(OfflineSenseVoiceModelConfig.builder()
-                                .setModel(new File(base, "sensevoice-small-int8.onnx").getPath())
-                                .setLanguage("zh")
+                                .setModel(modelPath)
+                                .setLanguage(language == null || language.isEmpty() ? "zh" : language)
                                 .setInverseTextNormalization(true)
                                 .build())
-                        .setTokens(new File(base, "tokens.txt").getPath())
+                        .setTokens(tokensPath)
                         .setNumThreads(2)
                         .setDebug(false)
                         .setProvider("cpu")
@@ -67,7 +77,7 @@ public class AsrEngine {
                 .setDecodingMethod("greedy_search")
                 .build();
         recognizer = new OfflineRecognizer(config);
-        Log.i(TAG, "SenseVoice recognizer loaded");
+        Log.i(TAG, "SenseVoice recognizer loaded: " + modelPath);
     }
 
     /**
