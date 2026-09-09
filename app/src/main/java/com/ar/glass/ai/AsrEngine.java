@@ -35,7 +35,7 @@ public class AsrEngine {
     }
 
     private static void copyAssetIfNeeded(Context ctx, String asset) throws Exception {
-        File out = new File(ctx.getFilesDir(), asset);
+        File out = new File(LlmEngine.modelBaseDir(ctx), asset);
         if (out.exists() && out.length() > 0) return;
         File parent = out.getParentFile();
         if (parent != null) parent.mkdirs();
@@ -50,7 +50,7 @@ public class AsrEngine {
     public synchronized void load(Context ctx) throws Exception {
         release();
         ensureModelFiles(ctx);
-        File base = new File(ctx.getFilesDir(), "asr");
+        File base = new File(LlmEngine.modelBaseDir(ctx), "asr");
         load(new File(base, "sensevoice-small-int8.onnx").getPath(),
                 new File(base, "tokens.txt").getPath(), "zh");
     }

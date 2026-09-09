@@ -118,9 +118,16 @@ public class LlmEngine {
         void onProgress(String file, int percent);
     }
 
+    /** 模型存放根目录：应用外部专属目录（/storage/emulated/0/Android/data/
+     *  com.ar.glass/files/），文件管理器可直接查看/删除；不可用时回退内部存储。 */
+    public static File modelBaseDir(Context ctx) {
+        File ext = ctx.getExternalFilesDir(null);
+        return ext != null ? ext : ctx.getFilesDir();
+    }
+
     /** 通用 assets→filesDir 拷贝（幂等），用于 VLM/mmproj 等大文件外置或内置。 */
     public static String ensureAssetFile(Context ctx, String asset) throws Exception {
-        File out = new File(ctx.getFilesDir(), asset);
+        File out = new File(modelBaseDir(ctx), asset);
         long assetLen;
         try {
             assetLen = ctx.getAssets().openFd(asset).getLength();
@@ -143,7 +150,7 @@ public class LlmEngine {
      *  GGUF 以 <2GB 分片（.NN.part）打包（AGP assets 单文件上限 2GB），拷贝时顺序拼接。 */
     public static String ensureModelFile(Context ctx, ProgressListener listener)
             throws Exception {
-        File out = new File(ctx.getFilesDir(), MODEL_ASSET);
+        File out = new File(modelBaseDir(ctx), MODEL_ASSET);
         boolean splitAssets;
         long expected;
         try (InputStream p0 = ctx.getAssets().open(partName(0))) {
