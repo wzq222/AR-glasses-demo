@@ -77,6 +77,8 @@ public class AsrEngine {
                 .setDecodingMethod("greedy_search")
                 .build();
         recognizer = new OfflineRecognizer(config);
+        AiDebug.i("asr loaded: model=" + modelPath + ", tokens=" + tokensPath
+                + ", lang=" + language);
         Log.i(TAG, "SenseVoice recognizer loaded: " + modelPath);
     }
 
@@ -85,12 +87,21 @@ public class AsrEngine {
      */
     public synchronized String transcribe(float[] samples) {
         if (recognizer == null) throw new IllegalStateException("ASR not loaded");
+        long t0 = android.os.SystemClock.elapsedRealtime();
         OfflineStream stream = recognizer.createStream();
         stream.acceptWaveform(samples, SAMPLE_RATE);
         recognizer.decode(stream);
         String text = recognizer.getResult(stream).getText();
         stream.release();
-        return text == null ? "" : text.trim();
+        text = text == null ? "" : text.trim();
+        float secs = samples.length / (float) SAMPLE_RATE;
+        AiDebug.i(String.format(
+                "asr: %.1fs audio -> %d chars in %d ms (%.2fx RTF): %s",
+                secs, text.length(),
+                android.os.SystemClock.elapsedRealtime() - t0,
+                secs > 0 ? (android.os.SystemClock.elapsedRealtime() - t0) / 1000f / secs : 0f,
+                text.isEmpty() ? "(空)" : text));
+        return text;
     }
 
     public synchronized void release() {

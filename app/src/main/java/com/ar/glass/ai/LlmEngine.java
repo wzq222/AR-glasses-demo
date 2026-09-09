@@ -124,14 +124,22 @@ public class LlmEngine {
     public synchronized void load(String modelPath) {
         release();
         nCtx = DEFAULT_CTX;
+        long bytes = new File(modelPath).length();
+        AiDebug.i(String.format("llm load: %s (%.2f GB)", modelPath, bytes / 1e9));
+        long t0 = System.currentTimeMillis();
         session = nativeCreateSession(modelPath, nCtx, DEFAULT_GPU_LAYERS, 4);
         if (session == 0) {
             // GPU 路径失败：纯 CPU 重试
+            AiDebug.i("gpu-layer load failed, retrying CPU-only (n_gpu_layers=0)");
             session = nativeCreateSession(modelPath, nCtx, 0, 4);
         }
         if (session == 0) {
+            AiDebug.e("llm load FAILED: " + modelPath);
             throw new IllegalStateException("LLM model load failed: " + modelPath);
         }
+        AiDebug.i(String.format("llm loaded in %d ms, backend=%s",
+                System.currentTimeMillis() - t0,
+                nativeIsGpuActive() ? "GPU-first(Vulkan)" : "CPU"));
         Log.i(TAG, "model loaded, gpu=" + nativeIsGpuActive());
     }
 

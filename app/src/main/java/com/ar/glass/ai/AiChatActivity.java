@@ -139,6 +139,10 @@ public class AiChatActivity extends AppCompatActivity {
 
     /** 按当前输入框的路径重载 LLM/ASR（在后台线程调用）。路径留空用内置模型。 */
     private void reloadModels() {
+        AiDebug.deviceSnapshot();
+        AiDebug.i("reload: llmPath=" + llmPathInput.getText().toString().trim()
+                + " (空=内置), asrPath=" + asrPathInput.getText().toString().trim()
+                + " (空=内置)");
         try {
             String llmPath = llmPathInput.getText().toString().trim();
             if (llmPath.isEmpty()) {
@@ -155,6 +159,10 @@ public class AiChatActivity extends AppCompatActivity {
             if (asrPath.isEmpty()) {
                 asr.load(this);
             } else {
+                if (!android.os.Environment.isExternalStorageManager()) {
+                    runOnUiThread(this::requestAllFilesAccess);
+                    return;
+                }
                 java.io.File onnx = new java.io.File(asrPath);
                 java.io.File tokens = new java.io.File(onnx.getParentFile(), "tokens.txt");
                 if (!onnx.exists() || !tokens.exists()) {
@@ -164,9 +172,24 @@ public class AiChatActivity extends AppCompatActivity {
                 asr.load(onnx.getPath(), tokens.getPath(), "zh");
             }
             boolean gpu = llm.nativeIsGpuActive();
+            AiDebug.i("engines ready: backend=" + (gpu ? "GPU(Vulkan)" : "CPU")
+                    + ", llm=" + llmPathFinal);
             runOnUiThread(() -> log("[OK] 引擎就绪 后端=" + (gpu ? "GPU(Vulkan)" : "CPU")));
         } catch (Throwable e) {
             runOnUiThread(() -> log("[ERR] 模型加载失败: " + e.getMessage()));
+        }
+    }
+
+    /** 外置模型放在 /sdcard 时需要"所有文件访问"权限（llama mmap 直读路径）。 */
+    private void requestAllFilesAccess() {
+        try {
+            android.content.Intent i = new android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.net.Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+            log("请授予'所有文件访问'权限后点'重载模型'");
+        } catch (Exception e) {
+            log("[ERR] 无法打开权限页: " + e.getMessage());
         }
     }
 

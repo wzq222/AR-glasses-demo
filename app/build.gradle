@@ -13,6 +13,9 @@ def ncnnVulkanFp16 = (System.getenv('CRRC_NCNN_VULKAN_FP16') ?: '0') == '1'
 def markedPointVerifierNnapi = (System.getenv('CRRC_MARKED_POINT_VERIFIER_NNAPI') ?: '0') == '1'
 def markedPointVerifierXnnpack = (System.getenv('CRRC_MARKED_POINT_VERIFIER_XNNPACK') ?: '0') == '1'
 def filteredJniLibsDir = file("$buildDir/generated/filteredJniLibs")
+// AI 大模型是否打包进 APK（默认打包；存储受限的测试机可设 CRRC_AI_BUNDLE_MODELS=0
+// 出精简包，模型通过 AiChatActivity 的路径接口外置接入）
+def aiBundleModels = (System.getenv('CRRC_AI_BUNDLE_MODELS') ?: '1') == '1'
 def filteredNcnnModelDir = file("$buildDir/generated/filteredNcnnModel")
 def filteredOnnxModelDir = file("$buildDir/generated/filteredOnnxModel")
 def filteredMarkedPointVerifierDir = file("$buildDir/generated/filteredMarkedPointVerifier")
@@ -149,6 +152,9 @@ android {
             }
             if (markedPointVerifierEnabled) {
                 assets.srcDir filteredMarkedPointVerifierDir
+            }
+            if (aiBundleModels) {
+                assets.srcDir 'src/aiAssets/assets'
             }
             jniLibs.srcDirs = [filteredJniLibsDir]
         }

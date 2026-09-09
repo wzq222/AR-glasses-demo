@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <android/log.h>
+#include <chrono>
 
 #include "llama.h"
 
@@ -22,6 +23,20 @@ struct LlmSession {
     int n_ctx = 0;
 };
 
+// 列出 ggml 全部后端设备（GPU/Vulkan 是否在列一目了然）
+void log_ggml_devices() {
+    size_t n_reg = ggml_backend_reg_count();
+    for (size_t r = 0; r < n_reg; r++) {
+        ggml_backend_reg_t reg = ggml_backend_reg_get(r);
+        size_t n_dev = ggml_backend_reg_dev_count(reg);
+        for (size_t i = 0; i < n_dev; i++) {
+            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, i);
+            ALOGI("backend[%zu/%zu] %s | %s", r, i,
+                  ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+        }
+    }
+}
+
 jstring to_jstring_env(JNIEnv *env, const std::string &s) {
     return env->NewStringUTF(s.c_str());
 }
@@ -31,15 +46,6 @@ std::string token_to_utf8(const llama_vocab *vocab, llama_token token) {
     int n = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, true);
     if (n < 0) return "";
     return std::string(buf, (size_t) n);
-}
-
-// Qwen3 系列对话模板（GGUF 内置模板缺失时使用）
-std::string apply_qwen3_template(const std::vector<std::string> &messages) {
-    std::string out = "<|im_start|>";
-    for (const auto &m : messages) {
-        // 约定：调用方已按 "role\x1fcontent" 拆好，这里直接拼接
-    }
-    return out;
 }
 
 } // namespace
@@ -56,9 +62,12 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
     llama_log_set([](ggml_log_level level, const char *text, void *) {
         if (level >= GGML_LOG_LEVEL_ERROR) ALOGE("%s", text);
     }, nullptr);
+    log_ggml_devices();
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;   // 99 = 全部放 GPU（Vulkan 自动分层回退）
+    ALOGI("loading model (n_gpu_layers=%d, threads=%d)...", n_gpu_layers, n_threads);
+    auto t0 = std::chrono::steady_clock::now();
 
     llama_model *model = llama_model_load_from_file(path, mparams);
     env->ReleaseStringUTFChars(model_path, path);
@@ -67,6 +76,8 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
         llama_backend_free();
         return 0;
     }
+    ALOGI("model loaded in %.1fs",
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = (uint32_t) n_ctx;
@@ -82,8 +93,8 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
 
     auto *session = new LlmSession{model, ctx, llama_model_get_vocab(model), nullptr,
                                    n_ctx};
-    ALOGI("session created, ctx=%d, vulkan_dev=%s", n_ctx,
-          ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) ? "yes" : "no");
+    ggml_backend_dev_t gpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+    ALOGI("session created, ctx=%d, vulkan_dev=%s", n_ctx, gpu_dev ? "yes" : "no");
     return reinterpret_cast<jlong>(session);
 }
 
@@ -136,6 +147,8 @@ Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
 
     std::string output;
     llama_token new_token = 0;
+    auto t_gen = std::chrono::steady_clock::now();
+    int n_gen = 0;
     for (int i = 0; i < max_tokens; i++) {
         llama_batch batch = llama_batch_get_one(
                 tokens.data(), (int32_t) tokens.size());
@@ -147,12 +160,17 @@ Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
         if (llama_vocab_is_eog(vocab, new_token)) break;
         output += token_to_utf8(vocab, new_token);
         tokens = {new_token};
+        n_gen++;
         if ((int32_t) s->n_ctx > 0 &&
             (int) llama_memory_seq_pos_max(llama_get_memory(s->ctx), 0) >=
                     s->n_ctx - 4) {
             break; // 上下文将满，停止
         }
     }
+    double secs = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t_gen).count();
+    ALOGI("generated %d tokens in %.1fs (%.2f tok/s), prompt=%d tok",
+          n_gen, secs, secs > 0 ? n_gen / secs : 0.0, n_prompt);
     return env->NewStringUTF(output.c_str());
 }
 
