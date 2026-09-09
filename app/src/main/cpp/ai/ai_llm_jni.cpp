@@ -53,6 +53,7 @@ void forward_log(ggml_log_level level, const char *text) {
     }
     if (only_progress) return;
     std::string t(text);
+    if (t.find("create_tensor: loading tensor") != std::string::npos) return;
     for (auto &c : t) if (c == '\n' || c == '\r') c = '|';
     if (level >= GGML_LOG_LEVEL_WARN) ALOGE("%s", t.c_str());
     else ALOGI("%s", t.c_str());
@@ -68,6 +69,13 @@ void install_log_hooks() {
     llama_log_set([](ggml_log_level level, const char *text, void *) {
         forward_log(level, text);
     }, nullptr);
+}
+
+// GPU 判定必须包含 IGPU：ARM UMA 设备（Mali/Immortalis 等）注册为集成 GPU 类型，
+// 只查 GPU 类型会把"正在用 Vulkan 跑"误报成 CPU
+bool has_accel_dev() {
+    return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) != nullptr
+            || ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU) != nullptr;
 }
 
 jstring to_jstring_env(JNIEnv *env, const std::string &s) {
@@ -125,7 +133,9 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
     auto *session = new LlmSession{model, ctx, llama_model_get_vocab(model), nullptr,
                                    n_ctx};
     ggml_backend_dev_t gpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
-    ALOGI("session created, ctx=%d, vulkan_dev=%s", n_ctx, gpu_dev ? "yes" : "no");
+    if (!gpu_dev) gpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU);
+    ALOGI("session created, ctx=%d, accel_dev=%s (%s)", n_ctx, gpu_dev ? "yes" : "no",
+          gpu_dev ? ggml_backend_dev_name(gpu_dev) : "cpu-only");
     return reinterpret_cast<jlong>(session);
 }
 
@@ -208,7 +218,7 @@ Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
 JNIEXPORT jboolean JNICALL
 Java_com_ar_glass_ai_LlmEngine_nativeIsGpuActive(
         JNIEnv * /*env*/, jobject /*thiz*/) {
-    return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) != nullptr;
+    return has_accel_dev();
 }
 
 } // extern "C"
