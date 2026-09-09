@@ -20,8 +20,93 @@ public class LlmEngine {
     private static final int DEFAULT_CTX = 4096;
     private static final int DEFAULT_GPU_LAYERS = 99; // 全部分层交给 Vulkan，放不下自动回退 CPU
 
-    static {
-        System.loadLibrary("ai_llm");
+    /**
+     * Vulkan 兼容等级（env 必须在 native 库加载前设置，进程内一次生效）：
+     * 0=默认；1=禁 coopmat（Mali/Immortalis 驱动 bug，见 llama.cpp#22034/#23057）；
+     * 2=再禁 F16（tier1 仍失败时）。
+     */
+    private static int sVkCompatLevel = -1;
+    private static boolean sLibLoaded = false;
+
+    /** 首次使用前调用：检测 GPU 厂商并设置兼容 env，随后加载 native 库。 */
+    public static synchronized void initGpuCompat(Context ctx) {
+        if (sVkCompatLevel >= 0) return;
+        android.content.SharedPreferences sp =
+                ctx.getSharedPreferences("ai", Context.MODE_PRIVATE);
+        sVkCompatLevel = sp.getInt("vk_compat", -1);
+        String renderer = gpuRenderer();
+        boolean mali = renderer != null && (renderer.contains("Mali")
+                || renderer.contains("Immortalis"));
+        if (sVkCompatLevel < 0) sVkCompatLevel = mali ? 1 : 0;
+        applyVkEnv(sVkCompatLevel);
+        AiDebug.i("vk compat: level=" + sVkCompatLevel + ", gpu=" + renderer
+                + (mali ? " (Mali→coopmat 已禁用)" : ""));
+        ensureLoaded();
+    }
+
+    /** 升级兼容等级并持久化；env 只在下次进程启动生效，返回是否已升级。 */
+    public static boolean escalateVkCompat(Context ctx) {
+        if (sVkCompatLevel >= 2) return false;
+        android.content.SharedPreferences sp =
+                ctx.getSharedPreferences("ai", Context.MODE_PRIVATE);
+        sp.edit().putInt("vk_compat", sVkCompatLevel + 1).apply();
+        AiDebug.i("vk compat escalated to " + (sVkCompatLevel + 1) + "，重启应用后生效");
+        return true;
+    }
+
+    private static void applyVkEnv(int level) {
+        try {
+            if (level >= 1) {
+                android.system.Os.setenv("GGML_VK_DISABLE_COOPMAT", "1", true);
+            }
+            if (level >= 2) {
+                android.system.Os.setenv("GGML_VK_DISABLE_F16", "1", true);
+            }
+        } catch (Exception e) {
+            AiDebug.e("setenv failed: " + e);
+        }
+    }
+
+    /** 离屏 EGL 取 GPU renderer 字符串（无需 UI）。 */
+    private static String gpuRenderer() {
+        android.opengl.EGLDisplay d = null;
+        try {
+            d = android.opengl.EGL14.eglGetDisplay(android.opengl.EGL14.EGL_DEFAULT_DISPLAY);
+            int[] ver = new int[2];
+            if (!android.opengl.EGL14.eglInitialize(d, ver, 0, ver, 1)) return "?";
+            int[] cfgAttr = {android.opengl.EGL14.EGL_RENDERABLE_TYPE,
+                    android.opengl.EGL14.EGL_OPENGL_ES2_BIT, android.opengl.EGL14.EGL_NONE};
+            android.opengl.EGLConfig[] cfg = new android.opengl.EGLConfig[1];
+            int[] num = new int[1];
+            android.opengl.EGL14.eglChooseConfig(d, cfgAttr, 0, cfg, 0, 1, num, 0);
+            if (num[0] == 0) return "?";
+            android.opengl.EGLContext ec = android.opengl.EGL14.eglCreateContext(d, cfg[0],
+                    android.opengl.EGL14.EGL_NO_CONTEXT,
+                    new int[]{android.opengl.EGL14.EGL_CONTEXT_CLIENT_VERSION, 2,
+                            android.opengl.EGL14.EGL_NONE}, 0);
+            android.opengl.EGLSurface es = android.opengl.EGL14.eglCreatePbufferSurface(d,
+                    cfg[0], new int[]{android.opengl.EGL14.EGL_WIDTH, 1,
+                            android.opengl.EGL14.EGL_HEIGHT, 1,
+                            android.opengl.EGL14.EGL_NONE}, 0);
+            android.opengl.EGL14.eglMakeCurrent(d, es, es, ec);
+            String r = android.opengl.GLES20.glGetString(android.opengl.GLES20.GL_RENDERER);
+            android.opengl.EGL14.eglMakeCurrent(d, android.opengl.EGL14.EGL_NO_SURFACE,
+                    android.opengl.EGL14.EGL_NO_SURFACE, android.opengl.EGL14.EGL_NO_CONTEXT);
+            android.opengl.EGL14.eglDestroySurface(d, es);
+            android.opengl.EGL14.eglDestroyContext(d, ec);
+            return r == null ? "?" : r;
+        } catch (Throwable t) {
+            return "?";
+        } finally {
+            if (d != null) android.opengl.EGL14.eglTerminate(d);
+        }
+    }
+
+    private static synchronized void ensureLoaded() {
+        if (!sLibLoaded) {
+            System.loadLibrary("ai_llm");
+            sLibLoaded = true;
+        }
     }
 
     private long session = 0;

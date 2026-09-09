@@ -23,7 +23,7 @@ struct LlmSession {
     int n_ctx = 0;
 };
 
-// 列出 ggml 全部后端设备（GPU/Vulkan 是否在列一目了然）
+// 列出 ggml 全部后端设备（GPU/Vulkan 是否在列一目了然，附显存）
 void log_ggml_devices() {
     size_t n_reg = ggml_backend_reg_count();
     for (size_t r = 0; r < n_reg; r++) {
@@ -31,10 +31,43 @@ void log_ggml_devices() {
         size_t n_dev = ggml_backend_reg_dev_count(reg);
         for (size_t i = 0; i < n_dev; i++) {
             ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, i);
-            ALOGI("backend[%zu/%zu] %s | %s", r, i,
-                  ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+            size_t free_b = 0, total_b = 0;
+            ggml_backend_dev_memory(dev, &free_b, &total_b);
+            ALOGI("backend[%zu/%zu] %s | %s | mem %.2f/%.2f GB", r, i,
+                  ggml_backend_dev_name(dev), ggml_backend_dev_description(dev),
+                  free_b / 1e9, total_b / 1e9);
         }
     }
+}
+
+// 全量转发 ggml/llama 日志到 logcat（设备枚举、Vulkan 初始化失败原因等）。
+// 必须在任何后端初始化前安装，否则丢失关键诊断信息；纯进度点不转发。
+void forward_log(ggml_log_level level, const char *text) {
+    if (!text || !*text) return;
+    bool only_progress = true;
+    for (const char *p = text; *p; p++) {
+        if (*p != '.' && *p != '\n' && *p != '\r' && *p != ' ') {
+            only_progress = false;
+            break;
+        }
+    }
+    if (only_progress) return;
+    std::string t(text);
+    for (auto &c : t) if (c == '\n' || c == '\r') c = '|';
+    if (level >= GGML_LOG_LEVEL_WARN) ALOGE("%s", t.c_str());
+    else ALOGI("%s", t.c_str());
+}
+
+void install_log_hooks() {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+    ggml_log_set([](ggml_log_level level, const char *text, void *) {
+        forward_log(level, text);
+    }, nullptr);
+    llama_log_set([](ggml_log_level level, const char *text, void *) {
+        forward_log(level, text);
+    }, nullptr);
 }
 
 jstring to_jstring_env(JNIEnv *env, const std::string &s) {
@@ -58,14 +91,8 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
         jint n_ctx, jint n_gpu_layers, jint n_threads) {
     const char *path = env->GetStringUTFChars(model_path, nullptr);
 
+    install_log_hooks();
     llama_backend_init();
-    llama_log_set([](ggml_log_level level, const char *text, void *) {
-        if (level >= GGML_LOG_LEVEL_ERROR) ALOGE("%s", text);
-    }, nullptr);
-    // ggml/Vulkan 初始化细节转发到 logcat（设备枚举、拒绝原因等），AIB 诊断关键
-    ggml_log_set([](ggml_log_level level, const char *text, void *) {
-        if (level >= GGML_LOG_LEVEL_INFO) ALOGI("ggml %s", text);
-    }, nullptr);
     log_ggml_devices();
 
     llama_model_params mparams = llama_model_default_params();

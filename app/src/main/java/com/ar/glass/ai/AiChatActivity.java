@@ -70,7 +70,10 @@ public class AiChatActivity extends AppCompatActivity {
         pipeline = new AiPipeline(llm);
 
         log("引擎初始化中（首次加载 LLM 约需 30-60s）…");
-        reloadModels();
+        executor.execute(() -> {
+            LlmEngine.initGpuCompat(this);
+            reloadModels();
+        });
 
         // 模型接口：LLM 填 GGUF 文件路径、ASR 填 SenseVoice onnx 路径（tokens.txt 同目录），
         // 留空则使用内置模型；修改后点击"重载模型"生效
@@ -174,8 +177,17 @@ public class AiChatActivity extends AppCompatActivity {
             boolean gpu = llm.nativeIsGpuActive();
             AiDebug.i("engines ready: backend=" + (gpu ? "GPU(Vulkan)" : "CPU")
                     + ", llm=" + llmPathFinal);
-            runOnUiThread(() -> log("[OK] 引擎就绪 后端=" + (gpu ? "GPU(Vulkan)" : "CPU")));
+            if (gpu) {
+                runOnUiThread(() -> log("[OK] 引擎就绪 后端=GPU(Vulkan)"));
+            } else {
+                // 有 GPU 设备但被后端拒绝/回退：升级兼容等级，下次启动重试
+                boolean escalated = LlmEngine.escalateVkCompat(this);
+                runOnUiThread(() -> log("[WARN] Vulkan 初始化失败，已回退 CPU"
+                        + (escalated ? "；已自动升级兼容等级，请退出应用重新打开重试"
+                        : "（兼容等级已到顶）")));
+            }
         } catch (Throwable e) {
+            AiDebug.e("model load failed: " + e);
             runOnUiThread(() -> log("[ERR] 模型加载失败: " + e.getMessage()));
         }
     }
