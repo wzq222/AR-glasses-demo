@@ -62,6 +62,10 @@ Java_com_ar_glass_ai_LlmEngine_nativeCreateSession(
     llama_log_set([](ggml_log_level level, const char *text, void *) {
         if (level >= GGML_LOG_LEVEL_ERROR) ALOGE("%s", text);
     }, nullptr);
+    // ggml/Vulkan 初始化细节转发到 logcat（设备枚举、拒绝原因等），AIB 诊断关键
+    ggml_log_set([](ggml_log_level level, const char *text, void *) {
+        if (level >= GGML_LOG_LEVEL_INFO) ALOGI("ggml %s", text);
+    }, nullptr);
     log_ggml_devices();
 
     llama_model_params mparams = llama_model_default_params();
