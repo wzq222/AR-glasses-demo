@@ -1,0 +1,100 @@
+# MODELS MANIFEST — Feature_Android_AI_Models
+
+Branch: Feature_Android_AI_Models
+Total source models: 6 (LLM + VLM + mmproj + ASR + 2x YOLO), ~3.49 GB raw
+Archive: tar.gz split into 45 MB volumes (GitHub 50 MB/file hard limit safe), ~2.93 GB compressed
+Volume count: 67
+
+## Restore (one line, run inside the repo root)
+cat models/models.tar.gz.part-* | tar -xzf -
+
+## Stored paths -> destination after extraction at repo root
+app/src/aiAssets/assets/llm/minicpm5-2b-q4_k_m.gguf   -> LLM (llama.cpp/Vulkan)
+app/src/aiAssets/assets/vlm/mmproj-f16.gguf           -> VLM projector (mtmd)
+app/src/aiAssets/assets/vlm/minicpm-v4_6-q4_k_m.gguf  -> VLM (multimodal)
+app/src/aiAssets/assets/asr/sensevoice-small-int8.onnx -> ASR (sherpa-onnx)
+app/src/main/assets/fastener-target-p2-640.onnx       -> YOLO (bundled copy)
+fastener-target-p2-640.onnx                            -> YOLO source (workspace root F:/Android_YOLO)
+marked-point-verifier.onnx                             -> YOLO verifier (workspace root F:/Android_YOLO)
+
+Note: fastener-target-p2-640.onnx appears both under app/src/main/assets (build copy)
+      and at repo root (source of truth). marked-point-verifier.onnx lives only at root.
+      The SenseVoice export source model-cache/SenseVoiceSmall/model.pt (936 MB) is NOT
+      included; regenerate sensevoice-small-int8.onnx via funasr if needed (see docs/AI-BRANCH.md).
+
+## SHA256 of original model files
+bfb18f3bd98c3fe9d41bb057d7b564de14b5b7f143860e6e8e5f10ae5553005e *app/src/aiAssets/assets/llm/minicpm5-2b-q4_k_m.gguf
+ca931d861d0801d9003e50697cd764721a334107c0e0415a51168ee1938462de *app/src/aiAssets/assets/vlm/mmproj-f16.gguf
+6b0c74962c44bc6bf4b655b9b02c13eda9d5a0491543ae976d1ac18e4b7892e2 *app/src/aiAssets/assets/vlm/minicpm-v4_6-q4_k_m.gguf
+ac4d8740dafa562934441d9300533c0171adb023e242a6c687fc54fc401d8c91 *app/src/aiAssets/assets/asr/sensevoice-small-int8.onnx
+c50f9105ff75885be3ba02464e6a994fa7a45fde0b0634aea12faa04a6cc5b7a *app/src/main/assets/fastener-target-p2-640.onnx
+fed197a11134dd4358b70eff64086c050ddecc9b2c484e72aaeb102e4ba563cd */f/Android_YOLO/marked-point-verifier.onnx
+
+## SHA256 of each volume (verify after download; cat in alphabetical order)
+4a80cd82f2093e19fab5e468270170c655f266a6535430694db04afad259413b *models/models.tar.gz.part-aa
+a8214a9cc733d50f87332cb815961eb50ad27f1b3dfc6725bc41d245427368c1 *models/models.tar.gz.part-ab
+0f02fbb1f8e1e7eba4a6cf05d35cc6429f6855bb7eea5efa840b67f7f5fe2a01 *models/models.tar.gz.part-ac
+a1cc2e4d4d796facccac8226eb0c3626fa7eb66e406037816158ee3fb2a9a63e *models/models.tar.gz.part-ad
+b53ae47ee7d5f43e0cbed2f0299ec2019081848394522cae92625b8e8100f77d *models/models.tar.gz.part-ae
+2d12097460ff394a7a5ce85b66ddfbd571afd82d8bacebaa9f45d66c28469d7c *models/models.tar.gz.part-af
+c1b69fb3e42a603bb9d16a51771a55d9bd2ea807569ee96a45637abdb6934d2f *models/models.tar.gz.part-ag
+80019df54a3e5e91d5a138aa1fb96030a8e2bc5f50d134e5d23f4ca12942c7c9 *models/models.tar.gz.part-ah
+376f0f725318249b55ff3c5dbe4e50e56f1d1f072004abbce8f13b227e25f5b8 *models/models.tar.gz.part-ai
+e3839d5d3a7675d1ac04168db347c034e27b83eb6a2042e609ed588c84ddfe47 *models/models.tar.gz.part-aj
+e42f36e5f3b86edf8277aa8200f27ff6d460c68977283b88e9d9077685b1fb6d *models/models.tar.gz.part-ak
+406dae5d6b87dc2817d7725141b44c61e74ebad4d643245e7af0823606020010 *models/models.tar.gz.part-al
+e360825fe9db1934ecb5eeb46e72947e29e78041741740ec3504669dc590cf41 *models/models.tar.gz.part-am
+229c9b5c9e5ec825b30d38a67eb0f6e875f83492cedbd1943de4b0ec0f9f5620 *models/models.tar.gz.part-an
+d1a01d08ccb3535b7971e5145ded87137105e5690e63f62a503e6b1699f522e4 *models/models.tar.gz.part-ao
+c0aebe017ff48c5b9c16636caac6d4f087ff5c8cd4a1372c79ae7b1c7873ac38 *models/models.tar.gz.part-ap
+933bac386bd459dffc9cdcfcd9b57a0ea63fcd8a8a81a9d5a053271f92bed258 *models/models.tar.gz.part-aq
+ab4f995aed7b581e62b8fedb94af4ad900c6f8a5130ddf16c0bcbd7592a0973c *models/models.tar.gz.part-ar
+96801828e38efacfd2540bad4ce172a5dbf1fee4f9cad6bc7a4f2abeec8d37f4 *models/models.tar.gz.part-as
+a419426b356110dd8a61c09fdef45568be7b20c030d2899512f367a059b4820e *models/models.tar.gz.part-at
+dae0a78aa1919a926942b08513f1156f3a0c84ee3928000318c05ab18cbbd950 *models/models.tar.gz.part-au
+7a3047df3418a8d6eee9de28f3236e0d23371a348b8a3c11265b49b2c2f08a66 *models/models.tar.gz.part-av
+cbde8324cd87c7b09ba3558ed05d859d1dc6f8523645b5c7a5ef05243b9f35c8 *models/models.tar.gz.part-aw
+fd28004c6de1a5414ee950f099c31c4a871ee405909be2d21edebe27857ff79b *models/models.tar.gz.part-ax
+9cee68cfe21eec54e0016d513d8078487116d01c43f27d2f57cee2713fbce2c5 *models/models.tar.gz.part-ay
+af84ec771188009b638edd92e3f6b515410cc1014e42a049abd39aeac70152ab *models/models.tar.gz.part-az
+bc2eb782dff081ca6ee7492c8fcc09555923b7f3d6bec01a4b5b8153ab05e364 *models/models.tar.gz.part-ba
+016f8a566ba430ae51369430f32b5e437c26a1a323e1c644c36c5d5102b89a68 *models/models.tar.gz.part-bb
+9a57a8ceb402385ed92f132522e4b4d99092a12018348d5fc261d7377db2c146 *models/models.tar.gz.part-bc
+2459e1eeeeb7a7f18ed6f4033f9c53515b0310f6db0e505ea88263d0c46a420b *models/models.tar.gz.part-bd
+05aa117656307bb386880b009271c52fa97f7fe8878c48a308c3d5cfbff3658e *models/models.tar.gz.part-be
+12bb8c38b76d7aaa9be23e16f52ebc27e674a19877ab1976c2b854606bb2974d *models/models.tar.gz.part-bf
+9f6872e466b46207fc7a20d4304c989e85c0941e02cad5b20df0a8294ec68852 *models/models.tar.gz.part-bg
+8c152d9a5864d46234d594f1e09adab46599d3456965d9777c4ed3926ae4662a *models/models.tar.gz.part-bh
+6e2c28b1e7422eda4b80939caa2573a5e9bc54eae0d5263f5b468bedcbda879b *models/models.tar.gz.part-bi
+157752bc19a5ee6cfd3b2991f35ae00fe43a122c136341ef6eb1edd0eab1f059 *models/models.tar.gz.part-bj
+c8aa1b436a8166da8c13126ec46585eba709af6693c02491b8089a554d6f8da3 *models/models.tar.gz.part-bk
+a38e97c00dc28826b1f7f82d052cebd972f90ed903218f3031fb8fde72587060 *models/models.tar.gz.part-bl
+f361076288ed9b7a04ebc62534a3bb34c96a05d17c74eab68f0cfcbd1fb3ece4 *models/models.tar.gz.part-bm
+609add92825476deca25acdb41f693063d378219d65657e4e10f6385a1171204 *models/models.tar.gz.part-bn
+9514a1bbaae5b07212713094b5d234c17a6e49a624db29dcc288189b5b3858e5 *models/models.tar.gz.part-bo
+4bb0fab8433bee0263471d171c416e9e090915f7bade6e46ce2812c4dc04d26b *models/models.tar.gz.part-bp
+05a7d90e9e1c7bb9179b5d26bd126b94d148f40abb96b8c15cddae88c0925ec4 *models/models.tar.gz.part-bq
+41302b78fbb18a5c70b7ecabc3d2dcbdd53c7c9c22ba0e41562a647b2540facd *models/models.tar.gz.part-br
+63cef69d586056fb820396e583aea0aaaf44f026dfbb452cc8c75af6f1dfea9d *models/models.tar.gz.part-bs
+90451555d49864f97e0e804a7cde481d0d15cd5fa464541810909502faee1772 *models/models.tar.gz.part-bt
+cfc35861db7dd24c7f60e12f618568dc35baf0e6c85b57a4143a4c0cf53c6b04 *models/models.tar.gz.part-bu
+afef1fc441bce21f23a6e7c1c6bdc02933eedf757278bd5ce34e95ca54298776 *models/models.tar.gz.part-bv
+fcd347f4e36eda168ae9bfd4f2e8fbd6df1ae83527fd1c660bef0bd70ae7a5ac *models/models.tar.gz.part-bw
+bae2777ec08ebe259f1419fd3152934f49184684c80be3201adf917d55471acd *models/models.tar.gz.part-bx
+864c29fcae8b60d450ba9ce84781e0fbcf3b909c2ad9ee4d2c3daaa1e8250f49 *models/models.tar.gz.part-by
+dbc84516ef397c014ccafb9063cce80353323be4ccc3e67a03da2afd9fc987e3 *models/models.tar.gz.part-bz
+58fc904012245e5c7b5e7a02715c377d416443b7e941163c9f3b48367c3b008d *models/models.tar.gz.part-ca
+40d911faa19342971866c7e399be065f0e842b7d8c4470fcaa25e3e92ff8f73e *models/models.tar.gz.part-cb
+77a5e581ae34fcc4f1783d10642928f69907fccb0da3c675ed07387e4a41a682 *models/models.tar.gz.part-cc
+4430518bd43baa3a52720fe8ad1606c9f501490a2362ba7b90e00f813155cca8 *models/models.tar.gz.part-cd
+375aa2450b1dcf144291f72e7be31813abf0f0be2be18af44e85e565c67f792e *models/models.tar.gz.part-ce
+8fe21151c4719855691b1e1c78d9ac02a3d6dc663e2d5957416402ab9f4feb48 *models/models.tar.gz.part-cf
+4a65108410d32c54575edc2df7db303213c8a899998a898ad0cbb0048bac6427 *models/models.tar.gz.part-cg
+877398417c3fb97bf84104443a96e0d52ba957dadc04e5166c9c5a30f0ed8219 *models/models.tar.gz.part-ch
+1f3ead5464e65dc722b421d5c351fd4a6af58f73e3da304d45f840ca8cdc7592 *models/models.tar.gz.part-ci
+1164fb5095cec6ba98aa04c1089a28e0f4b9a10310560e3d557f936a2642ce84 *models/models.tar.gz.part-cj
+a3e945ccb80f8837ec7e9d56b9a3270ee5762084219dba6908cab03d74caaba3 *models/models.tar.gz.part-ck
+3ca314c83bd515aaedb3b91ea49671ea5f87e223d49920d11f40fc2799b125b6 *models/models.tar.gz.part-cl
+cdff00cc223864fc547e63c0ccb2868c11eada522ec458bf58182efcaeeb2fa0 *models/models.tar.gz.part-cm
+1e747e281db2c0c81977ddf2a020f94177ab5ce2444f3b849705bd439c49a67e *models/models.tar.gz.part-cn
+a9202cb6666ed3abde55bba3152a55061b9938b03744cb7901eff26582f83c72 *models/models.tar.gz.part-co
