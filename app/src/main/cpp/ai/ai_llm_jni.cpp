@@ -7,6 +7,7 @@
 #include <android/log.h>
 #include <chrono>
 #include <cstring>
+#include <atomic>
 
 #include "llama.h"
 #include "mtmd.h"
@@ -25,6 +26,7 @@ struct LlmSession {
     llama_sampler *smpl = nullptr;
     int n_ctx = 0;
     mtmd_context *mctx = nullptr; // 视觉编码器（加载 mmproj 后可用）
+    std::atomic<bool> cancel{false}; // 外部取消请求（生成中断 / 客户端断连）
 };
 
 // 列出 ggml 全部后端设备（GPU/Vulkan 是否在列一目了然，附显存）
@@ -71,6 +73,9 @@ void install_log_hooks() {
         forward_log(level, text);
     }, nullptr);
     llama_log_set([](ggml_log_level level, const char *text, void *) {
+        forward_log(level, text);
+    }, nullptr);
+    mtmd_log_set([](ggml_log_level level, const char *text, void *) {
         forward_log(level, text);
     }, nullptr);
 }
@@ -156,14 +161,37 @@ Java_com_ar_glass_ai_LlmEngine_nativeFreeSession(
     llama_backend_free();
 }
 
-// 预填完成后从当前上下文继续解码生成（tokens 为最近一步输入，首轮可为空向量）
-std::string run_decode(LlmSession *s, std::vector<llama_token> tokens,
-                       jint max_tokens, int32_t n_prompt) {
+// 请求取消当前生成：由 Java 侧超时看门狗 / 客户端断连触发。
+// run_decode 在 token 循环里检查该标志，命中即跳出（释放唯一 session）。
+JNIEXPORT void JNICALL
+Java_com_ar_glass_ai_LlmEngine_nativeCancel(
+        JNIEnv * /*env*/, jobject /*thiz*/, jlong handle) {
+    if (!handle) return;
+    auto *s = reinterpret_cast<LlmSession *>(handle);
+    s->cancel.store(true);
+    ALOGI("cancel requested");
+}
+
+// 预填完成后从当前上下文继续解码生成（tokens 为最近一步输入，首轮可为空向量）。
+// callback 非空时逐 token 回调 Java（真流式），并只收集 think 过滤前的增量。
+std::string run_decode(JNIEnv *env, LlmSession *s, std::vector<llama_token> tokens,
+                       jint max_tokens, int32_t n_prompt, jobject callback) {
+    jmethodID cb_mid = nullptr;
+    if (callback != nullptr) {
+        jclass cls = env->GetObjectClass(callback);
+        cb_mid = env->GetMethodID(cls, "onToken", "(Ljava/lang/String;)V");
+        if (!cb_mid) { callback = nullptr; }
+    }
     std::string output;
     auto t_gen = std::chrono::steady_clock::now();
     int n_gen = 0;
+    s->cancel.store(false); // 每次生成开始重置取消标志
     const llama_vocab *vocab = s->vocab;
     for (int i = 0; i < max_tokens; i++) {
+        if (s->cancel.load()) {
+            ALOGI("generation cancelled by caller after %d tokens", n_gen);
+            break;
+        }
         if (!tokens.empty()) {
             llama_batch batch = llama_batch_get_one(
                     tokens.data(), (int32_t) tokens.size());
@@ -174,7 +202,13 @@ std::string run_decode(LlmSession *s, std::vector<llama_token> tokens,
         }
         llama_token new_token = llama_sampler_sample(s->smpl, s->ctx, -1);
         if (llama_vocab_is_eog(vocab, new_token)) break;
-        output += token_to_utf8(vocab, new_token);
+        std::string piece = token_to_utf8(vocab, new_token);
+        output += piece;
+        if (callback != nullptr && !piece.empty()) {
+            jstring jpiece = env->NewStringUTF(piece.c_str());
+            env->CallVoidMethod(callback, cb_mid, jpiece);
+            env->DeleteLocalRef(jpiece);
+        }
         tokens = {new_token};
         n_gen++;
         if ((int32_t) s->n_ctx > 0 &&
@@ -226,8 +260,37 @@ Java_com_ar_glass_ai_LlmEngine_nativeGenerate(
                        tokens.data(), n_prompt, is_special, true) < 0) {
         return env->NewStringUTF("");
     }
-    std::string output = run_decode(s, tokens, max_tokens, n_prompt);
+    std::string output = run_decode(env, s, tokens, max_tokens, n_prompt, nullptr);
     return env->NewStringUTF(output.c_str());
+}
+
+// 真流式：逐 token 回调（API 服务端 SSE 用）
+JNIEXPORT void JNICALL
+Java_com_ar_glass_ai_LlmEngine_nativeGenerateStreaming(
+        JNIEnv *env, jobject /*thiz*/, jlong handle, jstring jprompt,
+        jobject callback, jint max_tokens, jfloat temperature) {
+    auto *s = reinterpret_cast<LlmSession *>(handle);
+    if (!s || !s->ctx || !callback) return;
+
+    const char *prompt = env->GetStringUTFChars(jprompt, nullptr);
+    std::string prompt_utf8(prompt);
+    env->ReleaseStringUTFChars(jprompt, prompt);
+
+    fresh_sampler(s, temperature);
+    llama_memory_clear(llama_get_memory(s->ctx), true);
+
+    const llama_vocab *vocab = s->vocab;
+    const bool is_special = true;
+    int n_prompt = -llama_tokenize(vocab, prompt_utf8.c_str(),
+                                   (int32_t) prompt_utf8.size(), nullptr, 0,
+                                   is_special, true);
+    if (n_prompt <= 0) return;
+    std::vector<llama_token> tokens(n_prompt);
+    if (llama_tokenize(vocab, prompt_utf8.c_str(), (int32_t) prompt_utf8.size(),
+                       tokens.data(), n_prompt, is_special, true) < 0) {
+        return;
+    }
+    run_decode(env, s, tokens, max_tokens, n_prompt, callback);
 }
 
 JNIEXPORT jboolean JNICALL
@@ -317,7 +380,7 @@ Java_com_ar_glass_ai_LlmEngine_nativeGenerateWithImage(
         return env->NewStringUTF("");
     }
     ALOGI("vision prefill done, n_past=%d in %.1fs", n_past, prefill);
-    std::string output = run_decode(s, {}, max_tokens, (int32_t) n_past);
+    std::string output = run_decode(env, s, {}, max_tokens, (int32_t) n_past, nullptr);
     return env->NewStringUTF(output.c_str());
 }
 

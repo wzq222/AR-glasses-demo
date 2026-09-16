@@ -34,6 +34,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
         tools:ignore="SystemPermissionTypo" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -112,6 +113,12 @@
             android:foregroundServiceType="connectedDevice"
             android:exported="false" />
 
+        <!-- AI 常驻前台服务：App 启动即加载模型并开启本地 API，后台保活 -->
+        <service
+            android:name=".ai.AiBootService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <!-- OTA相关（SDK内置） -->
         <activity
             android:name="com.xy.ota.view.OtaUIActivity"
@@ -135,6 +142,15 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.ar.glass.DEBUG" />
+            </intent-filter>
+        </receiver>
+
+        <!-- AI 调试广播（注入测试图片等） -->
+        <receiver
+            android:name=".ai.AiDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ar.glass.AI_DEBUG" />
             </intent-filter>
         </receiver>
 

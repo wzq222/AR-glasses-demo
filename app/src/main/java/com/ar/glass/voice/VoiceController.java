@@ -41,6 +41,18 @@ public class VoiceController {
 
     private static final String[] KEYWORDS = {"拍照", "拍摄", "拍一张"};
 
+    /**
+     * 否定/劝阻词：若出现在关键词**之前**的同一小句内，视为否定，不触发意图。
+     * 覆盖"不要拍照""先别拍""不用拍""暂不拍""取消拍照""等一下"等口语说法。
+     * 注意：故意不含单字"别"（"特别/别的"等会误伤），只用双字及以上形式。
+     */
+    private static final String[] NEGATIONS = {
+            "不要", "不用", "不需要", "先不", "暂不", "暂时不", "先别", "别拍",
+            "不拍", "取消", "停止", "停下", "等一下", "先等等", "没让"
+    };
+    /** 否定词与关键词之间的最大间隔（字符数）；超出则认为不在同一小句。 */
+    private static final int NEGATION_WINDOW = 6;
+
     private final Context context;
     private final Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -325,17 +337,39 @@ public class VoiceController {
             }
             listener.onSpeechText(t);
 
-            boolean hit = false;
-            for (String kw : KEYWORDS) {
-                if (t.contains(kw)) {
-                    hit = true;
-                    break;
-                }
-            }
-            if (hit) {
+            if (matchCaptureIntent(t)) {
                 listener.onKeywordDetected(t);
+            } else {
+                Log.i(TAG, "未命中拍照意图（无关键词或含否定）: " + t);
             }
         });
+    }
+
+    /**
+     * 是否命中"拍照"意图：命中关键词，且该关键词**前 NEGATION_WINDOW 字内没有否定词**。
+     *
+     * <p>修掉旧实现 `text.contains("拍照")` 把"不要拍照"也触发的问题。
+     * 同一句可能出现多个关键词，任一处非否定即算命中。
+     */
+    static boolean matchCaptureIntent(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (String kw : KEYWORDS) {
+            int idx = text.indexOf(kw);
+            while (idx >= 0) {
+                int from = Math.max(0, idx - NEGATION_WINDOW);
+                String before = text.substring(from, idx);
+                if (!containsAny(before, NEGATIONS)) return true;
+                idx = text.indexOf(kw, idx + 1);
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsAny(String hay, String[] needles) {
+        for (String n : needles) {
+            if (hay.contains(n)) return true;
+        }
+        return false;
     }
 
     // ========== TTS 与 SCO ==========

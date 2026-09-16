@@ -161,6 +161,25 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    /**
+     * 拉起 AI 常驻前台服务（保活模型与本地 API）。
+     * 必须在 Activity（前台上下文）里启动——Android 12+ 禁止从 Application 后台启动 FGS。
+     */
+    private void startAiRuntimeService() {
+        try {
+            com.ar.glass.ai.AiRuntime.get().install(this);
+            android.content.Intent ai = new android.content.Intent(this,
+                    com.ar.glass.ai.AiBootService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(ai);
+            } else {
+                startService(ai);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "start AiBootService failed", t);
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -170,6 +189,7 @@ public class MainActivity extends AppCompatActivity {
         initVoiceController();
         checkPermissions();
         EventBus.getDefault().register(this);
+        startAiRuntimeService();
 
         mTts = new MeterTts(this);
         mStore = MeterRecordStore.get(this);

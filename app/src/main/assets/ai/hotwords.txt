@@ -1,0 +1,37 @@
+# ai/hotwords.txt — 热词 / 唤醒词字典（预留）
+#
+# 三个用途（可按需启用）：
+#   1) [wake] 段 —— 语音唤醒词。后续接入 sherpa-onnx KWS（KeywordSpotter）或做转写文本匹配时读取。
+#   2) [term] 段 —— 领域术语。用于生成 hr 同音字替换规则（lexicon + replace.fst），把误识别改回正确写法。
+#   3) 导出为 sherpa 兼容热词表后可交给支持热词的解码器（仅 Transducer/Paraformer；SenseVoice 不消费热词）。
+#
+# 格式：
+#   - UTF-8 编码；'#' 开头为注释；空行忽略
+#   - 段头：[wake] 或 [term]（未写段头时默认归入 [term]）
+#   - 词条：一行一个；可追加 " :权重"（仅 sherpa 热词场景生效，默认 1.5，可省略）
+#
+# 覆盖方式（无需重新编译）：
+#   把同名文件放到设备
+#     /storage/emulated/0/Android/data/com.ar.glass/files/ai/hotwords.txt
+#   即可完全覆盖本内置版本。
+
+[wake]
+# —— 唤醒词（占位，请按现场需求替换）——
+你好眼镜
+眼镜助手
+开始巡检
+
+[term]
+# —— 领域术语（示例，请按现场补充）——
+紧固件
+防松
+点检
+巡检
+工务
+机种
+万用表
+二维码
+红外测温
+力矩
+# 带权重的写法（仅热词场景生效）：
+# 紧固件 :2.0

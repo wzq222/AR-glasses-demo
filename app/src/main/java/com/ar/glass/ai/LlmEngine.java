@@ -16,8 +16,19 @@ import java.io.OutputStream;
 public class LlmEngine {
     private static final String TAG = "AiLlm";
 
-    public static final String MODEL_ASSET = "llm/minicpm5-2b-q4_k_m.gguf";
     public static final String VLM_ASSET = "vlm/minicpm-v4_6-q4_k_m.gguf";
+
+    /**
+     * 默认主模型 = VLM（文本 + 视觉统一走 MiniCPM-V 4.6）。
+     * 必须与 mmproj 维度匹配：MiniCPM-V4.6 embedding_length=1024 == mmproj projection_dim=1024。
+     * 纯文本模型 minicpm5-2b 的 embedding_length=2048 与该 mmproj 不匹配，
+     * mtmd 会抛 "mismatch between text model and mmproj" 导致 vision init FAILED。
+     * （根因见 GUIDES G2 / TODO T1；维度由 Temp/gguf_probe.py 实测）
+     */
+    public static final String MODEL_ASSET = VLM_ASSET;
+
+    /** 纯文本备用模型（维度 2048，不兼容本 mmproj，仅作备用/对照）。 */
+    public static final String TEXT_ASSET = "llm/minicpm5-2b-q4_k_m.gguf";
     public static final String MMPROJ_ASSET = "vlm/mmproj-f16.gguf";
     private static final int DEFAULT_CTX = 4096;
     private static final int DEFAULT_GPU_LAYERS = 99; // 全部分层交给 Vulkan，放不下自动回退 CPU
@@ -111,7 +122,7 @@ public class LlmEngine {
         }
     }
 
-    private long session = 0;
+    private volatile long session = 0;
     private int nCtx = DEFAULT_CTX;
 
     public interface ProgressListener {
@@ -281,13 +292,72 @@ public class LlmEngine {
                                                  String userText,
                                                  int maxTokens, float temperature) {
         if (session == 0) throw new IllegalStateException("model not loaded");
-        String prompt = "<|im_start|>user\n<__image__>" + userText
+        // 图片标记必须用 mtmd 默认 media_marker "<__media__>"（mtmd.h:287）；
+        // 旧值 "<__image__>" 会导致 mtmd_tokenize 找不到标记 → markers(0) != bitmaps(1) 报错。
+        String prompt = "<|im_start|>user\n<__media__>" + userText
                 + "<|im_end|>\n<|im_start|>assistant\n";
-        int w = image.getWidth(), h = image.getHeight();
+        // ImageDecoder / 图片选择器可能返回 HARDWARE bitmap，其像素无法通过 getPixels() 读取
+        // （"pixel access is not supported on Config#HARDWARE bitmaps"）。
+        // 统一转成 ARGB_8888 软件位图，覆盖选图按钮与调试广播两条路径。
+        android.graphics.Bitmap bmp = image;
+        if (bmp.getConfig() != android.graphics.Bitmap.Config.ARGB_8888) {
+            bmp = bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
+        }
+        if (bmp == null) throw new IllegalStateException("bitmap copy failed");
+        int w = bmp.getWidth(), h = bmp.getHeight();
         int[] px = new int[w * h];
-        image.getPixels(px, 0, w, 0, 0, w, h);
+        bmp.getPixels(px, 0, w, 0, 0, w, h);
         return nativeGenerateWithImage(session, prompt, px, w, h,
                 maxTokens, temperature);
+    }
+
+    /** 流式生成回调。 */
+    public interface TokenCallback {
+        void onToken(String piece);
+    }
+
+    /** 真流式生成：逐 token 回调（未过滤，调用方自行套 ThinkFilter）。 */
+    public synchronized void generateStreaming(String userText, TokenCallback cb,
+                                               int maxTokens, float temperature) {
+        if (session == 0) throw new IllegalStateException("model not loaded");
+        String prompt = "<|im_start|>user\n" + userText
+                + "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+        nativeGenerateStreaming(session, prompt, cb, maxTokens, temperature);
+    }
+
+    /**
+     * 多轮对话生成：按 ChatML 拼接历史（含 assistant 回复）。
+     * history 每项为 {role, content}；空内容自动跳过。
+     */
+    public synchronized String generateChat(java.util.List<String[]> history,
+                                            int maxTokens, float temperature) {
+        if (session == 0) throw new IllegalStateException("model not loaded");
+        return nativeGenerate(session, buildChatPrompt(history), maxTokens, temperature);
+    }
+
+    /** 多轮真流式生成（逐 token 回调，未过滤）。 */
+    public synchronized void generateChatStreaming(java.util.List<String[]> history,
+                                                   TokenCallback cb,
+                                                   int maxTokens, float temperature) {
+        if (session == 0) throw new IllegalStateException("model not loaded");
+        nativeGenerateStreaming(session, buildChatPrompt(history), cb, maxTokens, temperature);
+    }
+
+    /** 把 {role, content} 历史拼成 ChatML prompt；末尾以 assistant 起始符收尾。 */
+    public static String buildChatPrompt(java.util.List<String[]> history) {
+        StringBuilder sb = new StringBuilder();
+        if (history != null) {
+            for (String[] m : history) {
+                if (m == null || m.length < 2) continue;
+                String role = (m[0] == null || m[0].isEmpty()) ? "user" : m[0];
+                String content = m[1] == null ? "" : m[1].trim();
+                if (content.isEmpty()) continue;
+                sb.append("<|im_start|>").append(role).append('\n')
+                        .append(content).append("<|im_end|>\n");
+            }
+        }
+        sb.append("<|im_start|>assistant\n<think>\n\n</think>\n\n");
+        return sb.toString();
     }
 
     /** 加载 mmproj 视觉投影器（一次性，之后 nativeHasVision 为真）。 */
@@ -320,6 +390,21 @@ public class LlmEngine {
         listener.onDone(full);
     }
 
+    /**
+     * 请求取消当前生成（native 在 token 循环里检查，命中即跳出）。
+     *
+     * <p><b>故意不加 synchronized</b>：generate* 都是 synchronized 且可能长时间持锁，
+     * 若本方法也加锁，取消请求会**死等锁**而永远送不达（2026-09-16 实测踩坑：
+     * 生成长文时 cancel 阻塞主线程，导致后续广播全部排队、日志停滞）。
+     * native 侧用 std::atomic 接收标志，无需 Java 锁。
+     */
+    public void cancel() {
+        long s = session;
+        if (s != 0) {
+            nativeCancel(s);
+        }
+    }
+
     public synchronized void release() {
         if (session != 0) {
             nativeFreeSession(session);
@@ -343,6 +428,12 @@ public class LlmEngine {
 
     private native void nativeFreeSession(long session);
 
+    private native void nativeCancel(long session);
+
     private native String nativeGenerate(long session, String prompt,
                                          int maxTokens, float temperature);
+
+    private native void nativeGenerateStreaming(long session, String prompt,
+                                                TokenCallback callback,
+                                                int maxTokens, float temperature);
 }

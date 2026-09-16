@@ -13,8 +13,11 @@ public class AiPipeline {
 
     /** 长文本分块上限：约 2500 字符，避免超过本地 ctx。 */
     private static final int MAX_CHARS = 2500;
-    /** 无 tokenizer 时的轻量估算：中文约 2.5 字符/token（同 Chat2API dashboard）。 */
-    private static final double CHARS_PER_TOKEN = 2.5;
+    /**
+     * 无 tokenizer 时的轻量估算：中文约 1.5 字符/token。
+     * （旧值 2.5 是英文经验值，会把中文 token 数低估约 2×，导致 usage / tok-s 系统性偏低。）
+     */
+    private static final double CHARS_PER_TOKEN = 1.5;
 
     private final LlmEngine llm;
 

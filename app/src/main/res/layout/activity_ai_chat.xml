@@ -85,6 +85,13 @@
         android:orientation="horizontal">
 
         <Button
+            android:id="@+id/ai_api"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="本地API" />
+
+        <Button
             android:id="@+id/ai_correct"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -104,5 +111,12 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="清空" />
+
+        <Button
+            android:id="@+id/ai_copyapi"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="复制API" />
     </LinearLayout>
 </LinearLayout>

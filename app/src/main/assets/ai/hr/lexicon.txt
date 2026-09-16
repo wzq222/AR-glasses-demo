@@ -1,0 +1,19 @@
+# ai/hr/lexicon.txt — hr 同音字替换：发音词典（预留）
+#
+# 作用：sherpa-onnx 的 homophone replacer 用「发音词典 + replace.fst」把
+#       ASR 误识别的同音/近音词替换成正确写法（确定性、零算力、可进实时路径）。
+#       官方对 SenseVoice 的支持示例见 sherpa-onnx PR #2153。
+#
+# 文件格式（与 sherpa-onnx 一致）：
+#   <词> <token1> <token2> ... [<tokenN>]
+#   其中 token 取自同目录无关的 asr/tokens.txt（SenseVoice 的词表）。
+#   例：紧固件 jin3 gu4 jian4
+#
+# ⚠️ 当前为占位、留空。
+#    只有同时存在 lexicon.txt 与 replace.fst 时，App 才会启用 hr；
+#    二者缺一 → hr 关闭，ASR 行为与现在完全一致（安全默认）。
+#
+# replace.fst 的生成方式见 docs/AI-MODULARIZATION.md 第 3.3 节。
+# 放置位置（二选一）：
+#   内置：app/src/main/assets/ai/hr/{lexicon.txt,replace.fst}
+#   设备：/storage/emulated/0/Android/data/com.ar.glass/files/ai/hr/{lexicon.txt,replace.fst}

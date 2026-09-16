@@ -33,10 +33,14 @@ public class AiChatActivity extends AppCompatActivity {
 
     private static final int REQ_RECORD_AUDIO = 101;
     private static final int REQ_PICK_IMAGE = 102;
+    /** 流式分段的重叠窗口（0.3s）：给下一段带一点上文音频，减少段边界截词。 */
+    private static final int OVERLAP_SAMPLES = AsrEngine.SAMPLE_RATE * 3 / 10;
 
     private TextView logView;
     private EditText input, llmPathInput, asrPathInput;
     private Button btnSend, btnTalk, btnCorrect, btnSummarize, btnClear, btnReload, btnImage;
+    private Button btnApi;
+    private Button btnCopyApi;
     private android.graphics.Bitmap pendingImage;
 
     private LlmEngine llm;
@@ -67,41 +71,63 @@ public class AiChatActivity extends AppCompatActivity {
         btnClear = findViewById(R.id.ai_clear);
         btnReload = findViewById(R.id.ai_reload);
         btnImage = findViewById(R.id.ai_image);
+        btnApi = findViewById(R.id.ai_api);
+        btnCopyApi = findViewById(R.id.ai_copyapi);
 
-        llm = new LlmEngine();
-        asr = new AsrEngine();
-        pipeline = new AiPipeline(llm);
+        // 引擎来自进程级常驻运行时（App 启动即自动加载 + 常开本地 API），
+        // 这里只取引用，避免同一模型被加载两份。
+        AiRuntime rt = AiRuntime.get();
+        rt.install(this);
+        llm = rt.llm();
+        asr = rt.asr();
+        pipeline = rt.pipeline();
 
         log("引擎初始化中（首次加载 LLM 约需 30-60s）…");
+        rt.autoStart(this);   // 幂等：已在加载中则忽略
         executor.execute(() -> {
-            LlmEngine.initGpuCompat(this);
-            reloadModels();
+            try { Thread.sleep(1200); } catch (InterruptedException ignored) { }
+            runOnUiThread(() -> log("[状态] " + AiRuntime.get().status()));
+        });
+
+        // 本地 API 服务开关：OpenAI 兼容，端口+API_KEY，便于云端/本地切换
+        btnApi.setOnClickListener(v -> toggleApiServer());
+        // 一键把 base_url / api_key / model / curl 示例复制到剪贴板
+        btnCopyApi.setOnClickListener(v -> copyConnInfo());
+        btnApi.setOnLongClickListener(v -> {
+            copyConnInfo();
+            return true;
         });
 
         // 模型接口：LLM 填 GGUF 文件路径、ASR 填 SenseVoice onnx 路径（tokens.txt 同目录），
         // 留空则使用内置模型；修改后点击"重载模型"生效
         btnReload.setOnClickListener(v -> {
             log("重载模型中…");
-            executor.execute(this::reloadModels);
+            // 在主线程读取输入框（后台线程读 EditText 属 UI 线程违规）
+            final String lp = llmPathInput.getText().toString().trim();
+            final String ap = asrPathInput.getText().toString().trim();
+            executor.execute(() -> reloadModels(lp, ap));
         });
 
         btnSend.setOnClickListener(v -> {
             String text = input.getText().toString().trim();
-            android.graphics.Bitmap img = pendingImage;
+            android.graphics.Bitmap img = pendingImage != null
+                    ? pendingImage : AiDebugBus.pendingImage;
             if (text.isEmpty() && img == null) return;
             input.setText("");
             pendingImage = null;
+            AiDebugBus.pendingImage = null;
             final String prompt = text.isEmpty() ? "描述这张图片" : text;
+            final android.graphics.Bitmap sendImg = img;
             runAsync(() -> {
-                if (img != null) {
+                if (sendImg != null) {
                     append("我: [图片] " + prompt);
                     // 懒加载视觉投影器（一次性），随后走 VLM 图文通路
                     String mmproj = vlmPathFromAssets();
-                    if (!llm.initVision(mmproj)) {
+                    if (mmproj == null || !llm.initVision(mmproj)) {
                         appendVisible("AI: [视觉编码器加载失败]");
                         return;
                     }
-                    String reply = llm.generateWithImage(img, prompt, 512, 0.7f);
+                    String reply = llm.generateWithImage(sendImg, prompt, 512, 0.7f);
                     appendVisible("AI: " + reply);
                 } else {
                     append("我: " + text);
@@ -167,14 +193,15 @@ public class AiChatActivity extends AppCompatActivity {
         });
     }
 
-    /** 按当前输入框的路径重载 LLM/ASR（在后台线程调用）。路径留空用内置模型。 */
-    private void reloadModels() {
+    /**
+     * 按给定路径重载 LLM/ASR（在后台线程调用）。路径留空用内置模型。
+     * 入参由主线程预先从输入框取出，避免后台线程读 EditText。
+     */
+    private void reloadModels(String llmPathIn, String asrPathIn) {
         AiDebug.deviceSnapshot();
-        AiDebug.i("reload: llmPath=" + llmPathInput.getText().toString().trim()
-                + " (空=内置), asrPath=" + asrPathInput.getText().toString().trim()
-                + " (空=内置)");
+        AiDebug.i("reload: llmPath=" + llmPathIn + " (空=内置), asrPath=" + asrPathIn + " (空=内置)");
         try {
-            String llmPath = llmPathInput.getText().toString().trim();
+            String llmPath = llmPathIn;
             if (llmPath.isEmpty()) {
                 llmPath = LlmEngine.ensureModelFile(this, null);
             }
@@ -185,7 +212,7 @@ public class AiChatActivity extends AppCompatActivity {
             }
             llm.load(llmPathFinal);
 
-            String asrPath = asrPathInput.getText().toString().trim();
+            String asrPath = asrPathIn;
             if (asrPath.isEmpty()) {
                 asr.load(this);
             } else {
@@ -201,6 +228,7 @@ public class AiChatActivity extends AppCompatActivity {
                 }
                 asr.load(onnx.getPath(), tokens.getPath(), "zh");
             }
+            AiRuntime.get().noteExternalLoad(llmPathFinal);
             boolean gpu = llm.nativeIsGpuActive();
             AiDebug.i("engines ready: backend=" + (gpu ? "GPU(Vulkan)" : "CPU")
                     + ", llm=" + llmPathFinal);
@@ -263,6 +291,43 @@ public class AiChatActivity extends AppCompatActivity {
         }
     }
 
+    /** 把 base_url / api_key / model / curl 示例整段复制到剪贴板（并写入日志便于 adb 核对）。 */
+    private void copyConnInfo() {
+        AiRuntime rt = AiRuntime.get();
+        rt.install(this);
+        String text = rt.connInfo();
+        try {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    getSystemService(CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("AI API", text));
+                toast("URL 与 API Key 已复制到剪贴板");
+            } else {
+                toast("剪贴板不可用");
+            }
+        } catch (Throwable t) {
+            toast("复制失败: " + t.getMessage());
+        }
+        AiDebug.i("apiinfo:\n" + text);
+        log("已复制到剪贴板：");
+        log(text);
+    }
+
+    /** 启/停本地 OpenAI 兼容服务端（默认常开；开关状态持久化，重启后仍生效）。 */
+    private void toggleApiServer() {
+        AiRuntime rt = AiRuntime.get();
+        boolean on = !rt.isApiEnabled();
+        rt.setApiEnabled(on);
+        btnApi.setText(on ? "API:开" : "本地API");
+        if (on) {
+            log("[API] 已请求启动: http://127.0.0.1:" + AiRuntime.API_PORT + "/v1");
+            log("[API] API_KEY=" + rt.apiKey());
+            log("[API] 模型: " + AiHttpServer.MODEL_ID + "（OpenAI 兼容）");
+        } else {
+            log("[API] 已请求停止: tcp://" + AiRuntime.API_PORT);
+        }
+    }
+
     /** 外置模型放在 /sdcard 时需要"所有文件访问"权限（llama mmap 直读路径）。 */
     private void requestAllFilesAccess() {
         try {
@@ -286,27 +351,73 @@ public class AiChatActivity extends AppCompatActivity {
         executor.execute(() -> {
             int minBuf = AudioRecord.getMinBufferSize(AsrEngine.SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT);
-            recorder = new AudioRecord(MediaRecorder.AudioSource.MIC, AsrEngine.SAMPLE_RATE,
+            AudioRecord r = new AudioRecord(MediaRecorder.AudioSource.MIC,
+                    AsrEngine.SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT,
                     Math.max(minBuf, 4 * 4096));
-            recorder.startRecording();
+            try {
+                r.startRecording();
+            } catch (IllegalStateException e) {
+                runOnUiThread(() -> log("[ERR] 录音启动失败: " + e.getMessage()));
+                r.release();
+                return;
+            }
+            recorder = r;
             recording = true;
             runOnUiThread(() -> log("（录音中…松开结束）"));
-        });
-    }
 
-    private void stopRecordingAndTranscribe() {
-        executor.execute(() -> {
-            recording = false;
-            AudioRecord r = recorder;
-            if (r == null) return;
+            // 流式识别：持续读取，每凑满约 0.8s 新音频即转写一次实时上屏
             java.util.List<float[]> parts = new java.util.ArrayList<>();
             int total = 0;
+            int processed = 0;
+            StringBuilder liveText = new StringBuilder();
             float[] buf = new float[1600];
-            while (r.read(buf, 0, buf.length, AudioRecord.READ_BLOCKING) > 0) {
-                parts.add(buf.clone());
+            boolean streamingOk = true;
+            while (recording) {
+                int n = r.read(buf, 0, buf.length, AudioRecord.READ_BLOCKING);
+                if (n <= 0) continue;
+                parts.add(java.util.Arrays.copyOf(buf, n));
+                total += n;
+                if (total - processed >= AsrEngine.SAMPLE_RATE * 4 / 5) {
+                    // 重叠窗口：多带 0.3s 上文音频，减少段边界截断词（文本侧再按 mergeTranscript 去重）
+                    int from = Math.max(0, processed - OVERLAP_SAMPLES);
+                    float[] tail = new float[total - from];
+                    int off = 0;
+                    for (float[] p : parts) {
+                        int start = Math.max(from, off);
+                        int end = Math.min(total, off + p.length);
+                        if (end > start) {
+                            System.arraycopy(p, start - off, tail, start - from,
+                                    end - start);
+                        }
+                        off += p.length;
+                    }
+                    long t0 = android.os.SystemClock.elapsedRealtime();
+                    String piece = asr.transcribe(tail);
+                    long ms = android.os.SystemClock.elapsedRealtime() - t0;
+                    float chunkSec = (total - processed) / (float) AsrEngine.SAMPLE_RATE;
+                    float rtf = ms / 1000f / chunkSec;
+                    if (rtf > 1.5f && streamingOk) {
+                        streamingOk = false;
+                        final float frtf = rtf;
+                        runOnUiThread(() -> log(String.format(
+                                "[WARN] 设备算力不足以实时流式（RTF=%.1f>1.0），"
+                                        + "已降级为松手后整段识别", frtf)));
+                    }
+                    processed = total;
+                    if (!piece.isEmpty()) {
+                        String merged = mergeTranscript(liveText.toString(), piece);
+                        liveText.setLength(0);
+                        liveText.append(merged);
+                        final String shown = merged;
+                        runOnUiThread(() -> log("ASR(实时): " + shown));
+                    }
+                }
+            }
+            // 收尾：排空剩余缓冲后停麦
+            while (r.read(buf, 0, buf.length, AudioRecord.READ_NON_BLOCKING) > 0) {
+                parts.add(java.util.Arrays.copyOf(buf, buf.length));
                 total += buf.length;
-                if (!recording) break;
             }
             recorder = null;
             try {
@@ -314,22 +425,35 @@ public class AiChatActivity extends AppCompatActivity {
             } catch (IllegalStateException ignored) {
             }
             r.release();
+            final int totalSamples = total;
+            runOnUiThread(() -> log(String.format("（录音结束 %.1fs）",
+                    totalSamples / (float) AsrEngine.SAMPLE_RATE)));
 
+            if (total < AsrEngine.SAMPLE_RATE / 2) {
+                runOnUiThread(() -> log("（录音太短，按住至少 1 秒）"));
+                return;
+            }
+            if (!streamingOk) {
+                AiDebug.i("asr streaming disabled: RTF>1.0 on this device (compute bound)");
+            }
+            // 终稿：全量音频重新转写（比分段拼接更准）
             float[] pcm = new float[total];
             int off = 0;
             for (float[] p : parts) {
                 System.arraycopy(p, 0, pcm, off, p.length);
                 off += p.length;
             }
-            if (total < AsrEngine.SAMPLE_RATE / 2) {
-                runOnUiThread(() -> log("（录音太短）"));
-                return;
-            }
             String text = asr.transcribe(pcm);
             if (!text.isEmpty()) transcript.append(text).append('\n');
-            String shown = text.isEmpty() ? "（未识别到语音）" : text;
-            runOnUiThread(() -> append("ASR: " + shown));
+            String shown = text.isEmpty() ? liveText.toString() : text;
+            final String finalShown = shown.isEmpty() ? "（未识别到语音）" : shown;
+            runOnUiThread(() -> append("ASR: " + finalShown));
         });
+    }
+
+    private void stopRecordingAndTranscribe() {
+        // 只翻标志：采集循环读到标志后退出的逻辑在 startRecording 任务里
+        recording = false;
     }
 
     private void runAsync(Runnable r) {
@@ -373,6 +497,23 @@ public class AiChatActivity extends AppCompatActivity {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
     }
 
+    /**
+     * 合并流式转写片段：相邻片段因音频有重叠窗口会产生重复文本，
+     * 用「已显示文本的后缀」与「新片段的前缀」做最长公共匹配（上限 8 字）去重；
+     * 匹配不到则直接拼接（安全回退，不会丢字）。
+     */
+    private static String mergeTranscript(String prev, String next) {
+        if (prev == null || prev.isEmpty()) return next == null ? "" : next;
+        if (next == null || next.isEmpty()) return prev;
+        int max = Math.min(8, Math.min(prev.length(), next.length()));
+        for (int k = max; k >= 1; k--) {
+            if (prev.regionMatches(prev.length() - k, next, 0, k)) {
+                return prev + next.substring(k);
+            }
+        }
+        return prev + next;
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
@@ -388,7 +529,7 @@ public class AiChatActivity extends AppCompatActivity {
         super.onDestroy();
         recording = false;
         executor.shutdownNow();
-        if (llm != null) llm.release();
-        if (asr != null) asr.release();
+        // 模型由常驻运行时（AiRuntime / AiBootService）持有，此处**不释放**，
+        // 否则会打断后台本地 API 服务与已加载模型。
     }
 }
